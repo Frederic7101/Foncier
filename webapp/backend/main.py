@@ -1,3 +1,4 @@
+import math
 import os
 from datetime import date, datetime
 from decimal import Decimal
@@ -99,6 +100,14 @@ def rechercher_ventes(
         conn = get_db_connection()
         cur = conn.cursor(dictionary=True)
 
+        # Préfiltre par cadre (bounding box) pour limiter les lignes avant le calcul de distance
+        # ~111 km par degré de latitude ; longitude ajustée par cos(lat)
+        deg_per_km = 1.0 / 111.0
+        delta_lat = rayon_km * deg_per_km
+        delta_lon = rayon_km * deg_per_km / max(0.01, math.cos(math.radians(lat)))
+        lat_min, lat_max = lat - delta_lat, lat + delta_lat
+        lon_min, lon_max = lon - delta_lon, lon + delta_lon
+
         sql = """
         SELECT
             id,
@@ -125,9 +134,11 @@ def rechercher_ventes(
         FROM valeursfoncieres
         WHERE latitude IS NOT NULL
           AND longitude IS NOT NULL
+          AND latitude BETWEEN %s AND %s
+          AND longitude BETWEEN %s AND %s
         """
 
-        params: list = [lat, lon, lat]
+        params: list = [lat, lon, lat, lat_min, lat_max, lon_min, lon_max]
 
         if type_local:
             sql += " AND type_local = %s"

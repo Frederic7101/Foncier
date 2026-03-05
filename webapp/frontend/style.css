@@ -202,6 +202,34 @@ select:focus {
   flex-shrink: 0;
 }
 
+.results-loading {
+  display: none;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  font-size: 0.85rem;
+  color: #4b5563;
+}
+
+.results-loading.visible {
+  display: flex;
+}
+
+.results-loading .spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid #e5e7eb;
+  border-top-color: #1e3a5f;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 #results-table-wrap {
   flex: 1;
   min-height: 0;
@@ -234,6 +262,38 @@ select:focus {
   font-weight: 600;
   position: sticky;
   top: 0;
+}
+
+#results-table .th-sort {
+  white-space: nowrap;
+}
+
+#results-table .sort-btns {
+  display: inline-flex;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}
+
+#results-table .sort-btn {
+  font-family: Arial, sans-serif;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.25rem;
+  margin: 0 0.05rem;
+  border: 1px solid #d1d5db;
+  border-radius: 0.2rem;
+  background: #fff;
+  color: #4b5563;
+  cursor: pointer;
+}
+
+#results-table .sort-btn:hover {
+  background: #e5e7eb;
+}
+
+#results-table .sort-btn.active {
+  background: #1e3a5f;
+  color: #fff;
+  border-color: #1e3a5f;
 }
 
 #results-table tbody tr {

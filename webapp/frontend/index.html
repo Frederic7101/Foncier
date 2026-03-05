@@ -38,6 +38,8 @@
                   <option value="">Tous</option>
                   <option value="Appartement">Appartement</option>
                   <option value="Maison">Maison</option>
+                  <option value="Dépendance">Dépendance</option>
+                  <option value="Local industriel. commercial ou assimilé">Local industriel. commercial ou assimilé</option>
                 </select>
               </div>
               <div class="field">
@@ -80,17 +82,21 @@
         <section id="results-list" class="zone">
           <h2>Ventes trouvées</h2>
           <div id="results-summary"></div>
+          <div id="results-loading" class="results-loading" aria-hidden="true">
+            <div class="spinner"></div>
+            <span>Recherche en cours…</span>
+          </div>
           <div id="results-table-wrap">
             <table id="results-table">
               <thead>
                 <tr>
-                  <th>Date</th>
-                  <th>Type</th>
-                  <th class="col-right">Surface (m²)</th>
-                  <th class="col-right">Prix</th>
-                  <th>Adresse</th>
-                  <th>Commune</th>
-                  <th>Distance</th>
+                  <th class="th-sort" data-sort="date_mutation">Date <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort" data-sort="type_local">Type <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort col-right" data-sort="surface_reelle_bati">Surface (m²) <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort col-right" data-sort="valeur_fonciere">Prix <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort" data-sort="adresse">Adresse <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort" data-sort="commune">Commune <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort" data-sort="distance_km">Distance <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
                 </tr>
               </thead>
               <tbody id="results-tbody"></tbody>
