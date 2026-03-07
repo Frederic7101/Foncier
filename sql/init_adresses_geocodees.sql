@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS adresses_geocodees (
   adresse_norm    VARCHAR(512) NOT NULL,
   latitude        DOUBLE NOT NULL DEFAULT 0,
   longitude       DOUBLE NOT NULL DEFAULT 0,
+  geocode_failed  TINYINT(1) NOT NULL DEFAULT 0 COMMENT '1 = BAN a été interrogé mais n''a rien renvoyé',
   last_refreshed  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
   UNIQUE KEY ux_adresse_norm (adresse_norm)
 );

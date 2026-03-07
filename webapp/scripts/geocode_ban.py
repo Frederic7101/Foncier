@@ -185,6 +185,27 @@ def _log_progress(
     return now, processed
 
 
+def _ensure_geocode_failed_column(conn) -> None:
+    """Vérifie que la colonne geocode_failed existe ; sinon lève une erreur explicite."""
+    cur = conn.cursor(buffered=True)
+    try:
+        cur.execute(
+            "SELECT id FROM adresses_geocodees WHERE COALESCE(geocode_failed, 0) = 0 LIMIT 0"
+        )
+        cur.fetchall()  # consommer le résultat pour éviter "Unread result found"
+    except mysql.connector.Error as e:
+        if "geocode_failed" in str(e).lower() or "Unknown column" in str(e):
+            raise SystemExit(
+                "La colonne 'geocode_failed' est absente. Exécutez la migration.\n"
+                "PowerShell (à la racine du projet) :\n"
+                "  Get-Content .\\sql\\add_geocode_failed.sql -Raw | mysql -u root -p foncier\n"
+                "CMD :  cmd /c \"mysql -u root -p foncier < sql\\add_geocode_failed.sql\""
+            ) from e
+        raise
+    finally:
+        cur.close()
+
+
 def run_geocode(
     batch_size: int = 1000,
     sleep_seconds: float = 0.1,
@@ -194,8 +215,16 @@ def run_geocode(
     log_interval: float | None = None,
     proxy_file: str | None = None,
 ):
-    """Géocode toutes les adresses restantes (boucle batch par batch jusqu'à épuisement)."""
+    """Géocode uniquement les adresses restant à géocoder (lat=0, lon=0, geocode_failed=0).
+    Les adresses pour lesquelles BAN ne renvoie rien sont marquées geocode_failed=1
+    et ne seront plus retraitées aux exécutions suivantes."""
     global _workers_429_seen, _workers_last_ramp_time
+    conn0 = get_connection()
+    try:
+        _ensure_geocode_failed_column(conn0)
+    finally:
+        conn0.close()
+
     proxy_list = load_proxy_list(proxy_file)
     proxy_getter = _make_proxy_getter(proxy_list) if proxy_list else None
     if proxy_list:
@@ -210,13 +239,14 @@ def run_geocode(
     while True:
         batch_num += 1
         conn = get_connection()
-        cur = conn.cursor(dictionary=True)
+        cur = conn.cursor(dictionary=True, buffered=True)
 
         cur.execute(
             """
             SELECT id, adresse_norm
             FROM adresses_geocodees
             WHERE latitude = 0 AND longitude = 0
+              AND COALESCE(geocode_failed, 0) = 0
             LIMIT %s
             """,
             (batch_size,),
@@ -291,29 +321,38 @@ def run_geocode(
                         start_time, log_every, log_interval, last_log_time, last_log_processed,
                     )
 
-        # Batch UPDATE en base
-        update_sql = (
+        # Batch UPDATE en base : succès (lat/lon) ou marquage échec (geocode_failed)
+        update_ok_sql = (
             "UPDATE adresses_geocodees "
-            "SET latitude = %s, longitude = %s, last_refreshed = NOW() "
+            "SET latitude = %s, longitude = %s, last_refreshed = NOW(), geocode_failed = 0 "
             "WHERE id = %s"
         )
         cur = conn.cursor()
         ok, skip = 0, 0
-        batch = []
+        batch_ok = []
+        ids_failed = []
         for addr_id, lat, lon in results:
             if lat is None or lon is None:
                 skip += 1
+                ids_failed.append(addr_id)
                 continue
-            batch.append((lat, lon, addr_id))
-            if len(batch) >= commit_every:
-                cur.executemany(update_sql, batch)
+            batch_ok.append((lat, lon, addr_id))
+            if len(batch_ok) >= commit_every:
+                cur.executemany(update_ok_sql, batch_ok)
                 conn.commit()
-                ok += len(batch)
-                batch = []
-        if batch:
-            cur.executemany(update_sql, batch)
+                ok += len(batch_ok)
+                batch_ok = []
+        if batch_ok:
+            cur.executemany(update_ok_sql, batch_ok)
             conn.commit()
-            ok += len(batch)
+            ok += len(batch_ok)
+        if ids_failed:
+            placeholders = ",".join(["%s"] * len(ids_failed))
+            cur.execute(
+                f"UPDATE adresses_geocodees SET geocode_failed = 1 WHERE id IN ({placeholders})",
+                ids_failed,
+            )
+            conn.commit()
         cur.close()
         conn.close()
 
