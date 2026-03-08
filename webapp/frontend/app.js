@@ -1,5 +1,9 @@
 const BAN_URL = "https://api-adresse.data.gouv.fr/search/";
-const API_BASE_URL = "http://localhost:8000";
+// Vide = même origine ; si page ouverte en file:// (ancienne URL), appeler le backend sur localhost:8000
+const API_BASE_URL =
+  typeof window !== "undefined" && window.location?.protocol === "file:"
+    ? "http://localhost:8000"
+    : "";
 const ADDRESS_CACHE_KEY = "foncier_address_cache";
 const ADDRESS_CACHE_MAX = 15;
 

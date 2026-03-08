@@ -1,5 +1,6 @@
 # Environnement et secrets
 .env
+webapp/config.json
 .venv/
 venv/
 env/

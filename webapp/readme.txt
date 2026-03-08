@@ -18,7 +18,7 @@ Tu peux vérifier avec http://localhost:8000/health dans le navigateur (doit ré
 Important : pour que la recherche par rayon fonctionne, les colonnes latitude et longitude doivent exister dans valeursfoncieres et être remplies.
 
 2. Tester le frontend (page web)
-Ouvrir le fichier c:\Users\frede\OneDrive\Documents\Cursor\webapp\frontend\index.html dans ton navigateur (double‑clic ou “Ouvrir avec…” un navigateur moderne).
+Ouvrir dans le navigateur : http://localhost:8000/ ou http://localhost:8000/stats.html (ne pas ouvrir les .html en double-clic, sinon "failed to fetch"). Anciennement : ouvrir le fichier c:\Users\frede\OneDrive\Documents\Cursor\webapp\frontend\index.html dans ton navigateur (double‑clic ou “Ouvrir avec…” un navigateur moderne).
 Tu dois voir :
 À gauche : les filtres (adresse BAN, type de local, surfaces, rayon, période, bouton Rechercher).
 À droite : la carte + la zone “Ventes trouvées”.

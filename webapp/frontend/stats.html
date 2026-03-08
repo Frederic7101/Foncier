@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Statistiques ventes par zone — vf_communes</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="stats.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  </head>
+  <body>
+    <div id="app-stats">
+      <header>
+        <h1>Statistiques ventes immobilières</h1>
+        <p class="subtitle">Agrégats par région, département ou commune (source vf_communes)</p>
+        <nav><a href="index.html">← Recherche par adresse</a></nav>
+      </header>
+
+      <main class="stats-layout">
+        <section id="stats-controls" class="zone">
+          <h2>Critères</h2>
+          <div class="stats-form">
+            <div class="field">
+              <label for="region-select">Région</label>
+              <select id="region-select"><option value="">Chargement…</option></select>
+            </div>
+            <div class="field">
+              <label for="dept-select">Département</label>
+              <select id="dept-select"><option value="">Chargement…</option></select>
+            </div>
+            <div class="field">
+              <label for="commune-select">Commune</label>
+              <select id="commune-select"><option value="">— Choisir une commune —</option></select>
+            </div>
+            <div class="field">
+              <label for="type-local">Type de local</label>
+              <select id="type-local">
+                <option value="">Tous (Appartement + Maison)</option>
+                <option value="Appartement">Appartement</option>
+                <option value="Maison">Maison</option>
+              </select>
+            </div>
+            <div id="cat-surface" class="field">
+              <label for="surface-cat">Catégorie surface (m²)</label>
+              <select id="surface-cat">
+                <option value="">—</option>
+                <option value="S1">S1 &lt; 25</option>
+                <option value="S2">S2 25–35</option>
+                <option value="S3">S3 35–45</option>
+                <option value="S4">S4 45–55</option>
+                <option value="S5">S5 &gt; 55</option>
+              </select>
+            </div>
+            <div id="cat-pieces" class="field">
+              <label for="pieces-cat">Catégorie pièces</label>
+              <select id="pieces-cat">
+                <option value="">—</option>
+                <option value="T1">T1 (1 pièce)</option>
+                <option value="T2">T2</option>
+                <option value="T3">T3</option>
+                <option value="T4">T4</option>
+                <option value="T5">T5 (5+)</option>
+              </select>
+            </div>
+            <div class="field range-field">
+              <label>Période</label>
+              <div class="range-group">
+                <input id="annee-min" type="number" min="2000" max="2030" placeholder="min" aria-label="Année de début" />
+                <span>à</span>
+                <input id="annee-max" type="number" min="2000" max="2030" placeholder="max" aria-label="Année de fin" />
+              </div>
+              <div id="stats-period-toast" class="stats-toast" role="status" aria-live="polite" hidden></div>
+            </div>
+            <div class="stats-submit">
+              <button id="stats-btn">Afficher</button>
+              <button type="button" id="stats-reset-btn" class="stats-reset-btn">Réinitialiser</button>
+            </div>
+          </div>
+        </section>
+
+        <section id="stats-results" class="zone">
+          <div id="stats-loading" class="stats-loading" aria-hidden="true">
+            <span class="stats-spinner" aria-hidden="true"></span>
+            <span class="stats-loading-text">Chargement…</span>
+          </div>
+          <div id="stats-empty" class="stats-empty">Choisissez des critères et cliquez sur Afficher.</div>
+          <div id="stats-content" class="stats-content" aria-hidden="true">
+            <h2 id="stats-title" class="stats-title-centered"></h2>
+            <div class="stats-nb-ventes">
+              <span class="label">Nombre de ventes</span>
+              <span id="nb-ventes" class="value">—</span>
+            </div>
+            <div class="stats-tabs">
+              <div class="stats-tab-buttons" role="tablist">
+                <button type="button" class="stats-tab-btn active" role="tab" aria-selected="true" data-tab="prix">Prix (€)</button>
+                <button type="button" class="stats-tab-btn" role="tab" aria-selected="false" data-tab="surface">Surface (m²)</button>
+                <button type="button" class="stats-tab-btn" role="tab" aria-selected="false" data-tab="prixm2">Prix / m² (€)</button>
+              </div>
+              <div class="stats-tab-panels">
+                <div id="tab-panel-prix" class="stats-tab-panel active" role="tabpanel">
+                  <h3 class="stats-section-title">Prix (€)</h3>
+                  <ul class="stats-list" id="section-prix"></ul>
+                  <div class="chart-wrap">
+                    <div class="chart-canvas-wrap"><canvas id="chart-prix"></canvas></div>
+                    <div class="chart-y-axis-ctrl" data-chart="prix" title="Origine axe Y : clic = auto / fixer à la valeur">
+                      <button type="button" class="chart-y-axis-btn" aria-label="Origine des ordonnées">Y</button>
+                      <input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" aria-label="Valeur min axe Y" />
+                    </div>
+                  </div>
+                </div>
+                <div id="tab-panel-surface" class="stats-tab-panel" role="tabpanel">
+                  <h3 class="stats-section-title">Surface (m²)</h3>
+                  <ul class="stats-list" id="section-surface"></ul>
+                  <div class="chart-wrap">
+                    <div class="chart-canvas-wrap"><canvas id="chart-surface"></canvas></div>
+                    <div class="chart-y-axis-ctrl" data-chart="surface" title="Origine axe Y : clic = auto / fixer à la valeur">
+                      <button type="button" class="chart-y-axis-btn" aria-label="Origine des ordonnées">Y</button>
+                      <input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" aria-label="Valeur min axe Y" />
+                    </div>
+                  </div>
+                </div>
+                <div id="tab-panel-prixm2" class="stats-tab-panel" role="tabpanel">
+                  <h3 class="stats-section-title">Prix / m² (€)</h3>
+                  <ul class="stats-list" id="section-prixm2"></ul>
+                  <div class="chart-wrap">
+                    <div class="chart-canvas-wrap"><canvas id="chart-prixm2"></canvas></div>
+                    <div class="chart-y-axis-ctrl" data-chart="prixm2" title="Origine axe Y : clic = auto / fixer à la valeur">
+                      <button type="button" class="chart-y-axis-btn" aria-label="Origine des ordonnées">Y</button>
+                      <input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" aria-label="Valeur min axe Y" />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+    <script src="stats.js"></script>
+  </body>
+</html>

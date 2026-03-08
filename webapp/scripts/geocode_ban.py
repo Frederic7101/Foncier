@@ -1,16 +1,30 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import itertools
 import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import Callable
 
 import mysql.connector
 import requests
 from dotenv import load_dotenv
+
+# Forcer un bundle CA valide pour HTTPS (API BAN) et pour MySQL si connexion SSL.
+# Évite OSError quand SSL_CERT_FILE / REQUESTS_CA_BUNDLE pointent vers un chemin invalide (autre logiciel).
+try:
+    import certifi
+    _CA_BUNDLE = certifi.where()
+    # Forcer ce bundle pour tout le processus (API BAN + MySQL si SSL)
+    os.environ["SSL_CERT_FILE"] = _CA_BUNDLE
+    os.environ["REQUESTS_CA_BUNDLE"] = _CA_BUNDLE
+except ImportError:
+    _CA_BUNDLE = True
 
 # Affichage unique de l'avertissement 429 (rate limit BAN)
 _rate_limit_warned = False
@@ -26,14 +40,50 @@ load_dotenv()
 
 YEARS = (2020, 2021, 2022, 2023, 2024, 2025)
 
+# Dossiers où chercher config.json (script dir, webapp/, racine projet)
+_CONFIG_DIRS = (
+    Path(__file__).resolve().parent,           # webapp/scripts/
+    Path(__file__).resolve().parent.parent,   # webapp/
+    Path(__file__).resolve().parent.parent.parent,  # racine projet
+)
+
+
+def _load_db_config() -> dict:
+    """Charge la config DB depuis config.json ou variables d'environnement (.env)."""
+    for base in _CONFIG_DIRS:
+        config_path = base / "config.json"
+        if config_path.is_file():
+            try:
+                with open(config_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                db = data.get("database") or data
+                return {
+                    "host": db.get("host"),
+                    "port": int(db.get("port")),
+                    "user": db.get("user"),
+                    "password": db.get("password"),
+                    "database": db.get("database"),
+                }
+            except (json.JSONDecodeError, OSError):
+                pass
+    # Pas de config.json valide : tout depuis l'environnement
+    return {
+        "host": os.getenv("DB_HOST", "localhost"),
+        "port": int(os.getenv("DB_PORT", "3306")),
+        "user": os.getenv("DB_USER", "root"),
+        "password": os.getenv("DB_PASSWORD", ""),
+        "database": os.getenv("DB_NAME", "foncier"),
+    }
+
 
 def get_connection():
+    cfg = _load_db_config()
     return mysql.connector.connect(
-        host=os.getenv("DB_HOST", "localhost"),
-        port=int(os.getenv("DB_PORT", "3306")),
-        user=os.getenv("DB_USER", "root"),
-        password=os.getenv("DB_PASSWORD", "secret"),
-        database=os.getenv("DB_NAME", "foncier"),
+        host=cfg["host"],
+        port=cfg["port"],
+        user=cfg["user"],
+        password=cfg["password"],
+        database=cfg["database"],
     )
 
 
@@ -110,6 +160,17 @@ def _make_proxy_getter(proxy_urls: list[str]):
     return getter
 
 
+def _normalize_address(addr: str) -> str:
+    """Normalise l'adresse pour l'API BAN : espaces, encodage, caractères problématiques."""
+    if not addr or not isinstance(addr, str):
+        return ""
+    # Espaces insécables / caractères de contrôle → espace ordinaire
+    s = addr.strip().replace("\u00a0", " ").replace("\r", " ").replace("\n", " ")
+    # Supprimer les caractères nuls ou non imprimables
+    s = "".join(c for c in s if c != "\x00" and (c.isprintable() or c.isspace()))
+    return " ".join(s.split())  # normaliser les espaces multiples
+
+
 def _geocode_one(
     row: dict,
     sleep_seconds: float = 0.1,
@@ -118,13 +179,15 @@ def _geocode_one(
     """Appelle l'API BAN pour une adresse. Retourne (id, lat, lon) ou (id, None, None)."""
     global _rate_limit_warned, _workers_429_seen
     addr_id = row["id"]
-    addr = row["adresse_norm"]
-    params = {"q": addr, "limit": 1}
+    addr = _normalize_address(row["adresse_norm"])
+    if not addr:
+        return (addr_id, None, None)
+    params = {"q": addr, "limit": 3}
     url = "https://api-adresse.data.gouv.fr/search/"
     for attempt in range(2):
         proxies = proxy_getter() if proxy_getter else None
         try:
-            r = requests.get(url, params=params, timeout=15, proxies=proxies)
+            r = requests.get(url, params=params, timeout=15, proxies=proxies, verify=_CA_BUNDLE)
             if r.status_code == 429:
                 with _rate_limit_lock:
                     if not _rate_limit_warned:
@@ -148,12 +211,16 @@ def _geocode_one(
             if sleep_seconds > 0:
                 time.sleep(sleep_seconds)
             return (addr_id, lat, lon)
-        except requests.RequestException:
+        except requests.RequestException as e:
+            # Timeout, ProxyError, ConnectionError, HTTPError (4xx/5xx) : log pour diagnostic
+            # print(f"[BAN] id={addr_id} {type(e).__name__}: {e}", flush=True)
             if attempt == 0:
                 time.sleep(5)
                 continue
             return (addr_id, None, None)
-        except Exception:
+        except Exception as e:
+            # ex. JSONDecodeError si la réponse n'est pas du JSON
+            print(f"[BAN] id={addr_id} {type(e).__name__}: {e}", flush=True)
             return (addr_id, None, None)
     return (addr_id, None, None)
 
@@ -327,14 +394,17 @@ def run_geocode(
             "SET latitude = %s, longitude = %s, last_refreshed = NOW(), geocode_failed = 0 "
             "WHERE id = %s"
         )
+        row_by_id = {r["id"]: r.get("adresse_norm", "") for r in rows}
         cur = conn.cursor()
         ok, skip = 0, 0
         batch_ok = []
         ids_failed = []
+        rejets = []  # (id, adresse_norm) pour le CSV
         for addr_id, lat, lon in results:
             if lat is None or lon is None:
                 skip += 1
                 ids_failed.append(addr_id)
+                rejets.append((addr_id, row_by_id.get(addr_id, "")))
                 continue
             batch_ok.append((lat, lon, addr_id))
             if len(batch_ok) >= commit_every:
@@ -355,6 +425,16 @@ def run_geocode(
             conn.commit()
         cur.close()
         conn.close()
+
+        if rejets:
+            rejets_path = Path(__file__).resolve().parent / "rejets_geoloc_BAN.csv"
+            file_exists = rejets_path.exists()
+            with open(rejets_path, "a", newline="", encoding="utf-8") as f:
+                w = csv.writer(f, delimiter=";", quoting=csv.QUOTE_MINIMAL)
+                if not file_exists:
+                    w.writerow(["id", "adresse_norm"])
+                for rid, adresse_norm in rejets:
+                    w.writerow([rid, adresse_norm])
 
         total_ok += ok
         total_skip += skip
