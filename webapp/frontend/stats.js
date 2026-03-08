@@ -29,9 +29,13 @@ const DEPT_NAMES = {
 };
 
 let geo = { regions: [], departements: [] };
-let communesList = []; // liste des communes affichées (tout ou filtrée par département)
+let communesList = []; // liste des communes (lieu unique ou lieu 1)
+let communesList2 = []; // liste des communes pour lieu 2
 let allCommunesList = []; // copie de la liste complète pour restaurer quand on désélectionne le département
 let charts = { prix: null, surface: null, prixm2: null };
+let compareMode = false;
+/** Données du Lieu 1 après une comparaison, pour réafficher en vue simple sans refetch */
+let lastCompareDataForSingle = null;
 
 function getDepartmentsForRegion(regionId) {
   const reg = geo.regions.find((r) => r.id === regionId);
@@ -43,8 +47,10 @@ function getRegionForDepartment(codeDept) {
   return reg ? reg.id : null;
 }
 
-function fillDepartmentSelect(regionId) {
-  const deptSelect = document.getElementById("dept-select");
+function fillDepartmentSelect(regionId, deptSelectId) {
+  const id = deptSelectId || "dept-select";
+  const deptSelect = document.getElementById(id);
+  if (!deptSelect) return;
   const list = regionId ? getDepartmentsForRegion(regionId) : (geo.departements || []);
   deptSelect.innerHTML = "<option value=''>— Choisir un département —</option>";
   list.forEach((d) => {
@@ -74,6 +80,144 @@ function destroyCharts() {
       charts[id] = null;
     }
   });
+}
+
+function destroyChartsForSide(side) {
+  ["prix", "surface", "prixm2"].forEach((key) => {
+    const id = `${key}-${side}`;
+    if (charts[id]) {
+      charts[id].destroy();
+      charts[id] = null;
+    }
+  });
+}
+
+function buildTitre(p, built, side) {
+  const { region_id_for_api, code_dept } = built;
+  const { commune } = p;
+  const list = side === 2 ? communesList2 : communesList;
+  const regionNom = region_id_for_api
+    ? geo.regions.find((r) => r.id === region_id_for_api)?.nom
+    : (code_dept ? geo.regions.find((r) => r.departements && r.departements.includes(code_dept))?.nom : null);
+  const deptLibelle = DEPT_NAMES[code_dept] ? `${code_dept} ${DEPT_NAMES[code_dept]}` : code_dept;
+  if (built.niveau === "region") return regionNom || "Région";
+  if (built.niveau === "department") return regionNom ? `${regionNom} / ${deptLibelle}` : deptLibelle;
+  const postaux = list
+    .filter((c) => c.commune === commune && c.code_dept === code_dept)
+    .map((c) => c.code_postal)
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .sort();
+  const base = regionNom ? `${regionNom} / ${deptLibelle}` : deptLibelle;
+  return `${base} / ${commune} (${postaux.join(", ")})`;
+}
+
+function renderCompareSide(side, data, titre, annee_min, annee_max) {
+  const suffix = "-" + side;
+  document.getElementById("stats-title-" + side).textContent = data == null ? "Erreur" : (titre || "—");
+  const g = data?.global || {};
+  const series = data?.series || [];
+  document.getElementById("nb-ventes-" + side).textContent = formatNum(g.nb_ventes);
+  renderList(document.getElementById("section-prix" + suffix), [
+    { label: "Prix moyen", value: g.prix_moyen },
+    { label: "Prix médian", value: g.prix_median },
+    { label: "Prix Q1", value: g.prix_q1 },
+    { label: "Prix Q3", value: g.prix_q3 },
+  ]);
+  renderList(document.getElementById("section-surface" + suffix), [
+    { label: "Surface moyenne", value: g.surface_moyenne },
+    { label: "Surface médiane", value: g.surface_mediane },
+    { label: "Surface Q1", value: g.surface_q1 },
+    { label: "Surface Q3", value: g.surface_q3 },
+  ]);
+  renderList(document.getElementById("section-prixm2" + suffix), [
+    { label: "Prix/m² moyen", value: g.prix_m2_moyenne },
+    { label: "Prix/m² médian", value: g.prix_m2_mediane },
+    { label: "Prix/m² Q1", value: g.prix_m2_q1 },
+    { label: "Prix/m² Q3", value: g.prix_m2_q3 },
+  ]);
+  const yMinDefault = 0;
+  if (series.length > 1) {
+    ["chart-prix" + suffix, "chart-surface" + suffix, "chart-prixm2" + suffix].forEach((id) => {
+      const wrap = document.getElementById(id)?.closest(".chart-wrap");
+      if (wrap) wrap.style.display = "block";
+    });
+    buildChartMulti("chart-prix" + suffix, series, [{ key: "prix_moyen", label: "Prix moyen (€)" }, { key: "prix_median", label: "Prix médian (€)" }, { key: "prix_q1", label: "Prix Q1 (€)" }, { key: "prix_q3", label: "Prix Q3 (€)" }], yMinDefault);
+    buildChartMulti("chart-surface" + suffix, series, [{ key: "surface_moyenne", label: "Surface moyenne (m²)" }, { key: "surface_mediane", label: "Surface médiane (m²)" }], yMinDefault);
+    buildChartMulti("chart-prixm2" + suffix, series, [{ key: "prix_m2_moyenne", label: "Prix/m² moyen (€)" }, { key: "prix_m2_mediane", label: "Prix/m² médian (€)" }, { key: "prix_m2_q1", label: "Prix/m² Q1 (€)" }, { key: "prix_m2_q3", label: "Prix/m² Q3 (€)" }], yMinDefault);
+  } else {
+    ["chart-prix" + suffix, "chart-surface" + suffix, "chart-prixm2" + suffix].forEach((id) => {
+      const wrap = document.getElementById(id)?.closest(".chart-wrap");
+      if (wrap) wrap.style.display = "none";
+    });
+  }
+  const singleYear = annee_min && annee_max && String(annee_min).trim() === String(annee_max).trim();
+  const tabsEl = document.querySelector("#stats-result-" + side + " .stats-tabs");
+  if (tabsEl) tabsEl.classList.toggle("single-year", !!singleYear);
+}
+
+/** Affiche en vue simple (sans split) des données déjà chargées (ex. Lieu 1 après comparaison). */
+function renderSingleView(data, titre, annee_min, annee_max) {
+  const emptyEl = document.getElementById("stats-empty");
+  const contentEl = document.getElementById("stats-content");
+  const g = data?.global || {};
+  const series = data?.series || [];
+  const hasData = (g.nb_ventes != null && Number(g.nb_ventes) > 0) || (series && series.length > 0);
+  if (!hasData) {
+    emptyEl.textContent = data == null ? "Erreur" : "Aucune donnée pour ces critères.";
+    emptyEl.style.display = "block";
+    contentEl.setAttribute("aria-hidden", "true");
+    document.querySelector(".stats-tabs")?.classList.remove("single-year");
+    switchTab("prix");
+    return;
+  }
+  emptyEl.style.display = "none";
+  contentEl.setAttribute("aria-hidden", "false");
+  document.getElementById("stats-title").textContent = titre || "—";
+  document.getElementById("nb-ventes").textContent = formatNum(g.nb_ventes);
+  renderList(document.getElementById("section-prix"), [
+    { label: "Prix moyen", value: g.prix_moyen },
+    { label: "Prix médian", value: g.prix_median },
+    { label: "Prix Q1", value: g.prix_q1 },
+    { label: "Prix Q3", value: g.prix_q3 },
+  ]);
+  renderList(document.getElementById("section-surface"), [
+    { label: "Surface moyenne", value: g.surface_moyenne },
+    { label: "Surface médiane", value: g.surface_mediane },
+    { label: "Surface Q1", value: g.surface_q1 },
+    { label: "Surface Q3", value: g.surface_q3 },
+  ]);
+  renderList(document.getElementById("section-prixm2"), [
+    { label: "Prix/m² moyen", value: g.prix_m2_moyenne },
+    { label: "Prix/m² médian", value: g.prix_m2_mediane },
+    { label: "Prix/m² Q1", value: g.prix_m2_q1 },
+    { label: "Prix/m² Q3", value: g.prix_m2_q3 },
+  ]);
+  if (series.length > 1) {
+    ["chart-prix", "chart-surface", "chart-prixm2"].forEach((id) => {
+      const wrap = document.getElementById(id).closest(".chart-wrap");
+      if (wrap) wrap.style.display = "block";
+    });
+    document.querySelectorAll(".chart-y-axis-ctrl").forEach((ctrl) => {
+      ctrl.classList.add("fixed");
+      ctrl.querySelector(".chart-y-axis-btn").classList.add("fixed");
+      ctrl.querySelector(".chart-y-axis-min").value = "0";
+    });
+    const yMinDefault = 0;
+    buildChartMulti("chart-prix", series, [{ key: "prix_moyen", label: "Prix moyen (€)" }, { key: "prix_median", label: "Prix médian (€)" }, { key: "prix_q1", label: "Prix Q1 (€)" }, { key: "prix_q3", label: "Prix Q3 (€)" }], yMinDefault);
+    buildChartMulti("chart-surface", series, [{ key: "surface_moyenne", label: "Surface moyenne (m²)" }, { key: "surface_mediane", label: "Surface médiane (m²)" }], yMinDefault);
+    buildChartMulti("chart-prixm2", series, [{ key: "prix_m2_moyenne", label: "Prix/m² moyen (€)" }, { key: "prix_m2_mediane", label: "Prix/m² médian (€)" }, { key: "prix_m2_q1", label: "Prix/m² Q1 (€)" }, { key: "prix_m2_q3", label: "Prix/m² Q3 (€)" }], yMinDefault);
+  } else {
+    ["chart-prix", "chart-surface", "chart-prixm2"].forEach((id) => {
+      const wrap = document.getElementById(id).closest(".chart-wrap");
+      if (wrap) wrap.style.display = "none";
+    });
+  }
+  const singleYear = annee_min && annee_max && String(annee_min).trim() === String(annee_max).trim();
+  const tabsEl = document.querySelector(".stats-tabs");
+  if (tabsEl) {
+    tabsEl.classList.toggle("single-year", !!singleYear);
+    if (!singleYear) switchTab("prix");
+  }
 }
 
 /** Couleurs pour les 4 courbes (moyenne, médiane, Q1, Q3) */
@@ -143,12 +287,14 @@ async function loadGeo() {
   const res = await fetch(`${API_BASE}/api/geo`);
   if (!res.ok) throw new Error("Erreur chargement geo");
   geo = await res.json();
-  const regionSelect = document.getElementById("region-select");
-  regionSelect.innerHTML = "<option value=''>— Choisir une région —</option>";
-  geo.regions.forEach((r) => {
-    regionSelect.innerHTML += `<option value="${r.id}">${r.nom}</option>`;
+  const regionOpts = "<option value=''>— Choisir une région —</option>" + geo.regions.map((r) => `<option value="${r.id}">${escapeHtml(r.nom)}</option>`).join("");
+  ["region-select", "region-1-select", "region-2-select"].forEach((id) => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = regionOpts;
   });
   fillDepartmentSelect(null);
+  fillDepartmentSelect(null, "dept-1-select");
+  fillDepartmentSelect(null, "dept-2-select");
 }
 
 async function loadPeriod() {
@@ -178,8 +324,16 @@ function fillCommuneOptionsChunked(communeSelect, list, startIndex) {
   }
 }
 
-async function loadCommunes(codeDept) {
-  const communeSelect = document.getElementById("commune-select");
+function getCommuneSelectId(suffix) {
+  if (suffix === "2") return "commune-2-select";
+  if (suffix === "1") return "commune-1-select";
+  return "commune-select";
+}
+
+async function loadCommunes(codeDept, suffix) {
+  const selectId = getCommuneSelectId(suffix);
+  const communeSelect = document.getElementById(selectId);
+  if (!communeSelect) return;
   communeSelect.innerHTML = "<option value=''>Chargement…</option>";
   const url = codeDept
     ? `${API_BASE}/api/communes?code_dept=${encodeURIComponent(codeDept)}`
@@ -190,8 +344,11 @@ async function loadCommunes(codeDept) {
     return;
   }
   const list = await res.json();
-  communesList = list;
-  if (!codeDept) allCommunesList = list.slice(0);
+  if (suffix === "2") communesList2 = list;
+  else {
+    communesList = list;
+    if (!codeDept) allCommunesList = list.slice(0);
+  }
   communeSelect.innerHTML = "<option value=''>— Choisir une commune —</option>";
   if (list.length <= COMMUNES_CHUNK_SIZE) {
     list.forEach((c, i) => {
@@ -205,19 +362,23 @@ async function loadCommunes(codeDept) {
   }
 }
 
-function restoreAllCommunesInDropdown() {
-  communesList = allCommunesList.slice(0);
-  const communeSelect = document.getElementById("commune-select");
+function restoreAllCommunesInDropdown(suffix) {
+  const list = allCommunesList.slice(0);
+  const selectId = getCommuneSelectId(suffix || "");
+  const communeSelect = document.getElementById(selectId);
+  if (!communeSelect) return;
+  if (suffix === "2") communesList2 = list;
+  else communesList = list;
   communeSelect.innerHTML = "<option value=''>— Choisir une commune —</option>";
-  if (communesList.length <= COMMUNES_CHUNK_SIZE) {
-    communesList.forEach((c, i) => {
+  if (list.length <= COMMUNES_CHUNK_SIZE) {
+    list.forEach((c, i) => {
       const opt = document.createElement("option");
       opt.value = i;
       opt.textContent = `${c.commune} (${c.code_postal})`;
       communeSelect.appendChild(opt);
     });
   } else {
-    fillCommuneOptionsChunked(communeSelect, communesList, 0);
+    fillCommuneOptionsChunked(communeSelect, list, 0);
   }
 }
 
@@ -264,7 +425,7 @@ function escapeHtml(s) {
 
 function getCommuneValue() {
   const sel = document.getElementById("commune-select");
-  const v = sel.value;
+  const v = sel?.value;
   if (v === "" || v === undefined || !communesList.length)
     return { code_dept: null, code_postal: null, commune: null };
   const i = parseInt(v, 10);
@@ -273,33 +434,102 @@ function getCommuneValue() {
   return { code_dept: c.code_dept, code_postal: c.code_postal, commune: c.commune };
 }
 
-async function submitStats() {
-  const region_id = document.getElementById("region-select").value || null;
-  let code_dept = document.getElementById("dept-select").value || null;
-  const c = getCommuneValue();
-  const code_postal = c.code_postal || null;
-  const commune = c.commune || null;
+function getCommuneValueForPlace(place) {
+  const selectId = place === 2 ? "commune-2-select" : "commune-1-select";
+  const list = place === 2 ? communesList2 : communesList;
+  const sel = document.getElementById(selectId);
+  const v = sel?.value;
+  if (v === "" || v === undefined || !list.length) return { code_dept: null, code_postal: null, commune: null };
+  const i = parseInt(v, 10);
+  if (Number.isNaN(i) || i < 0 || i >= list.length) return { code_dept: null, code_postal: null, commune: null };
+  const c = list[i];
+  return { code_dept: c.code_dept, code_postal: c.code_postal, commune: c.commune };
+}
+
+function getPlaceValues(place) {
+  const regionId = document.getElementById(place === 2 ? "region-2-select" : "region-1-select")?.value || null;
+  let code_dept = document.getElementById(place === 2 ? "dept-2-select" : "dept-1-select")?.value || null;
+  const c = getCommuneValueForPlace(place);
   if (c.code_dept) code_dept = c.code_dept;
+  return {
+    region_id: regionId,
+    code_dept: code_dept || null,
+    code_postal: c.code_postal || null,
+    commune: c.commune || null,
+  };
+}
 
-  let niveau;
-  if (commune && code_postal && code_dept) {
-    niveau = "commune";
-  } else if (code_dept) {
-    niveau = "department";
-  } else if (region_id) {
-    niveau = "region";
-  } else {
-    alert("Choisissez au moins une région, un département ou une commune.");
-    return;
+function syncSingleToPlace1() {
+  document.getElementById("region-1-select").value = document.getElementById("region-select").value || "";
+  document.getElementById("dept-1-select").value = document.getElementById("dept-select").value || "";
+  const sel = document.getElementById("commune-select");
+  const sel1 = document.getElementById("commune-1-select");
+  if (sel && sel1) {
+    sel1.innerHTML = sel.innerHTML;
+    sel1.value = sel.value;
   }
+  communesList = allCommunesList.length ? allCommunesList.slice(0) : communesList.slice(0);
+}
 
+function syncPlace1ToSingle() {
+  document.getElementById("region-select").value = document.getElementById("region-1-select").value || "";
+  document.getElementById("dept-select").value = document.getElementById("dept-1-select").value || "";
+  const sel1 = document.getElementById("commune-1-select");
+  const sel = document.getElementById("commune-select");
+  if (sel1 && sel) {
+    sel.innerHTML = sel1.innerHTML;
+    sel.value = sel1.value;
+  }
+  communesList = communesList.slice(0);
+}
+
+function setCompareMode(enabled) {
+  compareMode = enabled;
+  const section = document.getElementById("stats-place-section");
+  const single = document.getElementById("stats-place-single");
+  const compare = document.getElementById("stats-place-compare");
+  const compareBtn = document.getElementById("stats-compare-btn");
+  const content = document.getElementById("stats-content");
+  const compareResults = document.getElementById("stats-compare-results");
+  if (enabled) {
+    section.classList.add("compare-mode");
+    single.style.display = "none";
+    compare.setAttribute("aria-hidden", "false");
+    syncSingleToPlace1();
+    compareBtn.textContent = "Quitter la comparaison";
+    content.setAttribute("aria-hidden", "true");
+    compareResults.setAttribute("aria-hidden", "true");
+  } else {
+    section.classList.remove("compare-mode");
+    single.style.display = "block";
+    compare.setAttribute("aria-hidden", "true");
+    syncPlace1ToSingle();
+    compareBtn.textContent = "Comparer";
+    compareResults.setAttribute("aria-hidden", "true");
+    destroyChartsForSide(1);
+    destroyChartsForSide(2);
+    if (lastCompareDataForSingle) {
+      destroyCharts();
+      renderSingleView(
+        lastCompareDataForSingle.data,
+        lastCompareDataForSingle.titre,
+        lastCompareDataForSingle.annee_min,
+        lastCompareDataForSingle.annee_max
+      );
+    } else {
+      content.setAttribute("aria-hidden", "true");
+    }
+  }
+}
+
+function buildNiveauAndParams(p, type_local, surface_cat, pieces_cat, annee_min, annee_max) {
+  const { region_id, code_dept, code_postal, commune } = p;
+  let niveau;
+  if (commune && code_postal && code_dept) niveau = "commune";
+  else if (code_dept) niveau = "department";
+  else if (region_id) niveau = "region";
+  else return null;
   const region_id_for_api = niveau === "region" ? region_id : (region_id || getRegionForDepartment(code_dept));
-  const type_local = document.getElementById("type-local").value || undefined;
-  const surface_cat = document.getElementById("surface-cat").value || undefined;
-  const pieces_cat = document.getElementById("pieces-cat").value || undefined;
-  const annee_min = document.getElementById("annee-min").value || undefined;
-  const annee_max = document.getElementById("annee-max").value || undefined;
-
   const params = new URLSearchParams({
     niveau,
     ...(niveau === "region" && region_id_for_api && { region_id: region_id_for_api }),
@@ -312,10 +542,76 @@ async function submitStats() {
     ...(annee_min && { annee_min }),
     ...(annee_max && { annee_max }),
   });
+  return { niveau, region_id_for_api, code_dept, params };
+}
+
+async function submitStats() {
+  const type_local = document.getElementById("type-local").value || undefined;
+  const surface_cat = document.getElementById("surface-cat").value || undefined;
+  const pieces_cat = document.getElementById("pieces-cat").value || undefined;
+  const annee_min = document.getElementById("annee-min").value || undefined;
+  const annee_max = document.getElementById("annee-max").value || undefined;
+
+  if (compareMode) {
+    const p1 = getPlaceValues(1);
+    const p2 = getPlaceValues(2);
+    const b1 = buildNiveauAndParams(p1, type_local, surface_cat, pieces_cat, annee_min, annee_max);
+    const b2 = buildNiveauAndParams(p2, type_local, surface_cat, pieces_cat, annee_min, annee_max);
+    if (!b1 || !b2) {
+      alert("Choisissez au moins une région, un département ou une commune pour chaque lieu.");
+      return;
+    }
+    document.getElementById("stats-loading").setAttribute("aria-hidden", "false");
+    document.getElementById("stats-empty").style.display = "none";
+    document.getElementById("stats-content").setAttribute("aria-hidden", "true");
+    document.getElementById("stats-compare-results").setAttribute("aria-hidden", "true");
+    destroyCharts();
+    destroyChartsForSide(1);
+    destroyChartsForSide(2);
+    try {
+      const [res1, res2] = await Promise.all([
+        fetch(`${API_BASE}/api/stats?${b1.params}`),
+        fetch(`${API_BASE}/api/stats?${b2.params}`),
+      ]);
+      document.getElementById("stats-loading").setAttribute("aria-hidden", "true");
+      const data1 = res1.ok ? await res1.json() : null;
+      const data2 = res2.ok ? await res2.json() : null;
+      const titre1 = buildTitre(p1, b1, 1);
+      const titre2 = buildTitre(p2, b2, 2);
+      lastCompareDataForSingle = { data: data1, titre: titre1, annee_min, annee_max };
+      renderCompareSide(1, data1, titre1, annee_min, annee_max);
+      renderCompareSide(2, data2, titre2, annee_min, annee_max);
+      document.getElementById("stats-compare-results").setAttribute("aria-hidden", "false");
+    } catch (e) {
+      document.getElementById("stats-loading").setAttribute("aria-hidden", "true");
+      alert("Erreur : " + (e.message || String(e)));
+    }
+    return;
+  }
+
+  const region_id = document.getElementById("region-select").value || null;
+  let code_dept = document.getElementById("dept-select").value || null;
+  const c = getCommuneValue();
+  const code_postal = c.code_postal || null;
+  const commune = c.commune || null;
+  if (c.code_dept) code_dept = c.code_dept;
+
+  const p = { region_id, code_dept, code_postal, commune };
+  const built = buildNiveauAndParams(p, type_local, surface_cat, pieces_cat, annee_min, annee_max);
+  if (!built) {
+    alert("Choisissez au moins une région, un département ou une commune.");
+    return;
+  }
+  const { params } = built;
+
   document.getElementById("stats-loading").setAttribute("aria-hidden", "false");
   document.getElementById("stats-empty").style.display = "none";
   document.getElementById("stats-content").setAttribute("aria-hidden", "true");
+  document.getElementById("stats-compare-results").setAttribute("aria-hidden", "true");
+  lastCompareDataForSingle = null;
   destroyCharts();
+  destroyChartsForSide(1);
+  destroyChartsForSide(2);
   try {
     const res = await fetch(`${API_BASE}/api/stats?${params}`);
     if (!res.ok) {
@@ -337,24 +633,7 @@ async function submitStats() {
       document.getElementById("stats-empty").style.display = "none";
       document.getElementById("stats-content").setAttribute("aria-hidden", "false");
     }
-    const regionNom = region_id_for_api
-      ? geo.regions.find((r) => r.id === region_id_for_api)?.nom
-      : (code_dept ? geo.regions.find((r) => r.departements && r.departements.includes(code_dept))?.nom : null);
-    const deptLibelle = DEPT_NAMES[code_dept] ? `${code_dept} ${DEPT_NAMES[code_dept]}` : code_dept;
-    let titre;
-    if (niveau === "region") {
-      titre = regionNom || "Région";
-    } else if (niveau === "department") {
-      titre = regionNom ? `${regionNom} / ${deptLibelle}` : deptLibelle;
-    } else {
-      const postaux = communesList
-        .filter((c) => c.commune === commune && c.code_dept === code_dept)
-        .map((c) => c.code_postal)
-        .filter((v, i, a) => a.indexOf(v) === i)
-        .sort();
-      const base = regionNom ? `${regionNom} / ${deptLibelle}` : deptLibelle;
-      titre = `${base} / ${commune} (${postaux.join(", ")})`;
-    }
+    const titre = buildTitre(p, built, null);
     document.getElementById("stats-title").textContent = titre;
     document.getElementById("nb-ventes").textContent = formatNum(g.nb_ventes);
 
@@ -491,6 +770,57 @@ document.getElementById("commune-select").addEventListener("change", () => {
   }
 });
 
+function bindPlaceSelects(place) {
+  const s = String(place);
+  const regionId = place === 2 ? "region-2-select" : "region-1-select";
+  const deptId = place === 2 ? "dept-2-select" : "dept-1-select";
+  const communeId = place === 2 ? "commune-2-select" : "commune-1-select";
+  document.getElementById(regionId)?.addEventListener("change", function () {
+    const regionVal = this.value;
+    fillDepartmentSelect(regionVal || null, deptId);
+    document.getElementById(deptId).value = "";
+    restoreAllCommunesInDropdown(s);
+  });
+  document.getElementById(deptId)?.addEventListener("change", function () {
+    const codeDept = this.value;
+    if (!codeDept) {
+      restoreAllCommunesInDropdown(s);
+      return;
+    }
+    const inferredRegion = getRegionForDepartment(codeDept);
+    if (inferredRegion) document.getElementById(regionId).value = inferredRegion;
+    loadCommunes(codeDept, s);
+  });
+  document.getElementById(communeId)?.addEventListener("change", function () {
+    const c = place === 2 ? getCommuneValueForPlace(2) : getCommuneValueForPlace(1);
+    if (c.code_dept && (c.commune || c.code_postal)) {
+      document.getElementById(deptId).value = c.code_dept;
+      const regionIdVal = getRegionForDepartment(c.code_dept);
+      if (regionIdVal) document.getElementById(regionId).value = regionIdVal;
+    }
+  });
+}
+bindPlaceSelects(1);
+bindPlaceSelects(2);
+
+function switchLieuTab(lieuNum) {
+  document.querySelectorAll(".stats-lieu-tab-btn").forEach((btn) => {
+    const isActive = btn.getAttribute("data-lieu") === String(lieuNum);
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive);
+  });
+  document.querySelectorAll(".stats-lieu-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.id === "stats-lieu-panel-" + lieuNum);
+  });
+}
+document.querySelectorAll(".stats-lieu-tab-btn").forEach((btn) => {
+  btn.addEventListener("click", () => switchLieuTab(btn.getAttribute("data-lieu")));
+});
+
+document.getElementById("stats-compare-btn").addEventListener("click", () => {
+  setCompareMode(!compareMode);
+});
+
 document.getElementById("stats-btn").addEventListener("click", submitStats);
 
 let periodToastTimeout = null;
@@ -561,12 +891,25 @@ document.getElementById("stats-reset-btn").addEventListener("click", () => {
   document.getElementById("commune-select").value = "";
   fillDepartmentSelect(null);
   restoreAllCommunesInDropdown();
+  if (compareMode) {
+    document.getElementById("region-1-select").value = "";
+    document.getElementById("dept-1-select").value = "";
+    document.getElementById("commune-1-select").value = "";
+    fillDepartmentSelect(null, "dept-1-select");
+    restoreAllCommunesInDropdown("1");
+    document.getElementById("region-2-select").value = "";
+    document.getElementById("dept-2-select").value = "";
+    document.getElementById("commune-2-select").value = "";
+    fillDepartmentSelect(null, "dept-2-select");
+    restoreAllCommunesInDropdown("2");
+  }
   document.getElementById("type-local").value = "";
   document.getElementById("surface-cat").value = "";
   document.getElementById("pieces-cat").value = "";
   document.getElementById("annee-min").value = "";
   document.getElementById("annee-max").value = "";
   document.querySelector(".stats-tabs")?.classList.remove("single-year");
+  document.querySelectorAll("#stats-result-1 .stats-tabs, #stats-result-2 .stats-tabs").forEach((el) => el?.classList.remove("single-year"));
   switchTab("prix");
   updatePeriodConstraints();
   const toast = document.getElementById("stats-period-toast");
@@ -588,10 +931,38 @@ document.getElementById("stats-controls").addEventListener("keydown", (e) => {
 });
 
 document.querySelectorAll(".stats-tab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => switchTab(btn.getAttribute("data-tab")));
+  btn.addEventListener("click", () => {
+    const tabId = btn.getAttribute("data-tab");
+    const container = btn.closest(".stats-result-half");
+    if (container) {
+      switchTabInContainer(container, tabId);
+      const compareResults = document.getElementById("stats-compare-results");
+      if (compareResults && compareResults.getAttribute("aria-hidden") !== "true") {
+        const otherContainer = container.id === "stats-result-1" ? document.getElementById("stats-result-2") : document.getElementById("stats-result-1");
+        if (otherContainer) {
+          const otherTabId = tabId.endsWith("-1") ? tabId.replace(/-1$/, "-2") : tabId.replace(/-2$/, "-1");
+          switchTabInContainer(otherContainer, otherTabId);
+        }
+      }
+    } else {
+      switchTab(tabId);
+    }
+  });
 });
 
-document.getElementById("stats-content").addEventListener("click", (e) => {
+function switchTabInContainer(container, tabId) {
+  if (!container) return;
+  container.querySelectorAll(".stats-tab-btn").forEach((btn) => {
+    const isActive = btn.getAttribute("data-tab") === tabId;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", isActive);
+  });
+  container.querySelectorAll(".stats-tab-panel").forEach((panel) => {
+    panel.classList.toggle("active", panel.id === "tab-panel-" + tabId);
+  });
+}
+
+document.getElementById("stats-results").addEventListener("click", (e) => {
   const btn = e.target.closest(".chart-y-axis-btn");
   if (!btn) return;
   const ctrl = btn.closest(".chart-y-axis-ctrl");
@@ -613,7 +984,7 @@ document.getElementById("stats-content").addEventListener("click", (e) => {
   }
 });
 
-document.getElementById("stats-content").addEventListener("input", (e) => {
+document.getElementById("stats-results").addEventListener("input", (e) => {
   if (!e.target.classList.contains("chart-y-axis-min")) return;
   const ctrl = e.target.closest(".chart-y-axis-ctrl");
   if (!ctrl || !ctrl.classList.contains("fixed")) return;

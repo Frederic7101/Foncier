@@ -20,60 +20,107 @@
         <section id="stats-controls" class="zone">
           <h2>Critères</h2>
           <div class="stats-form">
-            <div class="field">
-              <label for="region-select">Région</label>
-              <select id="region-select"><option value="">Chargement…</option></select>
-            </div>
-            <div class="field">
-              <label for="dept-select">Département</label>
-              <select id="dept-select"><option value="">Chargement…</option></select>
-            </div>
-            <div class="field">
-              <label for="commune-select">Commune</label>
-              <select id="commune-select"><option value="">— Choisir une commune —</option></select>
-            </div>
-            <div class="field">
-              <label for="type-local">Type de local</label>
-              <select id="type-local">
-                <option value="">Tous (Appartement + Maison)</option>
-                <option value="Appartement">Appartement</option>
-                <option value="Maison">Maison</option>
-              </select>
-            </div>
-            <div id="cat-surface" class="field">
-              <label for="surface-cat">Catégorie surface (m²)</label>
-              <select id="surface-cat">
-                <option value="">—</option>
-                <option value="S1">S1 &lt; 25</option>
-                <option value="S2">S2 25–35</option>
-                <option value="S3">S3 35–45</option>
-                <option value="S4">S4 45–55</option>
-                <option value="S5">S5 &gt; 55</option>
-              </select>
-            </div>
-            <div id="cat-pieces" class="field">
-              <label for="pieces-cat">Catégorie pièces</label>
-              <select id="pieces-cat">
-                <option value="">—</option>
-                <option value="T1">T1 (1 pièce)</option>
-                <option value="T2">T2</option>
-                <option value="T3">T3</option>
-                <option value="T4">T4</option>
-                <option value="T5">T5 (5+)</option>
-              </select>
-            </div>
-            <div class="field range-field">
-              <label>Période</label>
-              <div class="range-group">
-                <input id="annee-min" type="number" min="2000" max="2030" placeholder="min" aria-label="Année de début" />
-                <span>à</span>
-                <input id="annee-max" type="number" min="2000" max="2030" placeholder="max" aria-label="Année de fin" />
+            <!-- Lieu(x) : un seul bloc ou onglets Lieu 1 / Lieu 2 -->
+            <div id="stats-place-section">
+              <div id="stats-place-single" class="stats-place-block">
+                <div class="field">
+                  <label for="region-select">Région</label>
+                  <select id="region-select"><option value="">Chargement…</option></select>
+                </div>
+                <div class="field">
+                  <label for="dept-select">Département</label>
+                  <select id="dept-select"><option value="">Chargement…</option></select>
+                </div>
+                <div class="field">
+                  <label for="commune-select">Commune</label>
+                  <select id="commune-select"><option value="">— Choisir une commune —</option></select>
+                </div>
               </div>
-              <div id="stats-period-toast" class="stats-toast" role="status" aria-live="polite" hidden></div>
+              <div id="stats-place-compare" class="stats-place-compare" aria-hidden="true">
+                <div class="stats-lieu-tabs" role="tablist">
+                  <button type="button" class="stats-lieu-tab-btn active" role="tab" aria-selected="true" data-lieu="1">Lieu 1</button>
+                  <button type="button" class="stats-lieu-tab-btn" role="tab" aria-selected="false" data-lieu="2">Lieu 2</button>
+                </div>
+                <div class="stats-lieu-panels">
+                  <div id="stats-lieu-panel-1" class="stats-lieu-panel active" role="tabpanel">
+                    <div class="field">
+                      <label for="region-select">Région 1</label>
+                      <select id="region-1-select"><option value="">Chargement…</option></select>
+                    </div>
+                    <div class="field">
+                      <label for="dept-1-select">Département 1</label>
+                      <select id="dept-1-select"><option value="">Chargement…</option></select>
+                    </div>
+                    <div class="field">
+                      <label for="commune-1-select">Commune 1</label>
+                      <select id="commune-1-select"><option value="">— Choisir une commune —</option></select>
+                    </div>
+                  </div>
+                  <div id="stats-lieu-panel-2" class="stats-lieu-panel" role="tabpanel">
+                    <div class="field">
+                      <label for="region-2-select">Région 2</label>
+                      <select id="region-2-select"><option value="">Chargement…</option></select>
+                    </div>
+                    <div class="field">
+                      <label for="dept-2-select">Département 2</label>
+                      <select id="dept-2-select"><option value="">Chargement…</option></select>
+                    </div>
+                    <div class="field">
+                      <label for="commune-2-select">Commune 2</label>
+                      <select id="commune-2-select"><option value="">— Choisir une commune —</option></select>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
+
+            <!-- Critères communs (type, surface, pièces, période) -->
+            <div class="stats-common-section">
+              <div class="field">
+                <label for="type-local">Type de local</label>
+                <select id="type-local">
+                  <option value="">Tous (Appartement + Maison)</option>
+                  <option value="Appartement">Appartement</option>
+                  <option value="Maison">Maison</option>
+                </select>
+              </div>
+              <div id="cat-surface" class="field">
+                <label for="surface-cat">Surface (m²)</label>
+                <select id="surface-cat">
+                  <option value="">—</option>
+                  <option value="S1">S1 &lt; 25</option>
+                  <option value="S2">S2 25–35</option>
+                  <option value="S3">S3 35–45</option>
+                  <option value="S4">S4 45–55</option>
+                  <option value="S5">S5 &gt; 55</option>
+                </select>
+              </div>
+              <div id="cat-pieces" class="field">
+                <label for="pieces-cat">Nombre de pièces</label>
+                <select id="pieces-cat">
+                  <option value="">—</option>
+                  <option value="T1">T1 (1 pièce)</option>
+                  <option value="T2">T2</option>
+                  <option value="T3">T3</option>
+                  <option value="T4">T4</option>
+                  <option value="T5">T5 (5+)</option>
+                </select>
+              </div>
+              <div class="field range-field">
+                <label>Période de comparaison</label>
+                <div class="range-group">
+                  <input id="annee-min" type="number" min="2000" max="2030" placeholder="min" aria-label="Année de début" />
+                  <span>à</span>
+                  <input id="annee-max" type="number" min="2000" max="2030" placeholder="max" aria-label="Année de fin" />
+                </div>
+                <div id="stats-period-toast" class="stats-toast" role="status" aria-live="polite" hidden></div>
+              </div>
+            </div>
+
             <div class="stats-submit">
               <button id="stats-btn">Afficher</button>
               <button type="button" id="stats-reset-btn" class="stats-reset-btn">Réinitialiser</button>
+              <button type="button" id="stats-compare-btn" class="stats-compare-btn">Comparer</button>
             </div>
           </div>
         </section>
@@ -84,6 +131,8 @@
             <span class="stats-loading-text">Chargement…</span>
           </div>
           <div id="stats-empty" class="stats-empty">Choisissez des critères et cliquez sur Afficher.</div>
+
+          <!-- Résultat simple (un seul lieu) -->
           <div id="stats-content" class="stats-content" aria-hidden="true">
             <h2 id="stats-title" class="stats-title-centered"></h2>
             <div class="stats-nb-ventes">
@@ -129,6 +178,42 @@
                       <input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" aria-label="Valeur min axe Y" />
                     </div>
                   </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Résultat comparé (2 colonnes : Lieu 1 | Lieu 2) -->
+          <div id="stats-compare-results" class="stats-compare-results" aria-hidden="true">
+            <div id="stats-result-1" class="stats-result-half">
+              <h2 id="stats-title-1" class="stats-title-centered"></h2>
+              <div class="stats-nb-ventes"><span class="label">Nombre de ventes</span><span id="nb-ventes-1" class="value">—</span></div>
+              <div class="stats-tabs stats-tabs-compare">
+                <div class="stats-tab-buttons" role="tablist">
+                  <button type="button" class="stats-tab-btn active" data-tab="prix-1">Prix (€)</button>
+                  <button type="button" class="stats-tab-btn" data-tab="surface-1">Surface (m²)</button>
+                  <button type="button" class="stats-tab-btn" data-tab="prixm2-1">Prix / m² (€)</button>
+                </div>
+                <div class="stats-tab-panels">
+                  <div id="tab-panel-prix-1" class="stats-tab-panel active"><ul class="stats-list" id="section-prix-1"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-prix-1"></canvas></div><div class="chart-y-axis-ctrl" data-chart="prix-1"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                  <div id="tab-panel-surface-1" class="stats-tab-panel"><ul class="stats-list" id="section-surface-1"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-surface-1"></canvas></div><div class="chart-y-axis-ctrl" data-chart="surface-1"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                  <div id="tab-panel-prixm2-1" class="stats-tab-panel"><ul class="stats-list" id="section-prixm2-1"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-prixm2-1"></canvas></div><div class="chart-y-axis-ctrl" data-chart="prixm2-1"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                </div>
+              </div>
+            </div>
+            <div id="stats-result-2" class="stats-result-half">
+              <h2 id="stats-title-2" class="stats-title-centered"></h2>
+              <div class="stats-nb-ventes"><span class="label">Nombre de ventes</span><span id="nb-ventes-2" class="value">—</span></div>
+              <div class="stats-tabs stats-tabs-compare">
+                <div class="stats-tab-buttons" role="tablist">
+                  <button type="button" class="stats-tab-btn active" data-tab="prix-2">Prix (€)</button>
+                  <button type="button" class="stats-tab-btn" data-tab="surface-2">Surface (m²)</button>
+                  <button type="button" class="stats-tab-btn" data-tab="prixm2-2">Prix / m² (€)</button>
+                </div>
+                <div class="stats-tab-panels">
+                  <div id="tab-panel-prix-2" class="stats-tab-panel active"><ul class="stats-list" id="section-prix-2"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-prix-2"></canvas></div><div class="chart-y-axis-ctrl" data-chart="prix-2"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                  <div id="tab-panel-surface-2" class="stats-tab-panel"><ul class="stats-list" id="section-surface-2"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-surface-2"></canvas></div><div class="chart-y-axis-ctrl" data-chart="surface-2"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                  <div id="tab-panel-prixm2-2" class="stats-tab-panel"><ul class="stats-list" id="section-prixm2-2"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-prixm2-2"></canvas></div><div class="chart-y-axis-ctrl" data-chart="prixm2-2"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
                 </div>
               </div>
             </div>

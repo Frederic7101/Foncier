@@ -140,6 +140,109 @@ nav a:hover {
   background: #7dd3fc;
   color: #075985;
 }
+.stats-compare-btn {
+  width: 100%;
+  padding: 0.4rem 0.75rem;
+  background: #e0e7ff;
+  color: #3730a3;
+  border: 1px solid #a5b4fc;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+.stats-compare-btn:hover {
+  background: #c7d2fe;
+}
+
+/* Bloc lieu unique vs onglets Lieu 1 / Lieu 2 */
+.stats-place-block {
+  display: block;
+}
+.stats-place-compare {
+  display: none;
+}
+.stats-place-compare[aria-hidden="false"] {
+  display: block;
+}
+.stats-place-section.compare-mode .stats-place-block {
+  display: none;
+}
+.stats-place-section.compare-mode .stats-place-compare {
+  display: block;
+}
+.stats-place-section.compare-mode .stats-place-compare[aria-hidden="true"] {
+  display: none;
+}
+
+/* Onglets Lieu 1 | Lieu 2 */
+.stats-lieu-tabs {
+  display: flex;
+  gap: 0.25rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 2px solid #e5e7eb;
+}
+.stats-lieu-tab-btn {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.9rem;
+  background: #f3f4f6;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  cursor: pointer;
+  color: #4b5563;
+  border-radius: 0.25rem 0.25rem 0 0;
+}
+.stats-lieu-tab-btn:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+.stats-lieu-tab-btn.active {
+  background: #fff;
+  color: #2563eb;
+  font-weight: 600;
+  border-bottom-color: #fff;
+}
+.stats-lieu-panels {
+  padding-top: 0.25rem;
+}
+.stats-lieu-panel {
+  display: none;
+}
+.stats-lieu-panel.active {
+  display: block;
+}
+.stats-common-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+/* Résultats en 2 colonnes (comparaison) */
+.stats-compare-results {
+  display: none;
+  gap: 1rem;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+.stats-compare-results[aria-hidden="false"] {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+.stats-result-half {
+  min-width: 0;
+  overflow: auto;
+  padding: 0.5rem;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 0.5rem;
+}
+.stats-tabs-compare .stats-tab-panels {
+  padding: 0.5rem;
+}
+.stats-tabs-compare .stats-tab-panel .chart-wrap {
+  height: 180px;
+}
 
 /* Titre centré */
 .stats-title-centered {
