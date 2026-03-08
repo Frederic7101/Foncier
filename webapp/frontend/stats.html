@@ -119,6 +119,7 @@
 
             <div class="stats-submit">
               <button id="stats-btn">Afficher</button>
+              <button type="button" id="stats-overlay-btn" class="stats-overlay-btn" style="display: none;">Superposer les graphiques</button>
               <button type="button" id="stats-reset-btn" class="stats-reset-btn">Réinitialiser</button>
               <button type="button" id="stats-compare-btn" class="stats-compare-btn">Comparer</button>
             </div>
@@ -177,6 +178,41 @@
                       <button type="button" class="chart-y-axis-btn" aria-label="Origine des ordonnées">Y</button>
                       <input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" aria-label="Valeur min axe Y" />
                     </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Résultat superposé (un onglet, courbes des 2 lieux sur les mêmes graphiques) -->
+          <div id="stats-overlay-results" class="stats-overlay-results" aria-hidden="true">
+            <h2 id="stats-overlay-title" class="stats-overlay-title"></h2>
+            <div class="stats-tabs">
+              <div class="stats-tab-buttons" role="tablist">
+                <button type="button" class="stats-tab-btn active" role="tab" aria-selected="true" data-tab="overlay-prix">Prix (€)</button>
+                <button type="button" class="stats-tab-btn" role="tab" aria-selected="false" data-tab="overlay-surface">Surface (m²)</button>
+                <button type="button" class="stats-tab-btn" role="tab" aria-selected="false" data-tab="overlay-prixm2">Prix / m² (€)</button>
+              </div>
+              <div class="stats-tab-panels">
+                <div id="tab-panel-overlay-prix" class="stats-tab-panel active" role="tabpanel">
+                  <h3 class="stats-section-title">Prix (€)</h3>
+                  <div class="chart-wrap">
+                    <div class="chart-canvas-wrap"><canvas id="chart-overlay-prix"></canvas></div>
+                    <div class="chart-y-axis-ctrl" data-chart="overlay-prix" title="Origine axe Y"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div>
+                  </div>
+                </div>
+                <div id="tab-panel-overlay-surface" class="stats-tab-panel" role="tabpanel">
+                  <h3 class="stats-section-title">Surface (m²)</h3>
+                  <div class="chart-wrap">
+                    <div class="chart-canvas-wrap"><canvas id="chart-overlay-surface"></canvas></div>
+                    <div class="chart-y-axis-ctrl" data-chart="overlay-surface" title="Origine axe Y"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div>
+                  </div>
+                </div>
+                <div id="tab-panel-overlay-prixm2" class="stats-tab-panel" role="tabpanel">
+                  <h3 class="stats-section-title">Prix / m² (€)</h3>
+                  <div class="chart-wrap">
+                    <div class="chart-canvas-wrap"><canvas id="chart-overlay-prixm2"></canvas></div>
+                    <div class="chart-y-axis-ctrl" data-chart="overlay-prixm2" title="Origine axe Y"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div>
                   </div>
                 </div>
               </div>

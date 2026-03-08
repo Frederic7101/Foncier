@@ -36,6 +36,11 @@ let charts = { prix: null, surface: null, prixm2: null };
 let compareMode = false;
 /** Données du Lieu 1 après une comparaison, pour réafficher en vue simple sans refetch */
 let lastCompareDataForSingle = null;
+/** Données et titre du Lieu 2 après une comparaison (pour mode superposition) */
+let lastCompareData2 = null;
+let lastCompareTitre2 = null;
+/** Mode superposition des graphiques (courbes des 2 lieux sur les mêmes graphiques) */
+let overlayMode = false;
 
 function getDepartmentsForRegion(regionId) {
   const reg = geo.regions.find((r) => r.id === regionId);
@@ -220,12 +225,18 @@ function renderSingleView(data, titre, annee_min, annee_max) {
   }
 }
 
-/** Couleurs pour les 4 courbes (moyenne, médiane, Q1, Q3) */
+/** Couleurs pour les 4 courbes (moyenne, médiane, Q1, Q3) — Lieu 1 = foncé, Lieu 2 = clair + pointillés */
 const CHART_COLORS = [
   { border: "#2563eb", fill: "rgba(37, 99, 235, 0.1)" },
   { border: "#059669", fill: "rgba(5, 150, 105, 0.1)" },
   { border: "#d97706", fill: "rgba(217, 119, 6, 0.1)" },
   { border: "#7c3aed", fill: "rgba(124, 58, 237, 0.1)" },
+];
+const CHART_COLORS_LIGHT = [
+  { border: "#93c5fd", fill: "rgba(147, 197, 253, 0.08)" },
+  { border: "#6ee7b7", fill: "rgba(110, 231, 183, 0.08)" },
+  { border: "#fcd34d", fill: "rgba(252, 211, 77, 0.08)" },
+  { border: "#c4b5fd", fill: "rgba(196, 181, 253, 0.08)" },
 ];
 
 /**
@@ -268,6 +279,135 @@ function buildChartMulti(canvasId, series, datasetsConfig, yMin = null) {
       scales: {
         y: { ...yScale, ticks: { padding: 10 } },
       },
+      plugins: {
+        legend: {
+          onClick: (e, legendItem, legend) => {
+            const idx = legendItem.datasetIndex;
+            const chart = legend.chart;
+            const meta = chart.getDatasetMeta(idx);
+            meta.hidden = !meta.hidden;
+            chart.update();
+          },
+        },
+      },
+    },
+  });
+}
+
+function destroyChartsForOverlay() {
+  ["overlay-prix", "overlay-surface", "overlay-prixm2"].forEach((key) => {
+    if (charts[key]) {
+      charts[key].destroy();
+      charts[key] = null;
+    }
+  });
+}
+
+/** Affiche la vue superposée (courbes des 2 lieux sur les mêmes graphiques) sans refetch. */
+function renderOverlayView() {
+  const data1 = lastCompareDataForSingle?.data;
+  const data2 = lastCompareData2;
+  const titre1 = lastCompareDataForSingle?.titre || "—";
+  const titre2 = lastCompareTitre2 || "—";
+  document.getElementById("stats-overlay-title").textContent = `Lieu 1 : ${titre1}  |  Lieu 2 : ${titre2}`;
+  const series1 = data1?.series || [];
+  const series2 = data2?.series || [];
+  const hasEnough = (series1.length > 1 || series2.length > 1) || (series1.length === 1 && series2.length === 1);
+  const yMinDefault = 0;
+  if (hasEnough) {
+    buildChartOverlay("chart-overlay-prix", series1, series2, [
+      { key: "prix_moyen", label: "Prix moyen (€)" },
+      { key: "prix_median", label: "Prix médian (€)" },
+      { key: "prix_q1", label: "Prix Q1 (€)" },
+      { key: "prix_q3", label: "Prix Q3 (€)" },
+    ], yMinDefault);
+    buildChartOverlay("chart-overlay-surface", series1, series2, [
+      { key: "surface_moyenne", label: "Surface moy. (m²)" },
+      { key: "surface_mediane", label: "Surface méd. (m²)" },
+    ], yMinDefault);
+    buildChartOverlay("chart-overlay-prixm2", series1, series2, [
+      { key: "prix_m2_moyenne", label: "Prix/m² moy. (€)" },
+      { key: "prix_m2_mediane", label: "Prix/m² méd. (€)" },
+      { key: "prix_m2_q1", label: "Prix/m² Q1 (€)" },
+      { key: "prix_m2_q3", label: "Prix/m² Q3 (€)" },
+    ], yMinDefault);
+  }
+  document.getElementById("stats-overlay-results").setAttribute("aria-hidden", "false");
+  document.getElementById("stats-compare-results").setAttribute("aria-hidden", "true");
+  const overlayResults = document.getElementById("stats-overlay-results");
+  overlayResults.querySelectorAll(".chart-wrap").forEach((wrap) => { wrap.style.display = hasEnough ? "block" : "none"; });
+  if (hasEnough) {
+    overlayResults.querySelectorAll(".chart-y-axis-ctrl").forEach((ctrl) => {
+      ctrl.classList.add("fixed");
+      ctrl.querySelector(".chart-y-axis-btn").classList.add("fixed");
+      ctrl.querySelector(".chart-y-axis-min").value = "0";
+    });
+  }
+  switchTabInContainer(overlayResults, "overlay-prix");
+}
+
+/**
+ * Fusionne deux séries par année (union des années, triées).
+ * Retourne { labels, map1, map2 } où map1[annee] = row du lieu 1, map2[annee] = row du lieu 2.
+ */
+function mergeSeriesByYear(series1, series2) {
+  const years = new Set([
+    ...(series1 || []).map((s) => s.annee),
+    ...(series2 || []).map((s) => s.annee),
+  ]);
+  const labels = Array.from(years).sort((a, b) => Number(a) - Number(b)).map(String);
+  const map1 = Object.fromEntries((series1 || []).map((s) => [String(s.annee), s]));
+  const map2 = Object.fromEntries((series2 || []).map((s) => [String(s.annee), s]));
+  return { labels, map1, map2 };
+}
+
+/**
+ * Graphique superposé : courbes Lieu 1 (couleurs foncées, trait plein) et Lieu 2 (couleurs claires, pointillés).
+ */
+function buildChartOverlay(canvasId, series1, series2, datasetsConfig, yMin = null) {
+  const chartKey = canvasId.replace("chart-", "");
+  const ctx = document.getElementById(canvasId).getContext("2d");
+  if (charts[chartKey]) {
+    charts[chartKey].destroy();
+    charts[chartKey] = null;
+  }
+  const { labels, map1, map2 } = mergeSeriesByYear(series1, series2);
+  const datasets = [];
+  datasetsConfig.forEach((cfg, i) => {
+    const dark = CHART_COLORS[i % CHART_COLORS.length];
+    const light = CHART_COLORS_LIGHT[i % CHART_COLORS_LIGHT.length];
+    datasets.push({
+      label: cfg.label + " (Lieu 1)",
+      data: labels.map((y) => (map1[y] && map1[y][cfg.key] != null ? map1[y][cfg.key] : null)),
+      borderColor: dark.border,
+      backgroundColor: dark.fill,
+      fill: true,
+      tension: 0.2,
+      borderDash: [],
+    });
+    datasets.push({
+      label: cfg.label + " (Lieu 2)",
+      data: labels.map((y) => (map2[y] && map2[y][cfg.key] != null ? map2[y][cfg.key] : null)),
+      borderColor: light.border,
+      backgroundColor: light.fill,
+      fill: true,
+      tension: 0.2,
+      borderDash: [5, 4],
+    });
+  });
+  const yScale = {
+    beginAtZero: yMin === 0,
+    ...(yMin != null && typeof yMin === "number" ? { min: yMin } : {}),
+  };
+  charts[chartKey] = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { left: 14 } },
+      interaction: { mode: "index", intersect: false },
+      scales: { y: { ...yScale, ticks: { padding: 10 } } },
       plugins: {
         legend: {
           onClick: (e, legendItem, legend) => {
@@ -491,6 +631,8 @@ function setCompareMode(enabled) {
   const compareBtn = document.getElementById("stats-compare-btn");
   const content = document.getElementById("stats-content");
   const compareResults = document.getElementById("stats-compare-results");
+  const overlayBtn = document.getElementById("stats-overlay-btn");
+  const overlayResults = document.getElementById("stats-overlay-results");
   if (enabled) {
     section.classList.add("compare-mode");
     single.style.display = "none";
@@ -499,6 +641,10 @@ function setCompareMode(enabled) {
     compareBtn.textContent = "Quitter la comparaison";
     content.setAttribute("aria-hidden", "true");
     compareResults.setAttribute("aria-hidden", "true");
+    overlayResults.setAttribute("aria-hidden", "true");
+    overlayMode = false;
+    if (overlayBtn) overlayBtn.style.display = "block";
+    if (overlayBtn) overlayBtn.textContent = "Superposer les graphiques";
   } else {
     section.classList.remove("compare-mode");
     single.style.display = "block";
@@ -506,8 +652,12 @@ function setCompareMode(enabled) {
     syncPlace1ToSingle();
     compareBtn.textContent = "Comparer";
     compareResults.setAttribute("aria-hidden", "true");
+    overlayResults.setAttribute("aria-hidden", "true");
+    overlayMode = false;
+    if (overlayBtn) overlayBtn.style.display = "none";
     destroyChartsForSide(1);
     destroyChartsForSide(2);
+    destroyChartsForOverlay();
     if (lastCompareDataForSingle) {
       destroyCharts();
       renderSingleView(
@@ -579,6 +729,12 @@ async function submitStats() {
       const titre1 = buildTitre(p1, b1, 1);
       const titre2 = buildTitre(p2, b2, 2);
       lastCompareDataForSingle = { data: data1, titre: titre1, annee_min, annee_max };
+      lastCompareData2 = data2;
+      lastCompareTitre2 = titre2;
+      overlayMode = false;
+      document.getElementById("stats-overlay-results").setAttribute("aria-hidden", "true");
+      document.getElementById("stats-overlay-btn").textContent = "Superposer les graphiques";
+      document.getElementById("stats-overlay-btn").style.display = "block";
       renderCompareSide(1, data1, titre1, annee_min, annee_max);
       renderCompareSide(2, data2, titre2, annee_min, annee_max);
       document.getElementById("stats-compare-results").setAttribute("aria-hidden", "false");
@@ -821,6 +977,20 @@ document.getElementById("stats-compare-btn").addEventListener("click", () => {
   setCompareMode(!compareMode);
 });
 
+document.getElementById("stats-overlay-btn").addEventListener("click", () => {
+  if (overlayMode) {
+    overlayMode = false;
+    document.getElementById("stats-overlay-results").setAttribute("aria-hidden", "true");
+    document.getElementById("stats-compare-results").setAttribute("aria-hidden", "false");
+    destroyChartsForOverlay();
+    document.getElementById("stats-overlay-btn").textContent = "Superposer les graphiques";
+  } else {
+    overlayMode = true;
+    renderOverlayView();
+    document.getElementById("stats-overlay-btn").textContent = "Quitter la superposition";
+  }
+});
+
 document.getElementById("stats-btn").addEventListener("click", submitStats);
 
 let periodToastTimeout = null;
@@ -933,11 +1103,11 @@ document.getElementById("stats-controls").addEventListener("keydown", (e) => {
 document.querySelectorAll(".stats-tab-btn").forEach((btn) => {
   btn.addEventListener("click", () => {
     const tabId = btn.getAttribute("data-tab");
-    const container = btn.closest(".stats-result-half");
+    const container = btn.closest(".stats-result-half") || btn.closest(".stats-overlay-results");
     if (container) {
       switchTabInContainer(container, tabId);
       const compareResults = document.getElementById("stats-compare-results");
-      if (compareResults && compareResults.getAttribute("aria-hidden") !== "true") {
+      if (container.classList.contains("stats-result-half") && compareResults && compareResults.getAttribute("aria-hidden") !== "true") {
         const otherContainer = container.id === "stats-result-1" ? document.getElementById("stats-result-2") : document.getElementById("stats-result-1");
         if (otherContainer) {
           const otherTabId = tabId.endsWith("-1") ? tabId.replace(/-1$/, "-2") : tabId.replace(/-2$/, "-1");
