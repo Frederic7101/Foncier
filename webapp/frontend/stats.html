@@ -17,6 +17,7 @@
       </header>
 
       <main class="stats-layout">
+        <div class="stats-main">
         <section id="stats-controls" class="zone">
           <h2>Critères</h2>
           <div class="stats-form">
@@ -38,13 +39,16 @@
               </div>
               <div id="stats-place-compare" class="stats-place-compare" aria-hidden="true">
                 <div class="stats-lieu-tabs" role="tablist">
-                  <button type="button" class="stats-lieu-tab-btn active" role="tab" aria-selected="true" data-lieu="1">Lieu 1</button>
-                  <button type="button" class="stats-lieu-tab-btn" role="tab" aria-selected="false" data-lieu="2">Lieu 2</button>
+                  <button type="button" class="stats-lieu-tab-btn active" role="tab" aria-selected="true" data-lieu="1"><span class="stats-lieu-tab-label">Lieu 1</span><span class="stats-lieu-tab-close" aria-label="Fermer">×</span></button>
+                  <button type="button" class="stats-lieu-tab-btn" role="tab" aria-selected="false" data-lieu="2"><span class="stats-lieu-tab-label">Lieu 2</span><span class="stats-lieu-tab-close" aria-label="Fermer">×</span></button>
+                  <button type="button" class="stats-lieu-tab-btn stats-lieu-tab-hidden" role="tab" aria-selected="false" data-lieu="3"><span class="stats-lieu-tab-label">Lieu 3</span><span class="stats-lieu-tab-close" aria-label="Fermer">×</span></button>
+                  <button type="button" class="stats-lieu-tab-btn stats-lieu-tab-hidden" role="tab" aria-selected="false" data-lieu="4"><span class="stats-lieu-tab-label">Lieu 4</span><span class="stats-lieu-tab-close" aria-label="Fermer">×</span></button>
+                  <button type="button" class="stats-lieu-add-btn" id="stats-lieu-add-btn" title="Ajouter le lieu 3 (max 4)">+ Lieu 3</button>
                 </div>
                 <div class="stats-lieu-panels">
                   <div id="stats-lieu-panel-1" class="stats-lieu-panel active" role="tabpanel">
                     <div class="field">
-                      <label for="region-select">Région 1</label>
+                      <label for="region-1-select">Région 1</label>
                       <select id="region-1-select"><option value="">Chargement…</option></select>
                     </div>
                     <div class="field">
@@ -68,6 +72,34 @@
                     <div class="field">
                       <label for="commune-2-select">Commune 2</label>
                       <select id="commune-2-select"><option value="">— Choisir une commune —</option></select>
+                    </div>
+                  </div>
+                  <div id="stats-lieu-panel-3" class="stats-lieu-panel stats-lieu-panel-hidden" role="tabpanel">
+                    <div class="field">
+                      <label for="region-3-select">Région 3</label>
+                      <select id="region-3-select"><option value="">Chargement…</option></select>
+                    </div>
+                    <div class="field">
+                      <label for="dept-3-select">Département 3</label>
+                      <select id="dept-3-select"><option value="">Chargement…</option></select>
+                    </div>
+                    <div class="field">
+                      <label for="commune-3-select">Commune 3</label>
+                      <select id="commune-3-select"><option value="">— Choisir une commune —</option></select>
+                    </div>
+                  </div>
+                  <div id="stats-lieu-panel-4" class="stats-lieu-panel stats-lieu-panel-hidden" role="tabpanel">
+                    <div class="field">
+                      <label for="region-4-select">Région 4</label>
+                      <select id="region-4-select"><option value="">Chargement…</option></select>
+                    </div>
+                    <div class="field">
+                      <label for="dept-4-select">Département 4</label>
+                      <select id="dept-4-select"><option value="">Chargement…</option></select>
+                    </div>
+                    <div class="field">
+                      <label for="commune-4-select">Commune 4</label>
+                      <select id="commune-4-select"><option value="">— Choisir une commune —</option></select>
                     </div>
                   </div>
                 </div>
@@ -253,8 +285,41 @@
                 </div>
               </div>
             </div>
+            <div id="stats-result-3" class="stats-result-half stats-result-hidden">
+              <h2 id="stats-title-3" class="stats-title-centered"></h2>
+              <div class="stats-nb-ventes"><span class="label">Nombre de ventes</span><span id="nb-ventes-3" class="value">—</span></div>
+              <div class="stats-tabs stats-tabs-compare">
+                <div class="stats-tab-buttons" role="tablist">
+                  <button type="button" class="stats-tab-btn active" data-tab="prix-3">Prix (€)</button>
+                  <button type="button" class="stats-tab-btn" data-tab="surface-3">Surface (m²)</button>
+                  <button type="button" class="stats-tab-btn" data-tab="prixm2-3">Prix / m² (€)</button>
+                </div>
+                <div class="stats-tab-panels">
+                  <div id="tab-panel-prix-3" class="stats-tab-panel active"><ul class="stats-list" id="section-prix-3"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-prix-3"></canvas></div><div class="chart-y-axis-ctrl" data-chart="prix-3"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                  <div id="tab-panel-surface-3" class="stats-tab-panel"><ul class="stats-list" id="section-surface-3"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-surface-3"></canvas></div><div class="chart-y-axis-ctrl" data-chart="surface-3"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                  <div id="tab-panel-prixm2-3" class="stats-tab-panel"><ul class="stats-list" id="section-prixm2-3"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-prixm2-3"></canvas></div><div class="chart-y-axis-ctrl" data-chart="prixm2-3"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                </div>
+              </div>
+            </div>
+            <div id="stats-result-4" class="stats-result-half stats-result-hidden">
+              <h2 id="stats-title-4" class="stats-title-centered"></h2>
+              <div class="stats-nb-ventes"><span class="label">Nombre de ventes</span><span id="nb-ventes-4" class="value">—</span></div>
+              <div class="stats-tabs stats-tabs-compare">
+                <div class="stats-tab-buttons" role="tablist">
+                  <button type="button" class="stats-tab-btn active" data-tab="prix-4">Prix (€)</button>
+                  <button type="button" class="stats-tab-btn" data-tab="surface-4">Surface (m²)</button>
+                  <button type="button" class="stats-tab-btn" data-tab="prixm2-4">Prix / m² (€)</button>
+                </div>
+                <div class="stats-tab-panels">
+                  <div id="tab-panel-prix-4" class="stats-tab-panel active"><ul class="stats-list" id="section-prix-4"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-prix-4"></canvas></div><div class="chart-y-axis-ctrl" data-chart="prix-4"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                  <div id="tab-panel-surface-4" class="stats-tab-panel"><ul class="stats-list" id="section-surface-4"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-surface-4"></canvas></div><div class="chart-y-axis-ctrl" data-chart="surface-4"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                  <div id="tab-panel-prixm2-4" class="stats-tab-panel"><ul class="stats-list" id="section-prixm2-4"></ul><div class="chart-wrap"><div class="chart-canvas-wrap"><canvas id="chart-prixm2-4"></canvas></div><div class="chart-y-axis-ctrl" data-chart="prixm2-4"><button type="button" class="chart-y-axis-btn">Y</button><input type="number" class="chart-y-axis-min" min="0" step="1000" value="0" /></div></div></div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
+        </div>
       </main>
     </div>
     <script src="stats.js"></script>

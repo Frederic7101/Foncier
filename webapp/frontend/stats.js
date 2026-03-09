@@ -30,17 +30,63 @@ const DEPT_NAMES = {
 
 let geo = { regions: [], departements: [] };
 let communesList = []; // liste des communes (lieu unique ou lieu 1)
-let communesList2 = []; // liste des communes pour lieu 2
+let communesList2 = [];
+let communesList3 = [];
+let communesList4 = [];
+const MAX_COMPARE_PLACES = 4;
+let comparePlaceCount = 2;
 let allCommunesList = []; // copie de la liste complète pour restaurer quand on désélectionne le département
 let charts = { prix: null, surface: null, prixm2: null };
 let compareMode = false;
 /** Données du Lieu 1 après une comparaison, pour réafficher en vue simple sans refetch */
 let lastCompareDataForSingle = null;
-/** Données et titre du Lieu 2 après une comparaison (pour mode superposition) */
-let lastCompareData2 = null;
-let lastCompareTitre2 = null;
+/** Données et titres des lieux après une comparaison (index 0 = lieu 1, pour mode superposition) */
+let lastCompareData = [null, null, null, null];
+let lastCompareTitre = [null, null, null, null];
 /** Mode superposition des graphiques (courbes des 2 lieux sur les mêmes graphiques) */
 let overlayMode = false;
+/** Groupe actif pour les graphiques overlay (0 = moyenne, 1 = médiane, 2 = Q1, 3 = Q3) ; synchronisé sur les 3 onglets. */
+let overlayActiveGroup = 0;
+const OVERLAY_CHART_KEYS = ["overlay-prix", "overlay-surface", "overlay-prixm2"];
+
+/** Configs datasets pour buildChartOverlayMulti (un lieu ou N lieux). group: 0 = moyenne, 1 = médiane, 2 = Q1, 3 = Q3. */
+const PRIX_CONFIG = [
+  { key: "prix_moyen", label: "Prix moyen (€)", group: 0 },
+  { key: "prix_median", label: "Prix médian (€)", group: 1 },
+  { key: "prix_q1", label: "Prix Q1 (€)", group: 2 },
+  { key: "prix_q3", label: "Prix Q3 (€)", group: 3 },
+];
+const SURFACE_CONFIG = [
+  { key: "surface_moyenne", label: "Surface moy. (m²)", group: 0 },
+  { key: "surface_mediane", label: "Surface méd. (m²)", group: 1 },
+];
+const PRIXM2_CONFIG = [
+  { key: "prix_m2_moyenne", label: "Prix/m² moy. (€)", group: 0 },
+  { key: "prix_m2_mediane", label: "Prix/m² méd. (€)", group: 1 },
+  { key: "prix_m2_q1", label: "Prix/m² Q1 (€)", group: 2 },
+  { key: "prix_m2_q3", label: "Prix/m² Q3 (€)", group: 3 },
+];
+
+/** Liste des clés des graphiques en mode comparaison (prix-1, surface-1, prixm2-1, prix-2, …) pour synchronisation. */
+function getCompareChartKeys() {
+  if (!compareMode) return [];
+  const keys = [];
+  for (let s = 1; s <= comparePlaceCount; s++) {
+    keys.push("prix-" + s, "surface-" + s, "prixm2-" + s);
+  }
+  return keys;
+}
+
+/** En mode comparaison : clés des graphiques de la même métrique que chartKey (ex. prix-1 → [prix-1, prix-2, …]). */
+function getCompareChartKeysForMetric(chartKey) {
+  if (!compareMode) return [];
+  const m = String(chartKey).match(/^(prix|surface|prixm2)-(\d+)$/);
+  if (!m) return [];
+  const metric = m[1];
+  const keys = [];
+  for (let s = 1; s <= comparePlaceCount; s++) keys.push(metric + "-" + s);
+  return keys;
+}
 
 function getDepartmentsForRegion(regionId) {
   const reg = geo.regions.find((r) => r.id === regionId);
@@ -100,7 +146,7 @@ function destroyChartsForSide(side) {
 function buildTitre(p, built, side) {
   const { region_id_for_api, code_dept } = built;
   const { commune } = p;
-  const list = side === 2 ? communesList2 : communesList;
+  const list = side === 2 ? communesList2 : side === 3 ? communesList3 : side === 4 ? communesList4 : communesList;
   const regionNom = region_id_for_api
     ? geo.regions.find((r) => r.id === region_id_for_api)?.nom
     : (code_dept ? geo.regions.find((r) => r.departements && r.departements.includes(code_dept))?.nom : null);
@@ -211,6 +257,9 @@ function renderSingleView(data, titre, annee_min, annee_max) {
     buildChartMulti("chart-prix", series, [{ key: "prix_moyen", label: "Prix moyen (€)" }, { key: "prix_median", label: "Prix médian (€)" }, { key: "prix_q1", label: "Prix Q1 (€)" }, { key: "prix_q3", label: "Prix Q3 (€)" }], yMinDefault);
     buildChartMulti("chart-surface", series, [{ key: "surface_moyenne", label: "Surface moyenne (m²)" }, { key: "surface_mediane", label: "Surface médiane (m²)" }], yMinDefault);
     buildChartMulti("chart-prixm2", series, [{ key: "prix_m2_moyenne", label: "Prix/m² moyen (€)" }, { key: "prix_m2_mediane", label: "Prix/m² médian (€)" }, { key: "prix_m2_q1", label: "Prix/m² Q1 (€)" }, { key: "prix_m2_q3", label: "Prix/m² Q3 (€)" }], yMinDefault);
+    requestAnimationFrame(() => {
+      ["prix", "surface", "prixm2"].forEach((key) => { if (charts[key]) charts[key].resize(); });
+    });
   } else {
     ["chart-prix", "chart-surface", "chart-prixm2"].forEach((id) => {
       const wrap = document.getElementById(id).closest(".chart-wrap");
@@ -238,6 +287,20 @@ const CHART_COLORS_LIGHT = [
   { border: "#fcd34d", fill: "rgba(252, 211, 77, 0.08)" },
   { border: "#c4b5fd", fill: "rgba(196, 181, 253, 0.08)" },
 ];
+const CHART_COLORS_2 = [
+  { border: "#ea580c", fill: "rgba(234, 88, 12, 0.1)" },
+  { border: "#ca8a04", fill: "rgba(202, 138, 4, 0.1)" },
+  { border: "#c026d3", fill: "rgba(192, 38, 211, 0.1)" },
+  { border: "#0891b2", fill: "rgba(8, 145, 178, 0.1)" },
+];
+const CHART_COLORS_3 = [
+  { border: "#fb923c", fill: "rgba(251, 146, 60, 0.08)" },
+  { border: "#eab308", fill: "rgba(234, 179, 8, 0.08)" },
+  { border: "#d946ef", fill: "rgba(217, 70, 239, 0.08)" },
+  { border: "#22d3ee", fill: "rgba(34, 211, 238, 0.08)" },
+];
+const OVERLAY_PALETTES = [CHART_COLORS, CHART_COLORS_LIGHT, CHART_COLORS_2, CHART_COLORS_3];
+const OVERLAY_DASH = [[], [5, 4], [2, 2], [8, 4, 2, 4]];
 
 /**
  * Construit un graphique avec plusieurs courbes.
@@ -287,11 +350,29 @@ function buildChartMulti(canvasId, series, datasetsConfig, yMin = null) {
             const meta = chart.getDatasetMeta(idx);
             meta.hidden = !meta.hidden;
             chart.update();
+            /* En mode comparaison : synchroniser visibilité de la courbe sur les autres graphiques du même type (prix, surface, prixm2). */
+            const m = chartKey.match(/^(prix|surface|prixm2)-(\d+)$/);
+            if (compareMode && m) {
+              const metric = m[1];
+              const newHidden = meta.hidden;
+              for (let s = 1; s <= comparePlaceCount; s++) {
+                const key = metric + "-" + s;
+                const ch = charts[key];
+                if (ch && ch.getDatasetMeta(idx)) {
+                  ch.getDatasetMeta(idx).hidden = newHidden;
+                  ch.update();
+                }
+              }
+            }
           },
         },
       },
     },
   });
+  /* Lieu unique : redimensionner après mise en page pour utiliser la largeur réelle de la zone. */
+  if (["chart-prix", "chart-surface", "chart-prixm2"].includes(canvasId)) {
+    requestAnimationFrame(() => { if (charts[chartKey]) charts[chartKey].resize(); });
+  }
 }
 
 function destroyChartsForOverlay() {
@@ -303,34 +384,29 @@ function destroyChartsForOverlay() {
   });
 }
 
-/** Affiche la vue superposée (courbes des 2 lieux sur les mêmes graphiques) sans refetch. */
-function renderOverlayView() {
-  const data1 = lastCompareDataForSingle?.data;
-  const data2 = lastCompareData2;
-  const titre1 = lastCompareDataForSingle?.titre || "—";
-  const titre2 = lastCompareTitre2 || "—";
-  document.getElementById("stats-overlay-title").textContent = `Lieu 1 : ${titre1}  |  Lieu 2 : ${titre2}`;
-  const series1 = data1?.series || [];
-  const series2 = data2?.series || [];
-  const hasEnough = (series1.length > 1 || series2.length > 1) || (series1.length === 1 && series2.length === 1);
+/** Affiche la vue superposée (courbes de 2 à 4 lieux sur les mêmes graphiques). count = 2, 3 ou 4. */
+function renderOverlayView(count) {
+  overlayActiveGroup = 0;
+  const n = count || (lastCompareData[1] ? (lastCompareData[2] ? (lastCompareData[3] ? 4 : 3) : 2) : 1);
+  const titres = [];
+  const seriesArray = [];
+  for (let i = 0; i < n; i++) {
+    titres.push(lastCompareTitre[i] || "—");
+    seriesArray.push(lastCompareData[i]?.series || []);
+  }
+  document.getElementById("stats-overlay-title").textContent = titres.map((t, i) => "Lieu " + (i + 1) + " : " + t).join("  |  ");
+  const hasEnough = seriesArray.some((s) => s.length > 1) || (seriesArray.every((s) => s.length === 1) && n > 0);
   const yMinDefault = 0;
   if (hasEnough) {
-    buildChartOverlay("chart-overlay-prix", series1, series2, [
-      { key: "prix_moyen", label: "Prix moyen (€)" },
-      { key: "prix_median", label: "Prix médian (€)" },
-      { key: "prix_q1", label: "Prix Q1 (€)" },
-      { key: "prix_q3", label: "Prix Q3 (€)" },
-    ], yMinDefault);
-    buildChartOverlay("chart-overlay-surface", series1, series2, [
-      { key: "surface_moyenne", label: "Surface moy. (m²)" },
-      { key: "surface_mediane", label: "Surface méd. (m²)" },
-    ], yMinDefault);
-    buildChartOverlay("chart-overlay-prixm2", series1, series2, [
-      { key: "prix_m2_moyenne", label: "Prix/m² moy. (€)" },
-      { key: "prix_m2_mediane", label: "Prix/m² méd. (€)" },
-      { key: "prix_m2_q1", label: "Prix/m² Q1 (€)" },
-      { key: "prix_m2_q3", label: "Prix/m² Q3 (€)" },
-    ], yMinDefault);
+    if (n === 2) {
+      buildChartOverlay("chart-overlay-prix", seriesArray[0], seriesArray[1], PRIX_CONFIG, yMinDefault);
+      buildChartOverlay("chart-overlay-surface", seriesArray[0], seriesArray[1], SURFACE_CONFIG, yMinDefault);
+      buildChartOverlay("chart-overlay-prixm2", seriesArray[0], seriesArray[1], PRIXM2_CONFIG, yMinDefault);
+    } else {
+      buildChartOverlayMulti("chart-overlay-prix", seriesArray, PRIX_CONFIG, yMinDefault);
+      buildChartOverlayMulti("chart-overlay-surface", seriesArray, SURFACE_CONFIG, yMinDefault);
+      buildChartOverlayMulti("chart-overlay-prixm2", seriesArray, PRIXM2_CONFIG, yMinDefault);
+    }
   }
   document.getElementById("stats-overlay-results").setAttribute("aria-hidden", "false");
   document.getElementById("stats-compare-results").setAttribute("aria-hidden", "true");
@@ -361,8 +437,40 @@ function mergeSeriesByYear(series1, series2) {
   return { labels, map1, map2 };
 }
 
+/** Fusionne N séries par année. Retourne { labels, maps } avec maps[i][annee] = row du lieu i+1. */
+function mergeSeriesByYearMulti(seriesArray) {
+  const years = new Set();
+  seriesArray.forEach((s) => (s || []).forEach((row) => years.add(row.annee)));
+  const labels = Array.from(years).sort((a, b) => Number(a) - Number(b)).map(String);
+  const maps = seriesArray.map((s) => Object.fromEntries((s || []).map((row) => [String(row.annee), row])));
+  return { labels, maps };
+}
+
+/**
+ * Clic légende mode comparaison : un seul type de courbe à la fois (groupe). Afficher le groupe cliqué pour tous les lieux.
+ * Synchronise le groupe actif sur les 3 graphiques overlay (prix, surface, prix/m²).
+ * Si un graphique n'a pas de courbe pour ce groupe (ex. Surface n'a pas Q1/Q3), on affiche le groupe 0 pour ce graphique.
+ */
+function overlayLegendClick(chart, datasetIndex) {
+  const ds = chart.data.datasets[datasetIndex];
+  const group = ds && (ds.group != null ? ds.group : 0);
+  overlayActiveGroup = group;
+  const updateChartVisibility = (ch) => {
+    if (!ch) return;
+    const hasGroup = ch.data.datasets.some((d) => (d.group != null ? d.group : 0) === group);
+    const g = hasGroup ? group : 0;
+    ch.data.datasets.forEach((d, i) => {
+      const meta = ch.getDatasetMeta(i);
+      meta.hidden = (d.group != null ? d.group : 0) !== g;
+    });
+    ch.update();
+  };
+  OVERLAY_CHART_KEYS.forEach((key) => updateChartVisibility(charts[key]));
+}
+
 /**
  * Graphique superposé : courbes Lieu 1 (couleurs foncées, trait plein) et Lieu 2 (couleurs claires, pointillés).
+ * En mode comparaison : seule la moyenne (group 0) est affichée par défaut ; la légende permet de basculer par type (médiane, Q1, Q3).
  */
 function buildChartOverlay(canvasId, series1, series2, datasetsConfig, yMin = null) {
   const chartKey = canvasId.replace("chart-", "");
@@ -374,6 +482,7 @@ function buildChartOverlay(canvasId, series1, series2, datasetsConfig, yMin = nu
   const { labels, map1, map2 } = mergeSeriesByYear(series1, series2);
   const datasets = [];
   datasetsConfig.forEach((cfg, i) => {
+    const group = cfg.group != null ? cfg.group : 0;
     const dark = CHART_COLORS[i % CHART_COLORS.length];
     const light = CHART_COLORS_LIGHT[i % CHART_COLORS_LIGHT.length];
     datasets.push({
@@ -384,6 +493,7 @@ function buildChartOverlay(canvasId, series1, series2, datasetsConfig, yMin = nu
       fill: true,
       tension: 0.2,
       borderDash: [],
+      group,
     });
     datasets.push({
       label: cfg.label + " (Lieu 2)",
@@ -393,6 +503,7 @@ function buildChartOverlay(canvasId, series1, series2, datasetsConfig, yMin = nu
       fill: true,
       tension: 0.2,
       borderDash: [5, 4],
+      group,
     });
   });
   const yScale = {
@@ -411,16 +522,79 @@ function buildChartOverlay(canvasId, series1, series2, datasetsConfig, yMin = nu
       plugins: {
         legend: {
           onClick: (e, legendItem, legend) => {
-            const idx = legendItem.datasetIndex;
-            const chart = legend.chart;
-            const meta = chart.getDatasetMeta(idx);
-            meta.hidden = !meta.hidden;
-            chart.update();
+            overlayLegendClick(legend.chart, legendItem.datasetIndex);
           },
         },
       },
     },
   });
+  /* Afficher uniquement le groupe actif (synchronisé avec les autres graphiques overlay). */
+  charts[chartKey].data.datasets.forEach((d, i) => {
+    const g = d.group != null ? d.group : 0;
+    charts[chartKey].getDatasetMeta(i).hidden = g !== overlayActiveGroup;
+  });
+  charts[chartKey].update();
+}
+
+/**
+ * Graphique superposé pour N lieux (2 à 4). Chaque métrique a N courbes (Lieu 1, Lieu 2, …).
+ * Par défaut seule la moyenne (group 0) est affichée ; la légende permet de basculer par type (médiane, Q1, Q3).
+ */
+function buildChartOverlayMulti(canvasId, seriesArray, datasetsConfig, yMin = null) {
+  const chartKey = canvasId.replace("chart-", "");
+  const ctx = document.getElementById(canvasId).getContext("2d");
+  if (charts[chartKey]) {
+    charts[chartKey].destroy();
+    charts[chartKey] = null;
+  }
+  const N = seriesArray.length;
+  const { labels, maps } = mergeSeriesByYearMulti(seriesArray);
+  const datasets = [];
+  datasetsConfig.forEach((cfg, metricIdx) => {
+    const group = cfg.group != null ? cfg.group : 0;
+    for (let placeIdx = 0; placeIdx < N; placeIdx++) {
+      const palette = OVERLAY_PALETTES[placeIdx % OVERLAY_PALETTES.length];
+      const color = palette[metricIdx % palette.length];
+      datasets.push({
+        label: cfg.label + " (Lieu " + (placeIdx + 1) + ")",
+        data: labels.map((y) => (maps[placeIdx][y] && maps[placeIdx][y][cfg.key] != null ? maps[placeIdx][y][cfg.key] : null)),
+        borderColor: color.border,
+        backgroundColor: color.fill,
+        fill: true,
+        tension: 0.2,
+        borderDash: OVERLAY_DASH[placeIdx % OVERLAY_DASH.length] || [],
+        group,
+      });
+    }
+  });
+  const yScale = {
+    beginAtZero: yMin === 0,
+    ...(yMin != null && typeof yMin === "number" ? { min: yMin } : {}),
+  };
+  charts[chartKey] = new Chart(ctx, {
+    type: "line",
+    data: { labels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: { padding: { left: 14 } },
+      interaction: { mode: "index", intersect: false },
+      scales: { y: { ...yScale, ticks: { padding: 10 } } },
+      plugins: {
+        legend: {
+          onClick: (e, legendItem, legend) => {
+            overlayLegendClick(legend.chart, legendItem.datasetIndex);
+          },
+        },
+      },
+    },
+  });
+  /* Afficher uniquement le groupe actif (synchronisé avec les autres graphiques overlay). */
+  charts[chartKey].data.datasets.forEach((d, i) => {
+    const g = d.group != null ? d.group : 0;
+    charts[chartKey].getDatasetMeta(i).hidden = g !== overlayActiveGroup;
+  });
+  charts[chartKey].update();
 }
 
 async function loadGeo() {
@@ -428,13 +602,15 @@ async function loadGeo() {
   if (!res.ok) throw new Error("Erreur chargement geo");
   geo = await res.json();
   const regionOpts = "<option value=''>— Choisir une région —</option>" + geo.regions.map((r) => `<option value="${r.id}">${escapeHtml(r.nom)}</option>`).join("");
-  ["region-select", "region-1-select", "region-2-select"].forEach((id) => {
+  ["region-select", "region-1-select", "region-2-select", "region-3-select", "region-4-select"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = regionOpts;
   });
   fillDepartmentSelect(null);
   fillDepartmentSelect(null, "dept-1-select");
   fillDepartmentSelect(null, "dept-2-select");
+  fillDepartmentSelect(null, "dept-3-select");
+  fillDepartmentSelect(null, "dept-4-select");
 }
 
 async function loadPeriod() {
@@ -465,8 +641,10 @@ function fillCommuneOptionsChunked(communeSelect, list, startIndex) {
 }
 
 function getCommuneSelectId(suffix) {
-  if (suffix === "2") return "commune-2-select";
   if (suffix === "1") return "commune-1-select";
+  if (suffix === "2") return "commune-2-select";
+  if (suffix === "3") return "commune-3-select";
+  if (suffix === "4") return "commune-4-select";
   return "commune-select";
 }
 
@@ -485,6 +663,8 @@ async function loadCommunes(codeDept, suffix) {
   }
   const list = await res.json();
   if (suffix === "2") communesList2 = list;
+  else if (suffix === "3") communesList3 = list;
+  else if (suffix === "4") communesList4 = list;
   else {
     communesList = list;
     if (!codeDept) allCommunesList = list.slice(0);
@@ -508,6 +688,8 @@ function restoreAllCommunesInDropdown(suffix) {
   const communeSelect = document.getElementById(selectId);
   if (!communeSelect) return;
   if (suffix === "2") communesList2 = list;
+  else if (suffix === "3") communesList3 = list;
+  else if (suffix === "4") communesList4 = list;
   else communesList = list;
   communeSelect.innerHTML = "<option value=''>— Choisir une commune —</option>";
   if (list.length <= COMMUNES_CHUNK_SIZE) {
@@ -575,8 +757,8 @@ function getCommuneValue() {
 }
 
 function getCommuneValueForPlace(place) {
-  const selectId = place === 2 ? "commune-2-select" : "commune-1-select";
-  const list = place === 2 ? communesList2 : communesList;
+  const selectId = getCommuneSelectId(String(place));
+  const list = place === 1 ? communesList : place === 2 ? communesList2 : place === 3 ? communesList3 : communesList4;
   const sel = document.getElementById(selectId);
   const v = sel?.value;
   if (v === "" || v === undefined || !list.length) return { code_dept: null, code_postal: null, commune: null };
@@ -587,8 +769,8 @@ function getCommuneValueForPlace(place) {
 }
 
 function getPlaceValues(place) {
-  const regionId = document.getElementById(place === 2 ? "region-2-select" : "region-1-select")?.value || null;
-  let code_dept = document.getElementById(place === 2 ? "dept-2-select" : "dept-1-select")?.value || null;
+  const regionId = document.getElementById("region-" + place + "-select")?.value || null;
+  let code_dept = document.getElementById("dept-" + place + "-select")?.value || null;
   const c = getCommuneValueForPlace(place);
   if (c.code_dept) code_dept = c.code_dept;
   return {
@@ -638,6 +820,9 @@ function setCompareMode(enabled) {
     single.style.display = "none";
     compare.setAttribute("aria-hidden", "false");
     syncSingleToPlace1();
+    comparePlaceCount = 2;
+    updateComparePlaceUI();
+    switchLieuTab(1);
     compareBtn.textContent = "Quitter la comparaison";
     content.setAttribute("aria-hidden", "true");
     compareResults.setAttribute("aria-hidden", "true");
@@ -703,41 +888,58 @@ async function submitStats() {
   const annee_max = document.getElementById("annee-max").value || undefined;
 
   if (compareMode) {
-    const p1 = getPlaceValues(1);
-    const p2 = getPlaceValues(2);
-    const b1 = buildNiveauAndParams(p1, type_local, surface_cat, pieces_cat, annee_min, annee_max);
-    const b2 = buildNiveauAndParams(p2, type_local, surface_cat, pieces_cat, annee_min, annee_max);
-    if (!b1 || !b2) {
-      alert("Choisissez au moins une région, un département ou une commune pour chaque lieu.");
-      return;
+    const places = [];
+    const builds = [];
+    for (let i = 1; i <= comparePlaceCount; i++) {
+      const p = getPlaceValues(i);
+      const b = buildNiveauAndParams(p, type_local, surface_cat, pieces_cat, annee_min, annee_max);
+      if (!b) {
+        alert("Choisissez au moins une région, un département ou une commune pour chaque lieu.");
+        return;
+      }
+      places.push(p);
+      builds.push(b);
     }
     document.getElementById("stats-loading").setAttribute("aria-hidden", "false");
     document.getElementById("stats-empty").style.display = "none";
     document.getElementById("stats-content").setAttribute("aria-hidden", "true");
     document.getElementById("stats-compare-results").setAttribute("aria-hidden", "true");
+    document.getElementById("stats-overlay-results").setAttribute("aria-hidden", "true");
     destroyCharts();
-    destroyChartsForSide(1);
-    destroyChartsForSide(2);
+    for (let s = 1; s <= MAX_COMPARE_PLACES; s++) destroyChartsForSide(s);
     try {
-      const [res1, res2] = await Promise.all([
-        fetch(`${API_BASE}/api/stats?${b1.params}`),
-        fetch(`${API_BASE}/api/stats?${b2.params}`),
-      ]);
+      const responses = await Promise.all(builds.map((b) => fetch(`${API_BASE}/api/stats?${b.params}`)));
       document.getElementById("stats-loading").setAttribute("aria-hidden", "true");
-      const data1 = res1.ok ? await res1.json() : null;
-      const data2 = res2.ok ? await res2.json() : null;
-      const titre1 = buildTitre(p1, b1, 1);
-      const titre2 = buildTitre(p2, b2, 2);
-      lastCompareDataForSingle = { data: data1, titre: titre1, annee_min, annee_max };
-      lastCompareData2 = data2;
-      lastCompareTitre2 = titre2;
-      overlayMode = false;
-      document.getElementById("stats-overlay-results").setAttribute("aria-hidden", "true");
-      document.getElementById("stats-overlay-btn").textContent = "Superposer les graphiques";
+      const allData = await Promise.all(responses.map((r) => (r.ok ? r.json() : null)));
+      for (let i = 0; i < comparePlaceCount; i++) {
+        lastCompareData[i] = allData[i];
+        lastCompareTitre[i] = buildTitre(places[i], builds[i], i + 1);
+      }
+      for (let i = comparePlaceCount; i < MAX_COMPARE_PLACES; i++) {
+        lastCompareData[i] = null;
+        lastCompareTitre[i] = null;
+      }
+      lastCompareDataForSingle = { data: allData[0], titre: lastCompareTitre[0], annee_min, annee_max };
       document.getElementById("stats-overlay-btn").style.display = "block";
-      renderCompareSide(1, data1, titre1, annee_min, annee_max);
-      renderCompareSide(2, data2, titre2, annee_min, annee_max);
-      document.getElementById("stats-compare-results").setAttribute("aria-hidden", "false");
+      if (comparePlaceCount >= 4) {
+        overlayMode = true;
+        document.getElementById("stats-overlay-btn").textContent = "Quitter la superposition";
+        renderOverlayView(comparePlaceCount);
+      } else {
+        overlayMode = false;
+        document.getElementById("stats-overlay-results").setAttribute("aria-hidden", "true");
+        document.getElementById("stats-overlay-btn").textContent = "Superposer les graphiques";
+        updateComparePlaceUI();
+        for (let i = 1; i <= comparePlaceCount; i++) {
+          renderCompareSide(i, allData[i - 1], lastCompareTitre[i - 1], annee_min, annee_max);
+        }
+        document.getElementById("stats-compare-results").setAttribute("aria-hidden", "false");
+        setCompareChartsYToZero();
+        for (let i = 1; i <= comparePlaceCount; i++) {
+          const container = document.getElementById("stats-result-" + i);
+          if (container) switchTabInContainer(container, "prix-" + i);
+        }
+      }
     } catch (e) {
       document.getElementById("stats-loading").setAttribute("aria-hidden", "true");
       alert("Erreur : " + (e.message || String(e)));
@@ -823,37 +1025,12 @@ async function submitStats() {
         ctrl.querySelector(".chart-y-axis-min").value = "0";
       });
       const yMinDefault = 0;
-      buildChartMulti(
-        "chart-prix",
-        series,
-        [
-          { key: "prix_moyen", label: "Prix moyen (€)" },
-          { key: "prix_median", label: "Prix médian (€)" },
-          { key: "prix_q1", label: "Prix Q1 (€)" },
-          { key: "prix_q3", label: "Prix Q3 (€)" },
-        ],
-        yMinDefault
-      );
-      buildChartMulti(
-        "chart-surface",
-        series,
-        [
-          { key: "surface_moyenne", label: "Surface moyenne (m²)" },
-          { key: "surface_mediane", label: "Surface médiane (m²)" },
-        ],
-        yMinDefault
-      );
-      buildChartMulti(
-        "chart-prixm2",
-        series,
-        [
-          { key: "prix_m2_moyenne", label: "Prix/m² moyen (€)" },
-          { key: "prix_m2_mediane", label: "Prix/m² médian (€)" },
-          { key: "prix_m2_q1", label: "Prix/m² Q1 (€)" },
-          { key: "prix_m2_q3", label: "Prix/m² Q3 (€)" },
-        ],
-        yMinDefault
-      );
+      buildChartMulti("chart-prix", series, [{ key: "prix_moyen", label: "Prix moyen (€)" }, { key: "prix_median", label: "Prix médian (€)" }, { key: "prix_q1", label: "Prix Q1 (€)" }, { key: "prix_q3", label: "Prix Q3 (€)" }], yMinDefault);
+      buildChartMulti("chart-surface", series, [{ key: "surface_moyenne", label: "Surface moyenne (m²)" }, { key: "surface_mediane", label: "Surface médiane (m²)" }], yMinDefault);
+      buildChartMulti("chart-prixm2", series, [{ key: "prix_m2_moyenne", label: "Prix/m² moyen (€)" }, { key: "prix_m2_mediane", label: "Prix/m² médian (€)" }, { key: "prix_m2_q1", label: "Prix/m² Q1 (€)" }, { key: "prix_m2_q3", label: "Prix/m² Q3 (€)" }], yMinDefault);
+      requestAnimationFrame(() => {
+        ["prix", "surface", "prixm2"].forEach((key) => { if (charts[key]) charts[key].resize(); });
+      });
     } else {
       ["chart-prix", "chart-surface", "chart-prixm2"].forEach((id) => {
         const wrap = document.getElementById(id).closest(".chart-wrap");
@@ -882,6 +1059,10 @@ function switchTab(tabId) {
   document.querySelectorAll(".stats-tab-panel").forEach((panel) => {
     panel.classList.toggle("active", panel.id === "tab-panel-" + tabId);
   });
+  /* Lieu unique : redimensionner le graphique de l’onglet affiché (il a maintenant une largeur réelle). */
+  if (["prix", "surface", "prixm2"].includes(tabId) && charts[tabId]) {
+    requestAnimationFrame(() => charts[tabId].resize());
+  }
 }
 
 function applyYAxisToChart(chartKey, minValue) {
@@ -897,6 +1078,19 @@ function applyYAxisToChart(chartKey, minValue) {
     y.beginAtZero = v === 0;
   }
   ch.update();
+}
+
+/** En mode comparaison : fixe Y=0 pour tous les graphiques et met à jour les contrôles (évite comparaisons biaisées). */
+function setCompareChartsYToZero() {
+  const keys = getCompareChartKeys();
+  keys.forEach((key) => applyYAxisToChart(key, 0));
+  document.querySelectorAll("#stats-compare-results .chart-y-axis-ctrl").forEach((ctrl) => {
+    ctrl.classList.add("fixed");
+    const btn = ctrl.querySelector(".chart-y-axis-btn");
+    if (btn) btn.classList.add("fixed");
+    const input = ctrl.querySelector(".chart-y-axis-min");
+    if (input) input.value = "0";
+  });
 }
 
 document.getElementById("region-select").addEventListener("change", () => {
@@ -928,9 +1122,9 @@ document.getElementById("commune-select").addEventListener("change", () => {
 
 function bindPlaceSelects(place) {
   const s = String(place);
-  const regionId = place === 2 ? "region-2-select" : "region-1-select";
-  const deptId = place === 2 ? "dept-2-select" : "dept-1-select";
-  const communeId = place === 2 ? "commune-2-select" : "commune-1-select";
+  const regionId = "region-" + place + "-select";
+  const deptId = "dept-" + place + "-select";
+  const communeId = "commune-" + place + "-select";
   document.getElementById(regionId)?.addEventListener("change", function () {
     const regionVal = this.value;
     fillDepartmentSelect(regionVal || null, deptId);
@@ -948,7 +1142,7 @@ function bindPlaceSelects(place) {
     loadCommunes(codeDept, s);
   });
   document.getElementById(communeId)?.addEventListener("change", function () {
-    const c = place === 2 ? getCommuneValueForPlace(2) : getCommuneValueForPlace(1);
+    const c = getCommuneValueForPlace(place);
     if (c.code_dept && (c.commune || c.code_postal)) {
       document.getElementById(deptId).value = c.code_dept;
       const regionIdVal = getRegionForDepartment(c.code_dept);
@@ -958,20 +1152,138 @@ function bindPlaceSelects(place) {
 }
 bindPlaceSelects(1);
 bindPlaceSelects(2);
+bindPlaceSelects(3);
+bindPlaceSelects(4);
+
+function updateComparePlaceUI() {
+  document.querySelectorAll(".stats-lieu-tab-btn[data-lieu]").forEach((btn) => {
+    const n = parseInt(btn.getAttribute("data-lieu"), 10);
+    const hidden = n > comparePlaceCount;
+    btn.classList.toggle("stats-lieu-tab-hidden", hidden);
+    if (hidden) btn.classList.remove("active");
+  });
+  document.querySelectorAll(".stats-lieu-panel").forEach((panel) => {
+    const n = parseInt(panel.id.replace("stats-lieu-panel-", ""), 10);
+    panel.classList.toggle("stats-lieu-panel-hidden", n > comparePlaceCount);
+  });
+  const addBtn = document.getElementById("stats-lieu-add-btn");
+  if (addBtn) {
+    addBtn.style.display = comparePlaceCount >= MAX_COMPARE_PLACES ? "none" : "inline-flex";
+    addBtn.textContent = "+ Lieu " + (comparePlaceCount + 1);
+    addBtn.title = "Ajouter le lieu " + (comparePlaceCount + 1) + " (max " + MAX_COMPARE_PLACES + ")";
+  }
+  document.querySelectorAll("#stats-compare-results .stats-result-half").forEach((el) => {
+    const n = parseInt(el.id.replace("stats-result-", ""), 10);
+    el.classList.toggle("stats-result-hidden", n > comparePlaceCount);
+  });
+  const compareResults = document.getElementById("stats-compare-results");
+  if (compareResults) {
+    compareResults.classList.remove("compare-2", "compare-3", "compare-4");
+    if (comparePlaceCount >= 2) compareResults.classList.add("compare-" + comparePlaceCount);
+  }
+}
+
+function addComparePlace() {
+  if (comparePlaceCount >= MAX_COMPARE_PLACES) return;
+  comparePlaceCount++;
+  updateComparePlaceUI();
+  switchLieuTab(comparePlaceCount);
+}
+
+function removeComparePlace(placeNum) {
+  if (placeNum < 1 || placeNum > comparePlaceCount) return;
+  /* Avec 2 lieux : supprimer le 2e lieu = quitter la comparaison ; supprimer le 1er = décalage (le 2e devient le 1er) puis quitter avec une seule donnée. */
+  if (comparePlaceCount === 2 && placeNum === 2) {
+    setCompareMode(false);
+    return;
+  }
+  /* Copier les valeurs du lieu i+1 vers le lieu i pour combler le trou (sens : i+1 → i). */
+  for (let i = placeNum; i < comparePlaceCount; i++) {
+    const fromId = i + 1;
+    document.getElementById("region-" + i + "-select").value = document.getElementById("region-" + fromId + "-select").value || "";
+    document.getElementById("dept-" + i + "-select").value = document.getElementById("dept-" + fromId + "-select").value || "";
+    const selFrom = document.getElementById("commune-" + fromId + "-select");
+    const selTo = document.getElementById("commune-" + i + "-select");
+    if (selFrom && selTo) { selTo.innerHTML = selFrom.innerHTML; selTo.value = selFrom.value; }
+  }
+  /* Décaler les listes de communes : liste(i) = ancienne liste(i+1), en montant pour ne pas écraser une source. */
+  for (let i = placeNum; i < comparePlaceCount; i++) {
+    const src = i === 1 ? communesList2 : i === 2 ? communesList3 : i === 3 ? communesList4 : null;
+    if (i === 1) communesList = (src && src.slice(0)) || [];
+    else if (i === 2) communesList2 = (src && src.slice(0)) || [];
+    else if (i === 3) communesList3 = (src && src.slice(0)) || [];
+  }
+  document.getElementById("region-" + comparePlaceCount + "-select").value = "";
+  document.getElementById("dept-" + comparePlaceCount + "-select").value = "";
+  document.getElementById("commune-" + comparePlaceCount + "-select").innerHTML = "<option value=''>— Choisir une commune —</option>";
+  fillDepartmentSelect(null, "dept-" + comparePlaceCount + "-select");
+  const prevCount = comparePlaceCount;
+  comparePlaceCount--;
+  /* Aligner les données avec le formulaire décalé : nouveau slot 1 = ancien slot placeNum, etc. */
+  if (placeNum === 1 || placeNum === 2) {
+    lastCompareData = lastCompareData.slice(1);
+    lastCompareTitre = lastCompareTitre.slice(1);
+  } else if (placeNum === prevCount) {
+    lastCompareData = lastCompareData.slice(0, prevCount - 1);
+    lastCompareTitre = lastCompareTitre.slice(0, prevCount - 1);
+  } else {
+    lastCompareData = lastCompareData.slice(0, placeNum - 1).concat(lastCompareData.slice(placeNum));
+    lastCompareTitre = lastCompareTitre.slice(0, placeNum - 1).concat(lastCompareTitre.slice(placeNum));
+  }
+  const anneeMin = document.getElementById("annee-min").value || "";
+  const anneeMax = document.getElementById("annee-max").value || "";
+  if (lastCompareData[0]) {
+    lastCompareDataForSingle = { data: lastCompareData[0], titre: lastCompareTitre[0], annee_min: anneeMin, annee_max: anneeMax };
+  }
+  updateComparePlaceUI();
+  /* Après décalage il ne reste qu’un lieu : quitter la comparaison et afficher la vue simple avec ses données. */
+  if (comparePlaceCount === 1) {
+    setCompareMode(false);
+    return;
+  }
+  if (overlayMode && comparePlaceCount < 4) {
+    overlayMode = false;
+    document.getElementById("stats-overlay-results").setAttribute("aria-hidden", "true");
+    document.getElementById("stats-compare-results").setAttribute("aria-hidden", "false");
+    document.getElementById("stats-overlay-btn").textContent = "Superposer les graphiques";
+    destroyChartsForOverlay();
+    for (let s = 1; s <= MAX_COMPARE_PLACES; s++) destroyChartsForSide(s);
+    const compareEl = document.getElementById("stats-compare-results");
+    compareEl.classList.remove("compare-2", "compare-3", "compare-4");
+    compareEl.classList.add("compare-" + comparePlaceCount);
+    for (let i = 1; i <= comparePlaceCount; i++) {
+      renderCompareSide(i, lastCompareData[i - 1], lastCompareTitre[i - 1], anneeMin, anneeMax);
+    }
+    for (let i = 1; i <= comparePlaceCount; i++) {
+      const container = document.getElementById("stats-result-" + i);
+      if (container) switchTabInContainer(container, "prix-" + i);
+    }
+  }
+  switchLieuTab(Math.min(placeNum, comparePlaceCount));
+}
 
 function switchLieuTab(lieuNum) {
-  document.querySelectorAll(".stats-lieu-tab-btn").forEach((btn) => {
+  document.querySelectorAll(".stats-lieu-tab-btn:not(.stats-lieu-tab-hidden)").forEach((btn) => {
     const isActive = btn.getAttribute("data-lieu") === String(lieuNum);
     btn.classList.toggle("active", isActive);
     btn.setAttribute("aria-selected", isActive);
   });
-  document.querySelectorAll(".stats-lieu-panel").forEach((panel) => {
+  document.querySelectorAll(".stats-lieu-panel:not(.stats-lieu-panel-hidden)").forEach((panel) => {
     panel.classList.toggle("active", panel.id === "stats-lieu-panel-" + lieuNum);
   });
 }
-document.querySelectorAll(".stats-lieu-tab-btn").forEach((btn) => {
-  btn.addEventListener("click", () => switchLieuTab(btn.getAttribute("data-lieu")));
+document.getElementById("stats-place-compare").addEventListener("click", (e) => {
+  const tabBtn = e.target.closest(".stats-lieu-tab-btn[data-lieu]");
+  if (!tabBtn || tabBtn.classList.contains("stats-lieu-tab-hidden")) return;
+  if (e.target.closest(".stats-lieu-tab-close")) {
+    e.preventDefault();
+    e.stopPropagation();
+    removeComparePlace(parseInt(tabBtn.getAttribute("data-lieu"), 10));
+    return;
+  }
+  switchLieuTab(tabBtn.getAttribute("data-lieu"));
 });
+document.getElementById("stats-lieu-add-btn").addEventListener("click", addComparePlace);
 
 document.getElementById("stats-compare-btn").addEventListener("click", () => {
   setCompareMode(!compareMode);
@@ -984,6 +1296,11 @@ document.getElementById("stats-overlay-btn").addEventListener("click", () => {
     document.getElementById("stats-compare-results").setAttribute("aria-hidden", "false");
     destroyChartsForOverlay();
     document.getElementById("stats-overlay-btn").textContent = "Superposer les graphiques";
+    setCompareChartsYToZero();
+    for (let i = 1; i <= comparePlaceCount; i++) {
+      const container = document.getElementById("stats-result-" + i);
+      if (container) switchTabInContainer(container, "prix-" + i);
+    }
   } else {
     overlayMode = true;
     renderOverlayView();
@@ -1062,16 +1379,16 @@ document.getElementById("stats-reset-btn").addEventListener("click", () => {
   fillDepartmentSelect(null);
   restoreAllCommunesInDropdown();
   if (compareMode) {
-    document.getElementById("region-1-select").value = "";
-    document.getElementById("dept-1-select").value = "";
-    document.getElementById("commune-1-select").value = "";
-    fillDepartmentSelect(null, "dept-1-select");
-    restoreAllCommunesInDropdown("1");
-    document.getElementById("region-2-select").value = "";
-    document.getElementById("dept-2-select").value = "";
-    document.getElementById("commune-2-select").value = "";
-    fillDepartmentSelect(null, "dept-2-select");
-    restoreAllCommunesInDropdown("2");
+    for (let i = 1; i <= MAX_COMPARE_PLACES; i++) {
+      document.getElementById("region-" + i + "-select").value = "";
+      document.getElementById("dept-" + i + "-select").value = "";
+      document.getElementById("commune-" + i + "-select").value = "";
+      fillDepartmentSelect(null, "dept-" + i + "-select");
+      restoreAllCommunesInDropdown(String(i));
+    }
+    comparePlaceCount = 2;
+    updateComparePlaceUI();
+    switchLieuTab(1);
   }
   document.getElementById("type-local").value = "";
   document.getElementById("surface-cat").value = "";
@@ -1079,7 +1396,7 @@ document.getElementById("stats-reset-btn").addEventListener("click", () => {
   document.getElementById("annee-min").value = "";
   document.getElementById("annee-max").value = "";
   document.querySelector(".stats-tabs")?.classList.remove("single-year");
-  document.querySelectorAll("#stats-result-1 .stats-tabs, #stats-result-2 .stats-tabs").forEach((el) => el?.classList.remove("single-year"));
+  document.querySelectorAll("[id^='stats-result-'] .stats-tabs").forEach((el) => el?.classList.remove("single-year"));
   switchTab("prix");
   updatePeriodConstraints();
   const toast = document.getElementById("stats-period-toast");
@@ -1140,17 +1457,49 @@ document.getElementById("stats-results").addEventListener("click", (e) => {
   const chartKey = ctrl.getAttribute("data-chart");
   if (!chartKey || !charts[chartKey]) return;
   e.preventDefault();
+  const isCompareY = compareMode && document.getElementById("stats-compare-results")?.contains(ctrl);
   const isFixed = ctrl.classList.contains("fixed");
   if (isFixed) {
     ctrl.classList.remove("fixed");
     btn.classList.remove("fixed");
     applyYAxisToChart(chartKey, null);
+    if (isCompareY) {
+      const keysSameMetric = getCompareChartKeysForMetric(chartKey);
+      charts[chartKey].update();
+      const computedMin = charts[chartKey].scales?.y?.min;
+      const minVal = typeof computedMin === "number" && !Number.isNaN(computedMin) ? computedMin : 0;
+      keysSameMetric.forEach((key) => applyYAxisToChart(key, minVal));
+      keysSameMetric.forEach((key) => {
+        const c = document.querySelector("#stats-compare-results .chart-y-axis-ctrl[data-chart=\"" + key + "\"]");
+        if (c) {
+          c.classList.add("fixed");
+          const b = c.querySelector(".chart-y-axis-btn");
+          if (b) b.classList.add("fixed");
+          const inp = c.querySelector(".chart-y-axis-min");
+          if (inp) inp.value = String(minVal);
+        }
+      });
+    }
   } else {
     const input = ctrl.querySelector(".chart-y-axis-min");
     const v = parseFloat(input.value, 10) || 0;
     ctrl.classList.add("fixed");
     btn.classList.add("fixed");
     applyYAxisToChart(chartKey, v);
+    if (isCompareY) {
+      const keysSameMetric = getCompareChartKeysForMetric(chartKey);
+      keysSameMetric.forEach((key) => applyYAxisToChart(key, v));
+      keysSameMetric.forEach((key) => {
+        const c = document.querySelector("#stats-compare-results .chart-y-axis-ctrl[data-chart=\"" + key + "\"]");
+        if (c) {
+          c.classList.add("fixed");
+          const b = c.querySelector(".chart-y-axis-btn");
+          if (b) b.classList.add("fixed");
+          const inp = c.querySelector(".chart-y-axis-min");
+          if (inp) inp.value = String(v);
+        }
+      });
+    }
   }
 });
 
@@ -1161,7 +1510,18 @@ document.getElementById("stats-results").addEventListener("input", (e) => {
   const chartKey = ctrl.getAttribute("data-chart");
   if (!chartKey || !charts[chartKey]) return;
   const v = parseFloat(e.target.value, 10);
-  applyYAxisToChart(chartKey, Number.isNaN(v) ? 0 : v);
+  const val = Number.isNaN(v) ? 0 : v;
+  applyYAxisToChart(chartKey, val);
+  if (compareMode && document.getElementById("stats-compare-results")?.contains(ctrl)) {
+    const keysSameMetric = getCompareChartKeysForMetric(chartKey);
+    keysSameMetric.forEach((key) => applyYAxisToChart(key, val));
+    keysSameMetric.forEach((key) => {
+      if (key === chartKey) return;
+      const c = document.querySelector("#stats-compare-results .chart-y-axis-ctrl[data-chart=\"" + key + "\"]");
+      const inp = c?.querySelector(".chart-y-axis-min");
+      if (inp) inp.value = String(val);
+    });
+  }
 });
 
 loadGeo()
