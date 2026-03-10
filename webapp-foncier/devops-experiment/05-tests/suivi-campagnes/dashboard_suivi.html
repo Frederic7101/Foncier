@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <title>Suivi de campagne de tests</title>
+  <style>
+    body { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; margin: 1.5rem; }
+    h1 { margin-bottom: 0.25rem; }
+    .summary { margin: 1rem 0; display: flex; gap: 1.5rem; flex-wrap: wrap; }
+    .summary-item { padding: 0.75rem 1rem; border-radius: 0.5rem; background: #f5f5f5; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
+    th, td { border: 1px solid #ddd; padding: 0.5rem 0.75rem; font-size: 0.9rem; }
+    th { background: #fafafa; text-align: left; }
+    .PASS { color: #0a7f2e; font-weight: 600; }
+    .FAIL { color: #b00020; font-weight: 600; }
+    .BLOCKED { color: #b36b00; font-weight: 600; }
+    .status-pill { padding: 0.1rem 0.5rem; border-radius: 999px; border: 1px solid currentColor; }
+    .file-input { margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <h1>Suivi de campagne de tests</h1>
+  <p>Sélectionnez un fichier JSON de résultats pour afficher le tableau de bord.</p>
+
+  <input type="file" id="file-input" accept="application/json" class="file-input">
+
+  <div id="summary" class="summary" hidden>
+    <div class="summary-item" id="total"></div>
+    <div class="summary-item" id="pass"></div>
+    <div class="summary-item" id="fail"></div>
+    <div class="summary-item" id="blocked"></div>
+  </div>
+
+  <table id="results-table" hidden>
+    <thead>
+      <tr>
+        <th>ID cas</th>
+        <th>Lot</th>
+        <th>Statut</th>
+        <th>Exécutant</th>
+        <th>Date</th>
+        <th>Commentaire</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <script>
+    const input = document.getElementById('file-input');
+    const summary = document.getElementById('summary');
+    const totalEl = document.getElementById('total');
+    const passEl = document.getElementById('pass');
+    const failEl = document.getElementById('fail');
+    const blockedEl = document.getElementById('blocked');
+    const table = document.getElementById('results-table');
+    const tbody = table.querySelector('tbody');
+
+    input.addEventListener('change', () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = event => {
+        try {
+          const data = JSON.parse(event.target.result);
+          if (!Array.isArray(data)) {
+            alert('Le JSON doit être un tableau d\'objets.');
+            return;
+          }
+          render(data);
+        } catch (e) {
+          console.error(e);
+          alert('Impossible de lire le JSON: ' + e.message);
+        }
+      };
+      reader.readAsText(file, 'utf-8');
+    });
+
+    function render(rows) {
+      const counts = { PASS: 0, FAIL: 0, BLOCKED: 0, OTHER: 0 };
+      tbody.innerHTML = '';
+
+      rows.forEach(row => {
+        const statut = String(row.statut || '').toUpperCase() || 'OTHER';
+        if (counts[statut] !== undefined) {
+          counts[statut] += 1;
+        } else {
+          counts.OTHER += 1;
+        }
+
+        const tr = document.createElement('tr');
+
+        const tdId = document.createElement('td');
+        tdId.textContent = row.id_cas || '';
+        tr.appendChild(tdId);
+
+        const tdLot = document.createElement('td');
+        tdLot.textContent = row.lot || '';
+        tr.appendChild(tdLot);
+
+        const tdStatut = document.createElement('td');
+        const span = document.createElement('span');
+        span.textContent = statut;
+        span.className = 'status-pill ' + statut;
+        tdStatut.appendChild(span);
+        tr.appendChild(tdStatut);
+
+        const tdExec = document.createElement('td');
+        tdExec.textContent = row.executant || '';
+        tr.appendChild(tdExec);
+
+        const tdDate = document.createElement('td');
+        tdDate.textContent = row.date || '';
+        tr.appendChild(tdDate);
+
+        const tdComment = document.createElement('td');
+        tdComment.textContent = row.commentaire || '';
+        tr.appendChild(tdComment);
+
+        tbody.appendChild(tr);
+      });
+
+      const total = rows.length;
+      const passCount = counts.PASS;
+      const failCount = counts.FAIL;
+      const blockedCount = counts.BLOCKED;
+
+      function format(label, count) {
+        const pct = total ? ((count / total) * 100).toFixed(1) : '0.0';
+        return `${label}: ${count} (${pct} %)`;
+      }
+
+      totalEl.textContent = `Total cas: ${total}`;
+      passEl.textContent = format('PASS', passCount);
+      failEl.textContent = format('FAIL', failCount);
+      blockedEl.textContent = format('BLOCKED', blockedCount);
+
+      summary.hidden = false;
+      table.hidden = false;
+    }
+  </script>
+</body>
+</html>
+

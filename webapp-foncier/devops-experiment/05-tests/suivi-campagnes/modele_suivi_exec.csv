@@ -1,0 +1,4 @@
+id_cas;lot;statut;executant;date;commentaire
+CT-API-001;LOT-API;PASS;;;
+CT-API-002;LOT-API;TODO;;;
+CT-IHM-001;LOT-IHM;TODO;;;

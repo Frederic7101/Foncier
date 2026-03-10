@@ -14,5 +14,5 @@ Depuis la racine du projet (parent de `MySQL`) :
 python MySQL/export_schema.py
 ```
 
-Le script utilise les variables d'environnement définies dans `webapp/backend/.env` (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME).  
+Le script utilise les variables d'environnement définies dans `webapp-foncier/backend/.env` (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME).  
 **Prérequis** : `mysqldump` doit être disponible dans le PATH (client MySQL installé).

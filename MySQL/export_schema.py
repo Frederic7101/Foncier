@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-ENV_FILE = PROJECT_ROOT / "webapp" / "backend" / ".env"
+ENV_FILE = PROJECT_ROOT / "webapp-foncier" / "backend" / ".env"
 OUTPUT_FILE = PROJECT_ROOT / "MySQL" / "foncier_schema.sql"
 
 

@@ -22,13 +22,13 @@ Le géocodage BAN (étape 1.1) peut être **très long**. Tu peux avancer sur le
 ### 1.1 Adresses à géocoder
 
 - Lancer le pré-remplissage si besoin : **`init_adresses_geocodees.sql`** ou **`init_adresses_geocodees_by_year.sql`** (ou procédure **`sp_init_adresses_geocodees_by_year`**).
-- Lancer le géocodage BAN : **`python webapp/scripts/geocode_ban.py`** (jusqu’à ce qu’il ne reste plus d’adresses à traiter, ou selon ton besoin).
+- Lancer le géocodage BAN : **`python webapp-foncier/scripts/geocode_ban.py`** (jusqu’à ce qu’il ne reste plus d’adresses à traiter, ou selon ton besoin).
 
 ### 1.2 Recopier lat/lon vers valeursfoncieres
 
 Une fois `adresses_geocodees` à jour :
 
-- Soit : **`python webapp/scripts/geocode_ban.py --update-only`** (met à jour valeursfoncieres par année 2020–2025).
+- Soit : **`python webapp-foncier/scripts/geocode_ban.py --update-only`** (met à jour valeursfoncieres par année 2020–2025).
 - Soit : exécuter **`sql/01_update_valeursfoncieres_latlon.sql`** (équivalent SQL, une requête par année).
 
 ---

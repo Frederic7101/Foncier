@@ -33,7 +33,7 @@ REGIONS_METRO = [
     {"id": "94", "nom": "Corse", "departements": ["2A", "2B"]},
 ]
 
-# Dossiers où chercher config (backend/, webapp/, racine projet)
+# Dossiers où chercher config (backend/, webapp-foncier/, racine projet)
 _CONFIG_DIRS = (
     Path(__file__).resolve().parent,
     Path(__file__).resolve().parent.parent,

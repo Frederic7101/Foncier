@@ -11,16 +11,17 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable
 
-import mysql.connector
+import psycopg2
+from psycopg2 import extras as pg_extras
 import requests
 from dotenv import load_dotenv
 
-# Forcer un bundle CA valide pour HTTPS (API BAN) et pour MySQL si connexion SSL.
+# Forcer un bundle CA valide pour HTTPS (API BAN).
 # Évite OSError quand SSL_CERT_FILE / REQUESTS_CA_BUNDLE pointent vers un chemin invalide (autre logiciel).
 try:
     import certifi
     _CA_BUNDLE = certifi.where()
-    # Forcer ce bundle pour tout le processus (API BAN + MySQL si SSL)
+    # Forcer ce bundle pour tout le processus (API BAN)
     os.environ["SSL_CERT_FILE"] = _CA_BUNDLE
     os.environ["REQUESTS_CA_BUNDLE"] = _CA_BUNDLE
 except ImportError:
@@ -40,10 +41,13 @@ load_dotenv()
 
 YEARS = (2020, 2021, 2022, 2023, 2024, 2025)
 
-# Dossiers où chercher config.json (script dir, webapp/, racine projet)
+# Schéma PostgreSQL (compatibilité : noms de tables qualifiés)
+DB_SCHEMA = "ventes_notaire"
+
+# Dossiers où chercher config.json (script dir, webapp-foncier/, racine projet)
 _CONFIG_DIRS = (
-    Path(__file__).resolve().parent,           # webapp/scripts/
-    Path(__file__).resolve().parent.parent,   # webapp/
+    Path(__file__).resolve().parent,           # webapp-foncier/scripts/
+    Path(__file__).resolve().parent.parent,   # webapp-foncier/
     Path(__file__).resolve().parent.parent.parent,  # racine projet
 )
 
@@ -51,66 +55,90 @@ _CONFIG_DIRS = (
 def _load_db_config() -> dict:
     """Charge la config DB depuis config.json ou variables d'environnement (.env)."""
     for base in _CONFIG_DIRS:
-        config_path = base / "config.json"
+        config_path = base / "config.postgres.json"
         if config_path.is_file():
             try:
                 with open(config_path, encoding="utf-8") as f:
+                    #print(f"Loading config from {config_path}")
                     data = json.load(f)
                 db = data.get("database") or data
+                #print(f"Config loaded from {config_path}: {db}")
                 return {
                     "host": db.get("host"),
-                    "port": int(db.get("port")),
+                    "port": int(db.get("port") or 5432),
                     "user": db.get("user"),
                     "password": db.get("password"),
                     "database": db.get("database"),
+                    "schema": db.get("schema", "ventes_notaire"),
                 }
+                print(f"Config loaded: {config}")
             except (json.JSONDecodeError, OSError):
+                print(f"Error loading config from {config_path}: {e}")
                 pass
     # Pas de config.json valide : tout depuis l'environnement
+    print("No config.postgres.json found, using environment variables")
     return {
         "host": os.getenv("DB_HOST", ""),
-        "port": int(os.getenv("DB_PORT", "")),
+        "port": int(os.getenv("DB_PORT", "5432") or 5432),
         "user": os.getenv("DB_USER", ""),
         "password": os.getenv("DB_PASSWORD", ""),
         "database": os.getenv("DB_NAME", ""),
+        "schema": os.getenv("DB_SCHEMA", "ventes_notaire"),
     }
 
 
 def get_connection():
     cfg = _load_db_config()
-    return mysql.connector.connect(
+    conn = psycopg2.connect(
         host=cfg["host"],
         port=cfg["port"],
         user=cfg["user"],
         password=cfg["password"],
-        database=cfg["database"],
+        dbname=cfg["database"],
     )
+    schema = cfg.get("schema", "ventes_notaire")
+    with conn.cursor() as cur:
+        # ventes_notaire en premier (tables), public pour digest() du trigger (pgcrypto)
+        cur.execute("SET search_path TO %s, public", (schema,))
+        # Extension requise par le trigger vf_set_dedup_key sur valeursfoncieres (digest)
+        try:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+        except psycopg2.Error as e:
+            conn.rollback()
+            if "permission" in str(e).lower() or "right" in str(e).lower():
+                raise SystemExit(
+                    "L'extension pgcrypto est requise (trigger sur valeursfoncieres).\n"
+                    "Exécutez une fois en superutilisateur : CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+                ) from e
+            with conn.cursor() as cur2:
+                cur2.execute("SET search_path TO %s, public", (schema,))
+    conn.commit()
+    return conn
 
 
 def update_valeursfoncieres_for_year(conn, year: int) -> int:
     """Recopie lat/lon de adresses_geocodees vers valeursfoncieres pour une année."""
-    cur = conn.cursor()
-    sql = """
-        UPDATE valeursfoncieres v
-        JOIN adresses_geocodees a
-          ON a.adresse_norm = CONCAT_WS(' ',
-                COALESCE(v.no_voie, ''),
-                COALESCE(v.type_de_voie, ''),
-                COALESCE(v.voie, ''),
-                v.code_postal,
-                v.commune
-             )
-        SET v.latitude = a.latitude, v.longitude = a.longitude
-        WHERE (v.latitude IS NULL OR v.longitude IS NULL)
-          AND (a.latitude != 0 OR a.longitude != 0)
-          AND v.date_mutation >= %s AND v.date_mutation < %s
-    """
-    date_min = f"{year}-01-01"
-    date_max = f"{year + 1}-01-01"
-    cur.execute(sql, (date_min, date_max))
-    affected = cur.rowcount
+    with conn.cursor() as cur:
+        sql = f"""
+            UPDATE {DB_SCHEMA}.valeursfoncieres v
+            SET latitude = a.latitude, longitude = a.longitude
+            FROM {DB_SCHEMA}.adresses_geocodees a
+            WHERE a.adresse_norm = CONCAT_WS(' ',
+                  COALESCE(v.no_voie, ''),
+                  COALESCE(v.type_de_voie, ''),
+                  COALESCE(v.voie, ''),
+                  v.code_postal,
+                  v.commune
+              )
+              AND (v.latitude IS NULL OR v.longitude IS NULL)
+              AND (a.latitude != 0 OR a.longitude != 0)
+              AND v.date_mutation >= %s AND v.date_mutation < %s
+        """
+        date_min = f"{year}-01-01"
+        date_max = f"{year + 1}-01-01"
+        cur.execute(sql, (date_min, date_max))
+        affected = cur.rowcount
     conn.commit()
-    cur.close()
     return affected
 
 
@@ -139,104 +167,133 @@ def load_proxy_list(proxy_file: str | None) -> list[str]:
                 u = line.strip()
                 if u and not u.startswith("#"):
                     urls.append(u)
-    env_list = os.getenv("PROXY_LIST", "")
+    env_list = os.getenv("PROXY_LIST", "").strip()
     if env_list:
-        for u in env_list.split(","):
-            u = u.strip()
-            if u:
-                urls.append(u)
+        urls.extend(u.strip() for u in env_list.split(",") if u.strip())
     return urls
 
 
-def _make_proxy_getter(proxy_list: list[str]) -> Callable[[], str | None]:
-    """Retourne une fonction qui renvoie le prochain proxy en rotation (round-robin)."""
-    it = itertools.cycle(proxy_list) if proxy_list else iter([])
-    return lambda: next(it, None)
+def _make_proxy_getter(proxy_urls: list[str]):
+    """Retourne un callable thread-safe qui renvoie à chaque appel le prochain proxy (round-robin)."""
+    if not proxy_urls:
+        return None
+    cycle = itertools.cycle(proxy_urls)
+    lock = threading.Lock()
+
+    def getter():
+        with lock:
+            url = next(cycle)
+        return {"http": url, "https": url}
+
+    return getter
 
 
-def _geocode_one(row: dict, sleep_seconds: float, proxy_getter: Callable[[], str | None]) -> tuple:
-    """Interroge l'API BAN pour une adresse. Retourne (id, lat, lon) avec lat/lon à None si échec."""
-    global _rate_limit_warned
+def _normalize_address(addr: str) -> str:
+    """Normalise l'adresse pour l'API BAN : espaces, encodage, caractères problématiques."""
+    if not addr or not isinstance(addr, str):
+        return ""
+    # Espaces insécables / caractères de contrôle → espace ordinaire
+    s = addr.strip().replace("\u00a0", " ").replace("\r", " ").replace("\n", " ")
+    # Supprimer les caractères nuls ou non imprimables
+    s = "".join(c for c in s if c != "\x00" and (c.isprintable() or c.isspace()))
+    return " ".join(s.split())  # normaliser les espaces multiples
+
+
+def _geocode_one(
+    row: dict,
+    sleep_seconds: float = 0.1,
+    proxy_getter: Callable[[], dict[str, str]] | None = None,
+) -> tuple:
+    """Appelle l'API BAN pour une adresse. Retourne (id, lat, lon) ou (id, None, None)."""
+    global _rate_limit_warned, _workers_429_seen
     addr_id = row["id"]
-    adresse_norm = row.get("adresse_norm", "")
-    if not adresse_norm or not adresse_norm.strip():
+    addr = _normalize_address(row["adresse_norm"])
+    if not addr:
         return (addr_id, None, None)
-    time.sleep(sleep_seconds)
-    proxy = proxy_getter() if proxy_getter else None
-    proxies = {"http": proxy, "https": proxy} if proxy else None
+    params = {"q": addr, "limit": 3}
     url = "https://api-adresse.data.gouv.fr/search/"
-    params = {"q": adresse_norm, "limit": 1}
-    try:
-        r = requests.get(url, params=params, timeout=10, proxies=proxies)
-        if r.status_code == 429:
-            with _rate_limit_lock:
-                if not _rate_limit_warned:
-                    _rate_limit_warned = True
-                    print("\n[429] Rate limit API BAN. Réessayez plus tard ou utilisez des proxies.", flush=True)
+    for attempt in range(2):
+        proxies = proxy_getter() if proxy_getter else None
+        try:
+            r = requests.get(url, params=params, timeout=15, proxies=proxies, verify=_CA_BUNDLE)
+            if r.status_code == 429:
+                with _rate_limit_lock:
+                    if not _rate_limit_warned:
+                        _rate_limit_warned = True
+                        print(
+                            "\n[ATTENTION] API BAN : trop de requêtes (429). Pause 60s puis retry. "
+                            "Réduisez --workers et augmentez --sleep pour éviter le blocage.",
+                            flush=True,
+                        )
+                with _workers_ramp_lock:
+                    _workers_429_seen = True
+                time.sleep(60)
+                continue
+            r.raise_for_status()
+            data = r.json()
+            feats = data.get("features", [])
+            if not feats:
+                return (addr_id, None, None)
+            coords = feats[0]["geometry"]["coordinates"]
+            lon, lat = coords[0], coords[1]
+            if sleep_seconds > 0:
+                time.sleep(sleep_seconds)
+            return (addr_id, lat, lon)
+        except requests.RequestException as e:
+            # Timeout, ProxyError, ConnectionError, HTTPError (4xx/5xx) : log pour diagnostic
+            # print(f"[BAN] id={addr_id} {type(e).__name__}: {e}", flush=True)
+            if attempt == 0:
+                time.sleep(5)
+                continue
             return (addr_id, None, None)
-        r.raise_for_status()
-        data = r.json()
-        features = data.get("features") or []
-        if not features:
+        except Exception as e:
+            # ex. JSONDecodeError si la réponse n'est pas du JSON
+            print(f"[BAN] id={addr_id} {type(e).__name__}: {e}", flush=True)
             return (addr_id, None, None)
-        coords = features[0].get("geometry", {}).get("coordinates")
-        if not coords or len(coords) < 2:
-            return (addr_id, None, None)
-        lon, lat = float(coords[0]), float(coords[1])
-        return (addr_id, lat, lon)
-    except requests.RequestException as e:
-        # Timeout, ProxyError, ConnectionError, HTTPError (4xx/5xx) : log pour diagnostic
-        return (addr_id, None, None)
-    except Exception as e:
-        # ex. JSONDecodeError si la réponse n'est pas du JSON
-        return (addr_id, None, None)
+    return (addr_id, None, None)
 
 
 def _log_progress(
     processed: int,
     total: int,
-    progress_ok: int,
-    progress_skip: int,
+    ok: int,
+    skip: int,
     start_time: float,
     log_every: int | None,
     log_interval: float | None,
     last_log_time: float,
     last_log_processed: int,
 ) -> tuple[float, int]:
+    """Affiche un message de progression si log_every ou log_interval est déclenché. Retourne (last_log_time, last_log_processed)."""
     now = time.monotonic()
     elapsed = now - start_time
     do_log = False
-    if log_every and processed > 0 and processed % log_every == 0 and processed != last_log_processed:
+    if log_every and processed > 0 and (processed - last_log_processed) >= log_every:
         do_log = True
-    if log_interval and (now - last_log_time) >= log_interval and processed != last_log_processed:
+    if log_interval and processed > 0 and (now - last_log_time) >= log_interval:
         do_log = True
-    if not do_log:
+    if not do_log or processed == 0:
         return last_log_time, last_log_processed
     rate = processed / elapsed if elapsed > 0 else 0
     ts = time.strftime("%H:%M:%S", time.localtime())
-    print(f"[{ts}] {processed}/{total} traitées — {progress_ok} OK, {progress_skip} sans résultat — {rate:.1f} adresses/s", flush=True)
+    print(f"[{ts}] {processed}/{total} traitées — {ok} OK, {skip} sans résultat — {rate:.1f} adresses/s", flush=True)
     return now, processed
 
 
 def _ensure_geocode_failed_column(conn) -> None:
     """Vérifie que la colonne geocode_failed existe ; sinon lève une erreur explicite."""
-    cur = conn.cursor(buffered=True)
     try:
-        cur.execute(
-            "SELECT id FROM adresses_geocodees WHERE COALESCE(geocode_failed, 0) = 0 LIMIT 0"
-        )
-        cur.fetchall()  # consommer le résultat pour éviter "Unread result found"
-    except mysql.connector.Error as e:
-        if "geocode_failed" in str(e).lower() or "Unknown column" in str(e):
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT id FROM {DB_SCHEMA}.adresses_geocodees WHERE COALESCE(geocode_failed::int, 0) = 0 LIMIT 0"
+            )
+    except psycopg2.Error as e:
+        if "geocode_failed" in str(e).lower() or "column" in str(e).lower():
             raise SystemExit(
-                "La colonne 'geocode_failed' est absente. Exécutez la migration.\n"
-                "PowerShell (à la racine du projet) :\n"
-                "  Get-Content .\\sql\\add_geocode_failed.sql -Raw | mysql -u root -p foncier\n"
-                "CMD :  cmd /c \"mysql -u root -p foncier < sql\\add_geocode_failed.sql\""
+                "La colonne 'geocode_failed' est absente. Exécutez la migration SQL.\n"
+                "Exemple : psql -U postgres -d foncier -f sql/add_geocode_failed.sql"
             ) from e
         raise
-    finally:
-        cur.close()
 
 
 def run_geocode(
@@ -272,20 +329,18 @@ def run_geocode(
     while True:
         batch_num += 1
         conn = get_connection()
-        cur = conn.cursor(dictionary=True, buffered=True)
-
-        cur.execute(
-            """
-            SELECT id, adresse_norm
-            FROM adresses_geocodees
-            WHERE latitude = 0 AND longitude = 0
-              AND COALESCE(geocode_failed, 0) = 0
-            LIMIT %s
-            """,
-            (batch_size,),
-        )
-        rows = cur.fetchall()
-        cur.close()
+        with conn.cursor(cursor_factory=pg_extras.RealDictCursor) as cur:
+            cur.execute(
+                f"""
+                SELECT id, adresse_norm
+                FROM {DB_SCHEMA}.adresses_geocodees
+                WHERE latitude = 0 AND longitude = 0
+                  AND COALESCE(geocode_failed::int, 0) = 0
+                LIMIT %s
+                """,
+                (batch_size,),
+            )
+            rows = cur.fetchall()
 
         if not rows:
             conn.close()
@@ -356,8 +411,8 @@ def run_geocode(
 
         # Batch UPDATE en base : succès (lat/lon) ou marquage échec (geocode_failed)
         update_ok_sql = (
-            "UPDATE adresses_geocodees "
-            "SET latitude = %s, longitude = %s, last_refreshed = NOW(), geocode_failed = 0 "
+            f"UPDATE {DB_SCHEMA}.adresses_geocodees "
+            "SET latitude = %s, longitude = %s, last_refreshed = NOW(), geocode_failed = FALSE "
             "WHERE id = %s"
         )
         row_by_id = {r["id"]: r.get("adresse_norm", "") for r in rows}
@@ -373,27 +428,24 @@ def run_geocode(
                 continue
             batch_ok.append((lat, lon, addr_id))
             if len(batch_ok) >= commit_every:
-                cur = conn.cursor()
-                cur.executemany(update_ok_sql, batch_ok)
+                with conn.cursor() as cur:
+                    cur.executemany(update_ok_sql, batch_ok)
                 conn.commit()
                 ok += len(batch_ok)
                 batch_ok = []
-                cur.close()
         if batch_ok:
-            cur = conn.cursor()
-            cur.executemany(update_ok_sql, batch_ok)
+            with conn.cursor() as cur:
+                cur.executemany(update_ok_sql, batch_ok)
             conn.commit()
             ok += len(batch_ok)
-            cur.close()
         if ids_failed:
-            placeholders = ",".join(["%s"] * len(ids_failed))
-            cur = conn.cursor()
-            cur.execute(
-                f"UPDATE adresses_geocodees SET geocode_failed = 1 WHERE id IN ({placeholders})",
-                ids_failed,
-            )
+            with conn.cursor() as cur:
+                placeholders = ",".join(["%s"] * len(ids_failed))
+                cur.execute(
+                    f"UPDATE {DB_SCHEMA}.adresses_geocodees SET geocode_failed = TRUE WHERE id IN ({placeholders})",
+                    ids_failed,
+                )
             conn.commit()
-            cur.close()
         conn.close()
 
         if rejets:
@@ -427,7 +479,7 @@ if __name__ == "__main__":
         default=5,
         help="Nombre d'appels BAN en parallèle (défaut: 5). Garder ≤10 et --sleep ≥0.2 pour éviter le blocage par l'API.",
     )
-    parser.add_argument("--commit-every", type=int, default=100, help="Commit MySQL tous les N enregistrements (défaut: 100)")
+    parser.add_argument("--commit-every", type=int, default=100, help="Commit PostgreSQL tous les N enregistrements (défaut: 100)")
     parser.add_argument("--log-every", type=int, default=None, metavar="N", help="Afficher la progression tous les N adresses traitées")
     parser.add_argument("--log-interval", type=float, default=None, metavar="SEC", help="Afficher la progression au plus toutes les SEC secondes")
     parser.add_argument(
@@ -451,3 +503,4 @@ if __name__ == "__main__":
             log_interval=args.log_interval,
             proxy_file=args.proxy_file,
         )
+
