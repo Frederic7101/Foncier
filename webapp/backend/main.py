@@ -1,10 +1,13 @@
+import json
 import math
 import os
+from pathlib import Path
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, List, Any, Literal
 
-import mysql.connector
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -30,19 +33,61 @@ REGIONS_METRO = [
     {"id": "94", "nom": "Corse", "departements": ["2A", "2B"]},
 ]
 
+# Dossiers où chercher config (backend/, webapp/, racine projet)
+_CONFIG_DIRS = (
+    Path(__file__).resolve().parent,
+    Path(__file__).resolve().parent.parent,
+    Path(__file__).resolve().parent.parent.parent,
+)
+
+
+def _load_db_config() -> dict:
+    """Charge la config DB depuis config.json ou config.postgres.json, puis variables d'environnement."""
+    for base in _CONFIG_DIRS:
+        for name in ("config.json", "config.postgres.json"):
+            config_path = base / name
+            if config_path.is_file():
+                try:
+                    with open(config_path, encoding="utf-8") as f:
+                        data = json.load(f)
+                    db = data.get("database") or data
+                    return {
+                        "host": db.get("host", "localhost"),
+                        "port": int(db.get("port") or 5432),
+                        "user": db.get("user", "postgres"),
+                        "password": db.get("password", ""),
+                        "database": db.get("database", "foncier"),
+                        "schema": db.get("schema", "ventes_notaire"),
+                    }
+                except (json.JSONDecodeError, OSError):
+                    pass
+    return {
+        "host": os.getenv("DB_HOST", "localhost"),
+        "port": int(os.getenv("DB_PORT", "5432") or 5432),
+        "user": os.getenv("DB_USER", "postgres"),
+        "password": os.getenv("DB_PASSWORD", ""),
+        "database": os.getenv("DB_NAME", "foncier"),
+        "schema": os.getenv("DB_SCHEMA", "ventes_notaire"),
+    }
+
 
 def get_db_connection():
     try:
-        conn = mysql.connector.connect(
-            host=os.getenv("DB_HOST", "localhost"),
-            port=int(os.getenv("DB_PORT", "3306")),
-            user=os.getenv("DB_USER", "root"),
-            password=os.getenv("DB_PASSWORD", "secret"),
-            database=os.getenv("DB_NAME", "foncier"),
+        cfg = _load_db_config()
+        conn = psycopg2.connect(
+            host=cfg["host"],
+            port=cfg["port"],
+            user=cfg["user"],
+            password=cfg["password"],
+            dbname=cfg["database"],
         )
+        schema = cfg.get("schema", "ventes_notaire")
+        with conn.cursor() as cur:
+            cur.execute("SET search_path TO %s, public", (schema,))
+        conn.commit()
         return conn
-    except mysql.connector.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur de connexion MySQL : {e}")
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur de connexion PostgreSQL : {e}")
 
 
 class Vente(BaseModel):
@@ -87,8 +132,8 @@ def get_period():
         row = cur.fetchone()
         cur.close()
         return {"annee_min": row[0], "annee_max": row[1]}
-    except mysql.connector.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur MySQL : {e}")
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     finally:
         if conn is not None:
             conn.close()
@@ -116,7 +161,7 @@ def _get_regions_and_depts(cur) -> tuple[list[dict], list[str]]:
                 regions.append({"id": code_region, "nom": nom_region, "departements": region_depts})
         if regions:
             return regions, depts_in_data
-    except (mysql.connector.Error, ValueError):
+    except (psycopg2.Error, ValueError):
         pass
     return REGIONS_METRO, depts_in_data
 
@@ -132,8 +177,8 @@ def get_geo():
         regions, depts = _get_regions_and_depts(cur)
         cur.close()
         return {"regions": regions, "departements": depts}
-    except mysql.connector.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur MySQL : {e}")
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     finally:
         if conn is not None:
             conn.close()
@@ -156,15 +201,15 @@ def get_communes(code_dept: Optional[str] = Query(None, description="Code dépar
                 cur.execute(
                     "SELECT code_dept, code_postal, commune FROM ref_communes ORDER BY commune, code_postal"
                 )
-            except mysql.connector.Error:
+            except psycopg2.Error:
                 cur.execute(
                     "SELECT DISTINCT code_dept, code_postal, commune FROM vf_communes ORDER BY commune, code_postal"
                 )
         rows = [{"code_dept": r[0], "code_postal": r[1], "commune": r[2]} for r in cur.fetchall()]
         cur.close()
         return rows
-    except mysql.connector.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur MySQL : {e}")
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     finally:
         if conn is not None:
             conn.close()
@@ -286,7 +331,7 @@ def get_stats(
     conn = None
     try:
         conn = get_db_connection()
-        cur = conn.cursor(dictionary=True)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         # Période par défaut (s'assurer que annee_min/max sont des int, la query peut renvoyer str)
         if annee_min is None or annee_max is None:
             cur.execute("SELECT COALESCE(MIN(annee),2020) AS mn, COALESCE(MAX(annee),2025) AS mx FROM vf_communes")
@@ -304,7 +349,7 @@ def get_stats(
             try:
                 cur.execute("SELECT code_dept FROM ref_departements WHERE code_region = %s ORDER BY code_dept", (region_id.strip(),))
                 dept_list = [row["code_dept"] for row in cur.fetchall()]
-            except (mysql.connector.Error, KeyError, TypeError):
+            except (psycopg2.Error, KeyError, TypeError):
                 dept_list = None
             if not dept_list:
                 for reg in REGIONS_METRO:
@@ -371,8 +416,8 @@ def get_stats(
             agg_y["annee"] = y
             series.append(agg_y)
         return {"global": global_agg, "series": series}
-    except mysql.connector.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur MySQL : {e}")
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     finally:
         if conn is not None:
             conn.close()
@@ -399,7 +444,7 @@ def rechercher_ventes(
     conn = None
     try:
         conn = get_db_connection()
-        cur = conn.cursor(dictionary=True)
+        cur = conn.cursor(cursor_factory=RealDictCursor)
 
         # Préfiltre par cadre (bounding box) pour limiter les lignes avant le calcul de distance
         # ~111 km par degré de latitude ; longitude ajustée par cos(lat)
@@ -486,8 +531,8 @@ def rechercher_ventes(
             d = {k: _norm(v) for k, v in row.items()}
             out.append(Vente(**d))
         return out
-    except mysql.connector.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur MySQL : {e}")
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur : {e}")
     finally:

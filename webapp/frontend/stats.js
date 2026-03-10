@@ -641,100 +641,211 @@ function fillCommuneOptionsChunked(communeSelect, list, startIndex) {
 }
 
 function getCommuneSelectId(suffix) {
-  if (suffix === "1") return "commune-1-select";
-  if (suffix === "2") return "commune-2-select";
-  if (suffix === "3") return "commune-3-select";
-  if (suffix === "4") return "commune-4-select";
+  const s = String(suffix ?? "");
+  if (s === "1") return "commune-1-select";
+  if (s === "2") return "commune-2-select";
+  if (s === "3") return "commune-3-select";
+  if (s === "4") return "commune-4-select";
   return "commune-select";
 }
 
 async function loadCommunes(codeDept, suffix) {
-  const selectId = getCommuneSelectId(suffix);
+  const s = String(suffix ?? "");
+  const selectId = getCommuneSelectId(s);
   const communeSelect = document.getElementById(selectId);
   if (!communeSelect) return;
-  communeSelect.innerHTML = "<option value=''>Chargement…</option>";
+  // Réinitialiser le select
+  communeSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "— Choisir une commune —";
+  communeSelect.appendChild(placeholder);
   const url = codeDept
     ? `${API_BASE}/api/communes?code_dept=${encodeURIComponent(codeDept)}`
     : `${API_BASE}/api/communes`;
   const res = await fetch(url);
   if (!res.ok) {
-    communeSelect.innerHTML = "<option value=''>Erreur</option>";
     return;
   }
   const list = await res.json();
-  if (suffix === "2") communesList2 = list;
-  else if (suffix === "3") communesList3 = list;
-  else if (suffix === "4") communesList4 = list;
+  if (s === "2") communesList2 = list.slice(0);
+  else if (s === "3") communesList3 = list.slice(0);
+  else if (s === "4") communesList4 = list.slice(0);
   else {
-    communesList = list;
+    communesList = list.slice(0);
     if (!codeDept) allCommunesList = list.slice(0);
   }
-  communeSelect.innerHTML = "<option value=''>— Choisir une commune —</option>";
-  if (list.length <= COMMUNES_CHUNK_SIZE) {
-    list.forEach((c, i) => {
-      const opt = document.createElement("option");
-      opt.value = i;
-      opt.textContent = `${c.commune} (${c.code_postal})`;
-      communeSelect.appendChild(opt);
-    });
-  } else {
-    fillCommuneOptionsChunked(communeSelect, list, 0);
-  }
+  fillCommuneOptionsChunked(communeSelect, list, 0);
 }
 
 function restoreAllCommunesInDropdown(suffix) {
+  const s = String(suffix ?? "");
   const list = allCommunesList.slice(0);
-  const selectId = getCommuneSelectId(suffix || "");
+  const selectId = getCommuneSelectId(s);
   const communeSelect = document.getElementById(selectId);
-  if (!communeSelect) return;
-  if (suffix === "2") communesList2 = list;
-  else if (suffix === "3") communesList3 = list;
-  else if (suffix === "4") communesList4 = list;
-  else communesList = list;
-  communeSelect.innerHTML = "<option value=''>— Choisir une commune —</option>";
-  if (list.length <= COMMUNES_CHUNK_SIZE) {
-    list.forEach((c, i) => {
-      const opt = document.createElement("option");
-      opt.value = i;
-      opt.textContent = `${c.commune} (${c.code_postal})`;
-      communeSelect.appendChild(opt);
-    });
+  if (!communeSelect || !list.length) return;
+  if (s === "2") communesList2 = list.slice(0);
+  else if (s === "3") communesList3 = list.slice(0);
+  else if (s === "4") communesList4 = list.slice(0);
+  else communesList = list.slice(0);
+  // Reconstruire complètement la liste déroulante
+  communeSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "— Choisir une commune —";
+  communeSelect.appendChild(placeholder);
+  fillCommuneOptionsChunked(communeSelect, list, 0);
+}
+
+const COMMUNE_AUTOCOMPLETE_MAX = 50;
+
+/** Normalise une chaîne pour la recherche : minuscules, sans accents, tirets et espaces multiples ramenés à un espace. */
+function normalizeForCommuneSearch(str) {
+  if (str == null || typeof str !== "string") return "";
+  const s = str
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .replace(/[\s\-]+/g, " ")
+    .trim();
+  return s;
+}
+
+function getCommuneListForInputId(inputId) {
+  if (!inputId) return [];
+  if (inputId === "commune-select" || inputId === "commune-1-select") return communesList || [];
+  if (inputId === "commune-2-select") return communesList2 || [];
+  if (inputId === "commune-3-select") return communesList3 || [];
+  if (inputId === "commune-4-select") return communesList4 || [];
+  return [];
+}
+
+function showCommuneAutocomplete(input, dropdown, dataEl, list) {
+  const rawQuery = (input.value || "").trim();
+  const q = normalizeForCommuneSearch(rawQuery);
+  const filtered = !q
+    ? list.slice(0, COMMUNE_AUTOCOMPLETE_MAX)
+    : list.filter((c) => {
+        const normCommune = normalizeForCommuneSearch(c.commune);
+        const normPostal = String(c.code_postal || "").replace(/\s/g, "");
+        const queryNoSpace = q.replace(/\s/g, "");
+        return (
+          (normCommune && normCommune.includes(q)) ||
+          (normCommune && normCommune.replace(/\s/g, "").includes(queryNoSpace)) ||
+          (normPostal && normPostal.includes(queryNoSpace))
+        );
+      }).slice(0, COMMUNE_AUTOCOMPLETE_MAX);
+  dropdown.innerHTML = "";
+  dropdown.removeAttribute("aria-hidden");
+  input.setAttribute("aria-expanded", "true");
+  if (filtered.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "stats-commune-option-empty";
+    empty.textContent = q ? "Aucune commune trouvée" : "Choisissez un département ou tapez pour rechercher";
+    dropdown.appendChild(empty);
   } else {
-    fillCommuneOptionsChunked(communeSelect, list, 0);
+    filtered.forEach((c) => {
+      const opt = document.createElement("div");
+      opt.className = "stats-commune-option";
+      opt.role = "option";
+      opt.textContent = `${c.commune} (${c.code_postal})`;
+      opt.dataset.commune = c.commune || "";
+      opt.dataset.codePostal = c.code_postal || "";
+      opt.dataset.codeDept = c.code_dept || "";
+      dropdown.appendChild(opt);
+    });
   }
+}
+
+function initCommuneAutocomplete(inputId, dataId, dropdownId, placeOrSingle) {
+  const input = document.getElementById(inputId);
+  const dataEl = document.getElementById(dataId);
+  const dropdown = document.getElementById(dropdownId);
+  if (!input || !dropdown) return;
+  let hideTimeout = null;
+  function getList() {
+    return getCommuneListForInputId(inputId);
+  }
+  function hide() {
+    hideTimeout = setTimeout(() => {
+      dropdown.setAttribute("aria-hidden", "true");
+      input.setAttribute("aria-expanded", "false");
+    }, 150);
+  }
+  function selectCommune(c) {
+    input.value = `${c.commune} (${c.code_postal})`;
+    if (dataEl) dataEl.value = JSON.stringify({ code_dept: c.code_dept || "", code_postal: c.code_postal || "", commune: c.commune || "" });
+    dropdown.setAttribute("aria-hidden", "true");
+    input.setAttribute("aria-expanded", "false");
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  input.addEventListener("focus", () => {
+    if (hideTimeout) clearTimeout(hideTimeout);
+    const list = getList();
+    if (list.length) showCommuneAutocomplete(input, dropdown, dataEl, list);
+  });
+  input.addEventListener("input", () => {
+    if (hideTimeout) clearTimeout(hideTimeout);
+    // Toute saisie manuelle annule la commune précédemment sélectionnée
+    if (dataEl) dataEl.value = "";
+    const list = getList();
+    showCommuneAutocomplete(input, dropdown, dataEl, list);
+  });
+  input.addEventListener("blur", hide);
+  dropdown.addEventListener("mousedown", (e) => e.preventDefault());
+  dropdown.addEventListener("click", (e) => {
+    const opt = e.target.closest(".stats-commune-option");
+    if (!opt) return;
+    selectCommune({
+      commune: opt.dataset.commune,
+      code_postal: opt.dataset.codePostal,
+      code_dept: opt.dataset.codeDept,
+    });
+  });
+  input.addEventListener("keydown", (e) => {
+    const opts = dropdown.querySelectorAll(".stats-commune-option");
+    if (e.key === "Escape") {
+      dropdown.setAttribute("aria-hidden", "true");
+      input.setAttribute("aria-expanded", "false");
+      // Échappe = annuler la sélection de commune en cours
+      if (dataEl) dataEl.value = "";
+      // on laisse le texte tel quel pour que l'utilisateur puisse corriger ou effacer
+      return;
+    }
+    if (e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "Enter") {
+      e.preventDefault();
+      const current = dropdown.querySelector(".stats-commune-option[aria-selected='true']");
+      let idx = current ? Array.from(opts).indexOf(current) : -1;
+      if (e.key === "ArrowDown") idx = Math.min(idx + 1, opts.length - 1);
+      else if (e.key === "ArrowUp") idx = Math.max(idx - 1, 0);
+      opts.forEach((o, i) => o.setAttribute("aria-selected", i === idx));
+      if (e.key === "Enter" && idx >= 0 && opts[idx]) {
+        selectCommune({
+          commune: opts[idx].dataset.commune,
+          code_postal: opts[idx].dataset.codePostal,
+          code_dept: opts[idx].dataset.codeDept,
+        });
+      }
+    }
+  });
 }
 
 function loadCommunesInBackground() {
   const communeSelect = document.getElementById("commune-select");
-  if (allCommunesList.length > 0) return;
-  communeSelect.innerHTML = "<option value=''>Chargement des communes en arrière-plan…</option>";
+  if (!communeSelect || allCommunesList.length > 0) return;
   fetch(`${API_BASE}/api/communes`)
     .then((res) => {
       if (!res.ok) throw new Error("Erreur chargement communes");
       return res.json();
     })
     .then((list) => {
-      allCommunesList = list;
+      allCommunesList = list.slice(0);
       communesList = list.slice(0);
       if (document.getElementById("dept-select").value) return;
-      const firstOpt = communeSelect.options[0];
-      if (!firstOpt || firstOpt.text !== "Chargement des communes en arrière-plan…") return;
-      communeSelect.innerHTML = "<option value=''>— Choisir une commune —</option>";
-      if (list.length <= COMMUNES_CHUNK_SIZE) {
-        list.forEach((c, i) => {
-          const opt = document.createElement("option");
-          opt.value = i;
-          opt.textContent = `${c.commune} (${c.code_postal})`;
-          communeSelect.appendChild(opt);
-        });
-      } else {
-        fillCommuneOptionsChunked(communeSelect, list, 0);
-      }
+      restoreAllCommunesInDropdown("");
     })
     .catch(() => {
-      if (communeSelect.options[0]?.text === "Chargement des communes en arrière-plan…") {
-        communeSelect.innerHTML = "<option value=''>Erreur chargement</option>";
-      }
+      /* en cas d'erreur, on laisse simplement la liste vide */
     });
 }
 
@@ -746,26 +857,28 @@ function escapeHtml(s) {
 }
 
 function getCommuneValue() {
-  const sel = document.getElementById("commune-select");
-  const v = sel?.value;
-  if (v === "" || v === undefined || !communesList.length)
-    return { code_dept: null, code_postal: null, commune: null };
-  const i = parseInt(v, 10);
-  if (Number.isNaN(i) || i < 0 || i >= communesList.length) return { code_dept: null, code_postal: null, commune: null };
-  const c = communesList[i];
-  return { code_dept: c.code_dept, code_postal: c.code_postal, commune: c.commune };
+  const select = document.getElementById("commune-select");
+  if (!select || !select.value) return { code_dept: null, code_postal: null, commune: null };
+  const idx = parseInt(select.value, 10);
+  const list = communesList && communesList.length ? communesList : allCommunesList;
+  const c = !Number.isNaN(idx) && list[idx] ? list[idx] : null;
+  if (!c) return { code_dept: null, code_postal: null, commune: null };
+  return { code_dept: c.code_dept || null, code_postal: c.code_postal || null, commune: c.commune || null };
 }
 
 function getCommuneValueForPlace(place) {
-  const selectId = getCommuneSelectId(String(place));
-  const list = place === 1 ? communesList : place === 2 ? communesList2 : place === 3 ? communesList3 : communesList4;
-  const sel = document.getElementById(selectId);
-  const v = sel?.value;
-  if (v === "" || v === undefined || !list.length) return { code_dept: null, code_postal: null, commune: null };
-  const i = parseInt(v, 10);
-  if (Number.isNaN(i) || i < 0 || i >= list.length) return { code_dept: null, code_postal: null, commune: null };
-  const c = list[i];
-  return { code_dept: c.code_dept, code_postal: c.code_postal, commune: c.commune };
+  const p = typeof place === "number" ? place : parseInt(place, 10);
+  const select = document.getElementById("commune-" + p + "-select");
+  if (!select || !select.value) return { code_dept: null, code_postal: null, commune: null };
+  const idx = parseInt(select.value, 10);
+  let list = [];
+  if (p === 1) list = communesList || [];
+  else if (p === 2) list = communesList2 || [];
+  else if (p === 3) list = communesList3 || [];
+  else if (p === 4) list = communesList4 || [];
+  const c = !Number.isNaN(idx) && list[idx] ? list[idx] : null;
+  if (!c) return { code_dept: null, code_postal: null, commune: null };
+  return { code_dept: c.code_dept || null, code_postal: c.code_postal || null, commune: c.commune || null };
 }
 
 function getPlaceValues(place) {
@@ -784,24 +897,18 @@ function getPlaceValues(place) {
 function syncSingleToPlace1() {
   document.getElementById("region-1-select").value = document.getElementById("region-select").value || "";
   document.getElementById("dept-1-select").value = document.getElementById("dept-select").value || "";
-  const sel = document.getElementById("commune-select");
-  const sel1 = document.getElementById("commune-1-select");
-  if (sel && sel1) {
-    sel1.innerHTML = sel.innerHTML;
-    sel1.value = sel.value;
-  }
+  const inp = document.getElementById("commune-select");
+  const inp1 = document.getElementById("commune-1-select");
+  if (inp && inp1) inp1.value = inp.value;
   communesList = allCommunesList.length ? allCommunesList.slice(0) : communesList.slice(0);
 }
 
 function syncPlace1ToSingle() {
   document.getElementById("region-select").value = document.getElementById("region-1-select").value || "";
   document.getElementById("dept-select").value = document.getElementById("dept-1-select").value || "";
-  const sel1 = document.getElementById("commune-1-select");
-  const sel = document.getElementById("commune-select");
-  if (sel1 && sel) {
-    sel.innerHTML = sel1.innerHTML;
-    sel.value = sel1.value;
-  }
+  const inp1 = document.getElementById("commune-1-select");
+  const inp = document.getElementById("commune-select");
+  if (inp1 && inp) inp.value = inp1.value;
   communesList = communesList.slice(0);
 }
 
@@ -822,14 +929,12 @@ function setCompareMode(enabled) {
     syncSingleToPlace1();
     comparePlaceCount = 2;
     updateComparePlaceUI();
-    switchLieuTab(1);
+    switchLieuTab(2);
     compareBtn.textContent = "Quitter la comparaison";
     content.setAttribute("aria-hidden", "true");
     compareResults.setAttribute("aria-hidden", "true");
     overlayResults.setAttribute("aria-hidden", "true");
     overlayMode = false;
-    if (overlayBtn) overlayBtn.style.display = "block";
-    if (overlayBtn) overlayBtn.textContent = "Superposer les graphiques";
   } else {
     section.classList.remove("compare-mode");
     single.style.display = "block";
@@ -857,7 +962,7 @@ function setCompareMode(enabled) {
   }
 }
 
-function buildNiveauAndParams(p, type_local, surface_cat, pieces_cat, annee_min, annee_max) {
+function buildNiveauAndParams(p, type_local, annee_min, annee_max) {
   const { region_id, code_dept, code_postal, commune } = p;
   let niveau;
   if (commune && code_postal && code_dept) niveau = "commune";
@@ -872,8 +977,6 @@ function buildNiveauAndParams(p, type_local, surface_cat, pieces_cat, annee_min,
     ...(code_postal && { code_postal }),
     ...(commune && { commune }),
     ...(type_local && { type_local }),
-    ...(surface_cat && { surface_cat }),
-    ...(pieces_cat && { pieces_cat }),
     ...(annee_min && { annee_min }),
     ...(annee_max && { annee_max }),
   });
@@ -882,8 +985,6 @@ function buildNiveauAndParams(p, type_local, surface_cat, pieces_cat, annee_min,
 
 async function submitStats() {
   const type_local = document.getElementById("type-local").value || undefined;
-  const surface_cat = document.getElementById("surface-cat").value || undefined;
-  const pieces_cat = document.getElementById("pieces-cat").value || undefined;
   const annee_min = document.getElementById("annee-min").value || undefined;
   const annee_max = document.getElementById("annee-max").value || undefined;
 
@@ -892,7 +993,7 @@ async function submitStats() {
     const builds = [];
     for (let i = 1; i <= comparePlaceCount; i++) {
       const p = getPlaceValues(i);
-      const b = buildNiveauAndParams(p, type_local, surface_cat, pieces_cat, annee_min, annee_max);
+      const b = buildNiveauAndParams(p, type_local, annee_min, annee_max);
       if (!b) {
         alert("Choisissez au moins une région, un département ou une commune pour chaque lieu.");
         return;
@@ -934,7 +1035,7 @@ async function submitStats() {
           renderCompareSide(i, allData[i - 1], lastCompareTitre[i - 1], annee_min, annee_max);
         }
         document.getElementById("stats-compare-results").setAttribute("aria-hidden", "false");
-        setCompareChartsYToZero();
+        syncCompareChartsYScales();
         for (let i = 1; i <= comparePlaceCount; i++) {
           const container = document.getElementById("stats-result-" + i);
           if (container) switchTabInContainer(container, "prix-" + i);
@@ -955,7 +1056,7 @@ async function submitStats() {
   if (c.code_dept) code_dept = c.code_dept;
 
   const p = { region_id, code_dept, code_postal, commune };
-  const built = buildNiveauAndParams(p, type_local, surface_cat, pieces_cat, annee_min, annee_max);
+  const built = buildNiveauAndParams(p, type_local, annee_min, annee_max);
   if (!built) {
     alert("Choisissez au moins une région, un département ou une commune.");
     return;
@@ -1065,29 +1166,140 @@ function switchTab(tabId) {
   }
 }
 
-function applyYAxisToChart(chartKey, minValue) {
+function applyYAxisToChart(chartKey, minValue, maxValue) {
   const ch = charts[chartKey];
   if (!ch) return;
   const y = ch.options.scales.y;
-  if (minValue == null) {
+
+  // Réinitialisation complète (échelle auto)
+  if (minValue == null && maxValue == null) {
     y.min = undefined;
+    y.max = undefined;
     y.beginAtZero = false;
-  } else {
-    const v = Number(minValue);
-    y.min = Number.isNaN(v) ? 0 : v;
-    y.beginAtZero = v === 0;
+    if (y.ticks && Object.prototype.hasOwnProperty.call(y.ticks, "stepSize")) {
+      delete y.ticks.stepSize;
+    }
+    ch.update();
+    return;
   }
+
+  // Valeurs numériques brutes fournies à la fonction
+  let vMin = minValue != null ? Number(minValue) : null;
+  let vMax = maxValue != null ? Number(maxValue) : null;
+
+  if (vMin != null && Number.isNaN(vMin)) vMin = null;
+  if (vMax != null && Number.isNaN(vMax)) vMax = null;
+
+  // Appliquer d'abord les bornes telles quelles
+  if (vMin != null) {
+    y.min = vMin;
+    y.beginAtZero = vMin === 0;
+  }
+  if (vMax != null) {
+    y.max = vMax;
+  } else {
+    y.max = undefined;
+  }
+
+  // Arrondi des bornes à la graduation inférieure/supérieure
+  const hasMin = vMin != null;
+  const hasMax = vMax != null;
+  if (hasMin || hasMax) {
+    const rangeInfo = getChartDataRange(chartKey);
+    let lo = hasMin ? vMin : rangeInfo.min;
+    let hi = hasMax ? vMax : rangeInfo.max;
+
+    if (Number.isFinite(lo) && Number.isFinite(hi) && hi > lo) {
+      const rawRange = hi - lo;
+      const roughStep = rawRange / 6 || 1; // ~6 graduations
+      const pow10 = Math.pow(10, Math.floor(Math.log10(Math.abs(roughStep))));
+      const candidates = [1, 2, 5, 10];
+      let step = pow10;
+      for (let i = 0; i < candidates.length; i++) {
+        const s = candidates[i] * pow10;
+        if (roughStep <= s) {
+          step = s;
+          break;
+        }
+      }
+
+      let niceMin = Math.floor(lo / step) * step;
+      const loDiv = lo / step;
+      if (Math.abs(loDiv - Math.round(loDiv)) < 1e-6) {
+        const candidate = lo - step;
+        niceMin = candidate < 0 ? 0 : candidate;
+      }
+
+      let niceMax = Math.ceil(hi / step) * step;
+      const hiDiv = hi / step;
+      if (Math.abs(hiDiv - Math.round(hiDiv)) < 1e-6) {
+        niceMax = hi + step;
+      }
+
+      if (hasMin) {
+        y.min = niceMin;
+        y.beginAtZero = niceMin === 0;
+      }
+      if (hasMax) {
+        y.max = niceMax;
+      }
+
+      if (!y.ticks) y.ticks = {};
+      y.ticks.stepSize = step;
+    }
+  }
+
   ch.update();
 }
 
-/** En mode comparaison : fixe Y=0 pour tous les graphiques et met à jour les contrôles (évite comparaisons biaisées). */
-function setCompareChartsYToZero() {
-  const keys = getCompareChartKeys();
-  keys.forEach((key) => applyYAxisToChart(key, 0));
+/** Retourne le min et max des valeurs affichées dans un graphique (tous datasets visibles). */
+function getChartDataRange(chartKey) {
+  const ch = charts[chartKey];
+  if (!ch || !ch.data || !ch.data.datasets) return { min: 0, max: 1 };
+  let dataMin = Infinity;
+  let dataMax = -Infinity;
+  ch.data.datasets.forEach((ds) => {
+    (ds.data || []).forEach((v) => {
+      if (v != null && typeof v === "number" && !Number.isNaN(v)) {
+        if (v < dataMin) dataMin = v;
+        if (v > dataMax) dataMax = v;
+      }
+    });
+  });
+  if (dataMin === Infinity) dataMin = 0;
+  if (dataMax === -Infinity) dataMax = 1;
+  return { min: dataMin, max: dataMax };
+}
+
+/** En mode comparaison : retourne le min et max des valeurs sur tous les graphiques de la même métrique que chartKey. */
+function getGlobalRangeForMetric(chartKey) {
+  const keys = getCompareChartKeysForMetric(chartKey);
+  if (!keys.length) return getChartDataRange(chartKey);
+  let globalMin = Infinity;
+  let globalMax = -Infinity;
+  keys.forEach((key) => {
+    const range = getChartDataRange(key);
+    if (range.min < globalMin) globalMin = range.min;
+    if (range.max > globalMax) globalMax = range.max;
+  });
+  if (globalMin === Infinity) globalMin = 0;
+  if (globalMax <= globalMin) globalMax = globalMin + 1;
+  return { min: globalMin, max: globalMax };
+}
+
+/** En mode comparaison : initialise les échelles Y avec échelle commune (min=0, max=max des max de tous les lieux par métrique) ; les boutons toggler restent inactifs. */
+function syncCompareChartsYScales() {
+  const metrics = ["prix", "surface", "prixm2"];
+  metrics.forEach((metric) => {
+    const keys = [];
+    for (let s = 1; s <= comparePlaceCount; s++) keys.push(metric + "-" + s);
+    const { max: globalMax } = getGlobalRangeForMetric(keys[0]);
+    keys.forEach((key) => applyYAxisToChart(key, 0, globalMax));
+  });
   document.querySelectorAll("#stats-compare-results .chart-y-axis-ctrl").forEach((ctrl) => {
-    ctrl.classList.add("fixed");
+    ctrl.classList.remove("fixed");
     const btn = ctrl.querySelector(".chart-y-axis-btn");
-    if (btn) btn.classList.add("fixed");
+    if (btn) btn.classList.remove("fixed");
     const input = ctrl.querySelector(".chart-y-axis-min");
     if (input) input.value = "0";
   });
@@ -1098,17 +1310,20 @@ document.getElementById("region-select").addEventListener("change", () => {
   fillDepartmentSelect(regionId || null);
   document.getElementById("dept-select").value = "";
   restoreAllCommunesInDropdown();
+  refreshStatsIfResultsVisible();
 });
 
 document.getElementById("dept-select").addEventListener("change", () => {
   const codeDept = document.getElementById("dept-select").value;
   if (!codeDept) {
     restoreAllCommunesInDropdown();
+    refreshStatsIfResultsVisible();
     return;
   }
   const inferredRegion = getRegionForDepartment(codeDept);
   if (inferredRegion) document.getElementById("region-select").value = inferredRegion;
   loadCommunes(codeDept);
+  refreshStatsIfResultsVisible();
 });
 
 document.getElementById("commune-select").addEventListener("change", () => {
@@ -1118,6 +1333,7 @@ document.getElementById("commune-select").addEventListener("change", () => {
     const regionId = getRegionForDepartment(c.code_dept);
     if (regionId) document.getElementById("region-select").value = regionId;
   }
+  refreshStatsIfResultsVisible();
 });
 
 function bindPlaceSelects(place) {
@@ -1130,16 +1346,19 @@ function bindPlaceSelects(place) {
     fillDepartmentSelect(regionVal || null, deptId);
     document.getElementById(deptId).value = "";
     restoreAllCommunesInDropdown(s);
+    refreshStatsIfResultsVisible();
   });
   document.getElementById(deptId)?.addEventListener("change", function () {
     const codeDept = this.value;
     if (!codeDept) {
       restoreAllCommunesInDropdown(s);
+      refreshStatsIfResultsVisible();
       return;
     }
     const inferredRegion = getRegionForDepartment(codeDept);
     if (inferredRegion) document.getElementById(regionId).value = inferredRegion;
     loadCommunes(codeDept, s);
+    refreshStatsIfResultsVisible();
   });
   document.getElementById(communeId)?.addEventListener("change", function () {
     const c = getCommuneValueForPlace(place);
@@ -1148,6 +1367,7 @@ function bindPlaceSelects(place) {
       const regionIdVal = getRegionForDepartment(c.code_dept);
       if (regionIdVal) document.getElementById(regionId).value = regionIdVal;
     }
+    refreshStatsIfResultsVisible();
   });
 }
 bindPlaceSelects(1);
@@ -1202,9 +1422,12 @@ function removeComparePlace(placeNum) {
     const fromId = i + 1;
     document.getElementById("region-" + i + "-select").value = document.getElementById("region-" + fromId + "-select").value || "";
     document.getElementById("dept-" + i + "-select").value = document.getElementById("dept-" + fromId + "-select").value || "";
-    const selFrom = document.getElementById("commune-" + fromId + "-select");
-    const selTo = document.getElementById("commune-" + i + "-select");
-    if (selFrom && selTo) { selTo.innerHTML = selFrom.innerHTML; selTo.value = selFrom.value; }
+    const inpFrom = document.getElementById("commune-" + fromId + "-select");
+    const inpTo = document.getElementById("commune-" + i + "-select");
+    const dataFrom = document.getElementById("commune-" + fromId + "-data");
+    const dataTo = document.getElementById("commune-" + i + "-data");
+    if (inpFrom && inpTo) inpTo.value = inpFrom.value;
+    if (dataFrom && dataTo) dataTo.value = dataFrom.value;
   }
   /* Décaler les listes de communes : liste(i) = ancienne liste(i+1), en montant pour ne pas écraser une source. */
   for (let i = placeNum; i < comparePlaceCount; i++) {
@@ -1215,7 +1438,10 @@ function removeComparePlace(placeNum) {
   }
   document.getElementById("region-" + comparePlaceCount + "-select").value = "";
   document.getElementById("dept-" + comparePlaceCount + "-select").value = "";
-  document.getElementById("commune-" + comparePlaceCount + "-select").innerHTML = "<option value=''>— Choisir une commune —</option>";
+  const clearedInput = document.getElementById("commune-" + comparePlaceCount + "-select");
+  const clearedData = document.getElementById("commune-" + comparePlaceCount + "-data");
+  if (clearedInput) { clearedInput.value = ""; clearedInput.placeholder = "— Choisir une commune —"; }
+  if (clearedData) clearedData.value = "";
   fillDepartmentSelect(null, "dept-" + comparePlaceCount + "-select");
   const prevCount = comparePlaceCount;
   comparePlaceCount--;
@@ -1296,7 +1522,7 @@ document.getElementById("stats-overlay-btn").addEventListener("click", () => {
     document.getElementById("stats-compare-results").setAttribute("aria-hidden", "false");
     destroyChartsForOverlay();
     document.getElementById("stats-overlay-btn").textContent = "Superposer les graphiques";
-    setCompareChartsYToZero();
+    syncCompareChartsYScales();
     for (let i = 1; i <= comparePlaceCount; i++) {
       const container = document.getElementById("stats-result-" + i);
       if (container) switchTabInContainer(container, "prix-" + i);
@@ -1309,6 +1535,25 @@ document.getElementById("stats-overlay-btn").addEventListener("click", () => {
 });
 
 document.getElementById("stats-btn").addEventListener("click", submitStats);
+
+/** Relance le chargement des stats (et donc met à jour les nb ventes) si des résultats sont déjà affichés. Appelé à chaque modification d'un critère (type, période, lieu). */
+function refreshStatsIfResultsVisible() {
+  const loading = document.getElementById("stats-loading");
+  const compareResults = document.getElementById("stats-compare-results");
+  const overlayResults = document.getElementById("stats-overlay-results");
+  const content = document.getElementById("stats-content");
+  if (compareMode) {
+    const compareVisible = compareResults && compareResults.getAttribute("aria-hidden") !== "true";
+    const overlayVisible = overlayResults && overlayResults.getAttribute("aria-hidden") !== "true";
+    if (compareVisible || overlayVisible) {
+      submitStats();
+    }
+    return;
+  }
+  if (content && content.getAttribute("aria-hidden") !== "true" && loading && loading.getAttribute("aria-hidden") === "true") {
+    submitStats();
+  }
+}
 
 let periodToastTimeout = null;
 function showPeriodToast(message) {
@@ -1360,6 +1605,7 @@ document.getElementById("annee-min").addEventListener("change", () => {
     showPeriodToast("La période est incohérente, elle a été corrigée automatiquement.");
   }
   updatePeriodConstraints();
+  refreshStatsIfResultsVisible();
 });
 
 document.getElementById("annee-max").addEventListener("input", updatePeriodConstraints);
@@ -1370,35 +1616,61 @@ document.getElementById("annee-max").addEventListener("change", () => {
     showPeriodToast("La période est incohérente, elle a été corrigée automatiquement.");
   }
   updatePeriodConstraints();
+  refreshStatsIfResultsVisible();
 });
+
+document.getElementById("type-local").addEventListener("change", refreshStatsIfResultsVisible);
 
 document.getElementById("stats-reset-btn").addEventListener("click", () => {
   document.getElementById("region-select").value = "";
   document.getElementById("dept-select").value = "";
-  document.getElementById("commune-select").value = "";
+  const communeInput = document.getElementById("commune-select");
+  const communeData = document.getElementById("commune-data");
+  if (communeInput) communeInput.value = "";
+  if (communeData) communeData.value = "";
   fillDepartmentSelect(null);
-  restoreAllCommunesInDropdown();
+  restoreAllCommunesInDropdown("");
   if (compareMode) {
     for (let i = 1; i <= MAX_COMPARE_PLACES; i++) {
       document.getElementById("region-" + i + "-select").value = "";
       document.getElementById("dept-" + i + "-select").value = "";
-      document.getElementById("commune-" + i + "-select").value = "";
+      const ci = document.getElementById("commune-" + i + "-select");
+      if (ci) ci.value = "";
       fillDepartmentSelect(null, "dept-" + i + "-select");
       restoreAllCommunesInDropdown(String(i));
     }
-    comparePlaceCount = 2;
-    updateComparePlaceUI();
-    switchLieuTab(1);
+    // Effacer tout état de résultats de comparaison avant de quitter le mode comparaison
+    lastCompareDataForSingle = null;
+    lastCompareData = [];
+    lastCompareTitre = [];
+    // Sortir du mode comparaison : ne conserver que le formulaire simple (un seul « lieu »)
+    setCompareMode(false);
   }
   document.getElementById("type-local").value = "";
-  document.getElementById("surface-cat").value = "";
-  document.getElementById("pieces-cat").value = "";
   document.getElementById("annee-min").value = "";
   document.getElementById("annee-max").value = "";
   document.querySelector(".stats-tabs")?.classList.remove("single-year");
   document.querySelectorAll("[id^='stats-result-'] .stats-tabs").forEach((el) => el?.classList.remove("single-year"));
   switchTab("prix");
   updatePeriodConstraints();
+  // Effacer aussi les résultats actuellement affichés (vue simple ou compare/overlay)
+  destroyCharts();
+  destroyChartsForSide(1);
+  destroyChartsForSide(2);
+  destroyChartsForOverlay();
+  const content = document.getElementById("stats-content");
+  const compareResults = document.getElementById("stats-compare-results");
+  const overlayResults = document.getElementById("stats-overlay-results");
+  if (content) content.setAttribute("aria-hidden", "true");
+  if (compareResults) compareResults.setAttribute("aria-hidden", "true");
+  if (overlayResults) overlayResults.setAttribute("aria-hidden", "true");
+  const overlayBtn = document.getElementById("stats-overlay-btn");
+  if (overlayBtn) overlayBtn.style.display = "none";
+  const emptyEl = document.getElementById("stats-empty");
+  if (emptyEl) {
+    emptyEl.textContent = "Choisissez des critères et cliquez sur Afficher.";
+    emptyEl.style.display = "block";
+  }
   const toast = document.getElementById("stats-period-toast");
   if (toast) {
     if (periodToastTimeout) clearTimeout(periodToastTimeout);
@@ -1425,10 +1697,15 @@ document.querySelectorAll(".stats-tab-btn").forEach((btn) => {
       switchTabInContainer(container, tabId);
       const compareResults = document.getElementById("stats-compare-results");
       if (container.classList.contains("stats-result-half") && compareResults && compareResults.getAttribute("aria-hidden") !== "true") {
-        const otherContainer = container.id === "stats-result-1" ? document.getElementById("stats-result-2") : document.getElementById("stats-result-1");
-        if (otherContainer) {
-          const otherTabId = tabId.endsWith("-1") ? tabId.replace(/-1$/, "-2") : tabId.replace(/-2$/, "-1");
-          switchTabInContainer(otherContainer, otherTabId);
+        const m = String(tabId).match(/^(prix|surface|prixm2)-(\d+)$/);
+        if (m) {
+          const metric = m[1];
+          for (let n = 1; n <= comparePlaceCount; n++) {
+            const otherContainer = document.getElementById("stats-result-" + n);
+            if (otherContainer && !otherContainer.classList.contains("stats-result-hidden")) {
+              switchTabInContainer(otherContainer, metric + "-" + n);
+            }
+          }
         }
       }
     } else {
@@ -1460,35 +1737,34 @@ document.getElementById("stats-results").addEventListener("click", (e) => {
   const isCompareY = compareMode && document.getElementById("stats-compare-results")?.contains(ctrl);
   const isFixed = ctrl.classList.contains("fixed");
   if (isFixed) {
-    ctrl.classList.remove("fixed");
-    btn.classList.remove("fixed");
-    applyYAxisToChart(chartKey, null);
     if (isCompareY) {
       const keysSameMetric = getCompareChartKeysForMetric(chartKey);
-      charts[chartKey].update();
-      const computedMin = charts[chartKey].scales?.y?.min;
-      const minVal = typeof computedMin === "number" && !Number.isNaN(computedMin) ? computedMin : 0;
-      keysSameMetric.forEach((key) => applyYAxisToChart(key, minVal));
+      const { max: globalMax } = getGlobalRangeForMetric(chartKey);
+      keysSameMetric.forEach((key) => applyYAxisToChart(key, 0, globalMax));
       keysSameMetric.forEach((key) => {
         const c = document.querySelector("#stats-compare-results .chart-y-axis-ctrl[data-chart=\"" + key + "\"]");
         if (c) {
-          c.classList.add("fixed");
+          c.classList.remove("fixed");
           const b = c.querySelector(".chart-y-axis-btn");
-          if (b) b.classList.add("fixed");
+          if (b) b.classList.remove("fixed");
           const inp = c.querySelector(".chart-y-axis-min");
-          if (inp) inp.value = String(minVal);
+          if (inp) inp.value = "0";
         }
       });
+    } else {
+      ctrl.classList.remove("fixed");
+      btn.classList.remove("fixed");
+      applyYAxisToChart(chartKey, null);
     }
   } else {
     const input = ctrl.querySelector(".chart-y-axis-min");
-    const v = parseFloat(input.value, 10) || 0;
-    ctrl.classList.add("fixed");
-    btn.classList.add("fixed");
-    applyYAxisToChart(chartKey, v);
     if (isCompareY) {
+      const { min: globalMin, max: globalMax } = getGlobalRangeForMetric(chartKey);
       const keysSameMetric = getCompareChartKeysForMetric(chartKey);
-      keysSameMetric.forEach((key) => applyYAxisToChart(key, v));
+      ctrl.classList.add("fixed");
+      btn.classList.add("fixed");
+      keysSameMetric.forEach((key) => applyYAxisToChart(key, globalMin, globalMax));
+      const effectiveMin = charts[chartKey]?.options?.scales?.y?.min ?? globalMin;
       keysSameMetric.forEach((key) => {
         const c = document.querySelector("#stats-compare-results .chart-y-axis-ctrl[data-chart=\"" + key + "\"]");
         if (c) {
@@ -1496,9 +1772,14 @@ document.getElementById("stats-results").addEventListener("click", (e) => {
           const b = c.querySelector(".chart-y-axis-btn");
           if (b) b.classList.add("fixed");
           const inp = c.querySelector(".chart-y-axis-min");
-          if (inp) inp.value = String(v);
+          if (inp) inp.value = String(effectiveMin);
         }
       });
+    } else {
+      const v = parseFloat(input.value, 10) || 0;
+      ctrl.classList.add("fixed");
+      btn.classList.add("fixed");
+      applyYAxisToChart(chartKey, v);
     }
   }
 });
@@ -1510,17 +1791,19 @@ document.getElementById("stats-results").addEventListener("input", (e) => {
   const chartKey = ctrl.getAttribute("data-chart");
   if (!chartKey || !charts[chartKey]) return;
   const v = parseFloat(e.target.value, 10);
-  const val = Number.isNaN(v) ? 0 : v;
-  applyYAxisToChart(chartKey, val);
+  const minVal = Number.isNaN(v) ? 0 : v;
   if (compareMode && document.getElementById("stats-compare-results")?.contains(ctrl)) {
+    const { max: globalMax } = getGlobalRangeForMetric(chartKey);
     const keysSameMetric = getCompareChartKeysForMetric(chartKey);
-    keysSameMetric.forEach((key) => applyYAxisToChart(key, val));
+    keysSameMetric.forEach((key) => applyYAxisToChart(key, minVal, globalMax));
     keysSameMetric.forEach((key) => {
       if (key === chartKey) return;
       const c = document.querySelector("#stats-compare-results .chart-y-axis-ctrl[data-chart=\"" + key + "\"]");
       const inp = c?.querySelector(".chart-y-axis-min");
-      if (inp) inp.value = String(val);
+      if (inp) inp.value = String(minVal);
     });
+  } else {
+    applyYAxisToChart(chartKey, minVal);
   }
 });
 

@@ -98,7 +98,20 @@ def get_connection():
     )
     schema = cfg.get("schema", "ventes_notaire")
     with conn.cursor() as cur:
-        cur.execute("SET search_path TO %s", (schema,))
+        # ventes_notaire en premier (tables), public pour digest() du trigger (pgcrypto)
+        cur.execute("SET search_path TO %s, public", (schema,))
+        # Extension requise par le trigger vf_set_dedup_key sur valeursfoncieres (digest)
+        try:
+            cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+        except psycopg2.Error as e:
+            conn.rollback()
+            if "permission" in str(e).lower() or "right" in str(e).lower():
+                raise SystemExit(
+                    "L'extension pgcrypto est requise (trigger sur valeursfoncieres).\n"
+                    "Exécutez une fois en superutilisateur : CREATE EXTENSION IF NOT EXISTS pgcrypto;"
+                ) from e
+            with conn.cursor() as cur2:
+                cur2.execute("SET search_path TO %s, public", (schema,))
     conn.commit()
     return conn
 

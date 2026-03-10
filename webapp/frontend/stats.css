@@ -738,3 +738,47 @@
   top: 50%;
   transform: translateY(-50%);
 }
+
+/* Auto-complétion communes */
+.stats-commune-autocomplete {
+  position: relative;
+  width: 100%;
+}
+.stats-commune-autocomplete input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.35em 0.5em;
+}
+.stats-commune-dropdown {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #888;
+  border-top: none;
+  box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+  z-index: 100;
+  display: none;
+}
+.stats-commune-dropdown[aria-hidden="false"] {
+  display: block;
+}
+.stats-commune-dropdown .stats-commune-option {
+  padding: 0.4em 0.6em;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.stats-commune-dropdown .stats-commune-option:hover,
+.stats-commune-dropdown .stats-commune-option[aria-selected="true"] {
+  background: #e0e8f0;
+}
+.stats-commune-dropdown .stats-commune-option-empty {
+  padding: 0.5em 0.6em;
+  color: #666;
+  font-style: italic;
+}
