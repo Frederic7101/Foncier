@@ -16,22 +16,29 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Régions métropolitaines (code région INSEE -> nom, départements)
-REGIONS_METRO = [
-    {"id": "11", "nom": "Île-de-France", "departements": ["75", "77", "78", "91", "92", "93", "94"]},
-    {"id": "24", "nom": "Centre-Val de Loire", "departements": ["18", "28", "36", "37", "41", "45"]},
-    {"id": "27", "nom": "Bourgogne-Franche-Comté", "departements": ["21", "25", "39", "58", "70", "71", "89", "90"]},
-    {"id": "28", "nom": "Normandie", "departements": ["14", "27", "50", "61", "76"]},
-    {"id": "32", "nom": "Hauts-de-France", "departements": ["02", "59", "60", "62", "80"]},
-    {"id": "44", "nom": "Grand Est", "departements": ["08", "10", "51", "52", "54", "55", "57", "67", "68", "88"]},
-    {"id": "52", "nom": "Pays de la Loire", "departements": ["44", "49", "53", "72", "85"]},
-    {"id": "53", "nom": "Bretagne", "departements": ["22", "29", "35", "56"]},
-    {"id": "75", "nom": "Nouvelle-Aquitaine", "departements": ["16", "17", "19", "23", "24", "33", "40", "47", "64", "79", "86", "87"]},
-    {"id": "76", "nom": "Occitanie", "departements": ["09", "11", "12", "30", "31", "32", "34", "46", "48", "65", "66", "81", "82"]},
-    {"id": "84", "nom": "Auvergne-Rhône-Alpes", "departements": ["03", "15", "43", "63", "69", "73", "74"]},
-    {"id": "93", "nom": "Provence-Alpes-Côte d'Azur", "departements": ["06", "13", "83", "84"]},
-    {"id": "94", "nom": "Corse", "departements": ["2A", "2B"]},
-]
+# =============================================================================
+# Variables globales / Config par défaut — modifier ici ou via config / env
+# =============================================================================
+
+# Fichiers de config recherchés (dans l’ordre) dans backend/, webapp-foncier/, racine.
+# Règle commune à tous les scripts : paramètres DB dans config.postgres.json.
+CONFIG_FILENAMES = ("config.postgres.json",)
+
+# Valeurs par défaut base de données (surchargées par config.json ou variables d’environnement)
+DEFAULT_DB_HOST = "localhost"
+DEFAULT_DB_PORT = 5432
+DEFAULT_DB_USER = "postgres"
+DEFAULT_DB_PASSWORD = ""
+DEFAULT_DB_NAME = "foncier"
+DEFAULT_DB_SCHEMA = "foncier"
+
+# Variables d’environnement pour la DB (priorité après les fichiers de config)
+ENV_DB_HOST = "DB_HOST"
+ENV_DB_PORT = "DB_PORT"
+ENV_DB_USER = "DB_USER"
+ENV_DB_PASSWORD = "DB_PASSWORD"
+ENV_DB_NAME = "DB_NAME"
+ENV_DB_SCHEMA = "DB_SCHEMA"
 
 # Dossiers où chercher config (backend/, webapp-foncier/, racine projet)
 _CONFIG_DIRS = (
@@ -42,33 +49,25 @@ _CONFIG_DIRS = (
 
 
 def _load_db_config() -> dict:
-    """Charge la config DB depuis config.json ou config.postgres.json, puis variables d'environnement."""
+    """Charge la config DB depuis config.postgres.json (règle commune à tous les scripts)."""
     for base in _CONFIG_DIRS:
-        for name in ("config.json", "config.postgres.json"):
+        for name in CONFIG_FILENAMES:
             config_path = base / name
             if config_path.is_file():
-                try:
-                    with open(config_path, encoding="utf-8") as f:
-                        data = json.load(f)
-                    db = data.get("database") or data
-                    return {
-                        "host": db.get("host", "localhost"),
-                        "port": int(db.get("port") or 5432),
-                        "user": db.get("user", "postgres"),
-                        "password": db.get("password", ""),
-                        "database": db.get("database", "foncier"),
-                        "schema": db.get("schema", "ventes_notaire"),
-                    }
-                except (json.JSONDecodeError, OSError):
-                    pass
-    return {
-        "host": os.getenv("DB_HOST", "localhost"),
-        "port": int(os.getenv("DB_PORT", "5432") or 5432),
-        "user": os.getenv("DB_USER", "postgres"),
-        "password": os.getenv("DB_PASSWORD", ""),
-        "database": os.getenv("DB_NAME", "foncier"),
-        "schema": os.getenv("DB_SCHEMA", "ventes_notaire"),
-    }
+                with open(config_path, encoding="utf-8") as f:
+                    data = json.load(f)
+                db = data.get("database") or data
+                return {
+                    "host": db.get("host", DEFAULT_DB_HOST),
+                    "port": int(db.get("port") or DEFAULT_DB_PORT),
+                    "user": db.get("user", DEFAULT_DB_USER),
+                    "password": db.get("password", DEFAULT_DB_PASSWORD),
+                    "database": db.get("database", DEFAULT_DB_NAME),
+                    "schema": db.get("schema", DEFAULT_DB_SCHEMA),
+                }
+    # Pas de fichier de config trouvé : on échoue explicitement plutôt que de basculer
+    # silencieusement sur des variables d'environnement.
+    raise RuntimeError("Aucun fichier config.postgres.json trouvé pour la configuration PostgreSQL.")
 
 
 def get_db_connection():
@@ -81,7 +80,7 @@ def get_db_connection():
             password=cfg["password"],
             dbname=cfg["database"],
         )
-        schema = cfg.get("schema", "ventes_notaire")
+        schema = cfg.get("schema", DEFAULT_DB_SCHEMA)
         with conn.cursor() as cur:
             cur.execute("SET search_path TO %s, public", (schema,))
         conn.commit()
@@ -126,8 +125,11 @@ def get_period():
     try:
         conn = get_db_connection()
         cur = conn.cursor()
+        # Tables agrégées par commune dans le schéma foncier
         cur.execute(
-            "SELECT COALESCE(MIN(annee), 2020) AS annee_min, COALESCE(MAX(annee), 2025) AS annee_max FROM vf_communes"
+            "SELECT COALESCE(MIN(annee), 2020) AS annee_min, "
+            "COALESCE(MAX(annee), 2025) AS annee_max "
+            "FROM foncier.vf_communes"
         )
         row = cur.fetchone()
         cur.close()
@@ -139,44 +141,53 @@ def get_period():
             conn.close()
 
 
-def _get_regions_and_depts(cur) -> tuple[list[dict], list[str]]:
-    """Régions (id, nom, departements) et liste des code_dept présents dans vf_communes.
-    Utilise ref_regions/ref_departements si présentes, sinon REGIONS_METRO."""
-    cur.execute("SELECT DISTINCT code_dept FROM vf_communes ORDER BY code_dept")
+def _get_regions_and_depts(cur) -> tuple[list[dict], list[dict]]:
+    """Régions (id, nom, departements) et liste des départements { code, nom }.
+    Source unique : foncier.ref_regions et foncier.ref_departements (aucune liste en dur)."""
+    # Liste des départements présents dans les données agrégées foncier.vf_communes
+    cur.execute("SELECT DISTINCT code_dept FROM foncier.vf_communes ORDER BY code_dept")
     depts_in_data = [row[0] for row in cur.fetchall()]
     try:
         cur.execute(
-            "SELECT r.code_region, r.nom_region FROM ref_regions r ORDER BY r.nom_region"
+            "SELECT r.code_region, r.nom_region "
+            "FROM foncier.ref_regions r "
+            "ORDER BY r.nom_region"
         )
         ref_regions_rows = cur.fetchall()
         if not ref_regions_rows:
-            raise ValueError("no ref_regions")
-        cur.execute("SELECT code_dept, code_region FROM ref_departements")
-        ref_depts = {row[0]: row[1] for row in cur.fetchall()}
+            return [], [{"code": c, "nom": c} for c in depts_in_data]
+        # code_dept, code_region, nom_dept depuis ref_departements (nom pour l’affichage, pas de doublon avec liste en dur)
+        cur.execute(
+            "SELECT code_dept, code_region, nom_dept FROM foncier.ref_departements ORDER BY code_dept"
+        )
+        ref_depts_rows = cur.fetchall()
+        ref_depts = {row[0]: row[1] for row in ref_depts_rows}
+        dept_noms = {row[0]: row[2] for row in ref_depts_rows}
         regions = []
         for code_region, nom_region in ref_regions_rows:
             region_depts = [d for d, r in ref_depts.items() if r == code_region and d in depts_in_data]
             if region_depts:
                 region_depts.sort()
                 regions.append({"id": code_region, "nom": nom_region, "departements": region_depts})
-        if regions:
-            return regions, depts_in_data
+        departements = [{"code": c, "nom": dept_noms.get(c, c)} for c in depts_in_data]
+        return regions, departements
     except (psycopg2.Error, ValueError):
         pass
-    return REGIONS_METRO, depts_in_data
+    departements = [{"code": c, "nom": c} for c in depts_in_data]
+    return [], departements
 
 
 @app.get("/api/geo")
 def get_geo():
-    """Régions (métropole) et liste des départements présents dans vf_communes.
+    """Régions (métropole) et liste des départements (code + nom) présents dans vf_communes.
     Utilise ref_regions/ref_departements si présentes (ex. 38 rattaché à Auvergne-Rhône-Alpes)."""
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        regions, depts = _get_regions_and_depts(cur)
+        regions, departements = _get_regions_and_depts(cur)
         cur.close()
-        return {"regions": regions, "departements": depts}
+        return {"regions": regions, "departements": departements}
     except psycopg2.Error as e:
         raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     finally:
@@ -186,24 +197,51 @@ def get_geo():
 
 @app.get("/api/communes")
 def get_communes(code_dept: Optional[str] = Query(None, description="Code département (optionnel ; si absent, toutes les communes)")):
-    """Liste (code_dept, code_postal, commune). Si code_dept fourni, filtre par département ; sinon toutes les communes (table ref_communes si dispo, sinon vf_communes)."""
+    """Liste (code_dept, code_postal, commune).
+
+    Si code_dept fourni, filtre par département (dans vf_communes) ;
+    sinon, toutes les communes depuis ref_communes (nouvelle structure Villedereve),
+    avec les colonnes remappées vers (code_dept, code_postal, commune).
+    """
     conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
         if code_dept:
+            # Filtrage par département dans foncier.vf_communes (structure existante agrégée)
             cur.execute(
-                "SELECT DISTINCT code_dept, code_postal, commune FROM vf_communes WHERE code_dept = %s ORDER BY commune, code_postal",
+                """
+                SELECT DISTINCT code_dept, code_postal, commune
+                FROM foncier.vf_communes
+                WHERE code_dept = %s
+                ORDER BY commune, code_postal
+                """,
                 (code_dept.strip(),),
             )
         else:
+            # Nouvelle table foncier.ref_communes (structure Villedereve) :
+            # dep_code        -> code_dept
+            # code_postal     -> code_postal
+            # nom_standard_majuscule (ou nom_standard) -> commune
             try:
                 cur.execute(
-                    "SELECT code_dept, code_postal, commune FROM ref_communes ORDER BY commune, code_postal"
+                    """
+                    SELECT
+                        dep_code AS code_dept,
+                        code_postal,
+                        nom_standard_majuscule AS commune
+                    FROM foncier.ref_communes
+                    ORDER BY nom_standard_majuscule, code_postal
+                    """
                 )
             except psycopg2.Error:
+                # Fallback de sécurité si ref_communes n'est pas disponible :
                 cur.execute(
-                    "SELECT DISTINCT code_dept, code_postal, commune FROM vf_communes ORDER BY commune, code_postal"
+                    """
+                    SELECT DISTINCT code_dept, code_postal, commune
+                    FROM foncier.vf_communes
+                    ORDER BY commune, code_postal
+                    """
                 )
         rows = [{"code_dept": r[0], "code_postal": r[1], "commune": r[2]} for r in cur.fetchall()]
         cur.close()
@@ -334,7 +372,11 @@ def get_stats(
         cur = conn.cursor(cursor_factory=RealDictCursor)
         # Période par défaut (s'assurer que annee_min/max sont des int, la query peut renvoyer str)
         if annee_min is None or annee_max is None:
-            cur.execute("SELECT COALESCE(MIN(annee),2020) AS mn, COALESCE(MAX(annee),2025) AS mx FROM vf_communes")
+            cur.execute(
+                "SELECT COALESCE(MIN(annee),2020) AS mn, "
+                "COALESCE(MAX(annee),2025) AS mx "
+                "FROM foncier.vf_communes"
+            )
             r = cur.fetchone()
             annee_min = int(annee_min or r["mn"])
             annee_max = int(annee_max or r["mx"])
@@ -347,15 +389,14 @@ def get_stats(
             if not region_id:
                 raise HTTPException(status_code=400, detail="region_id requis pour niveau=region")
             try:
-                cur.execute("SELECT code_dept FROM ref_departements WHERE code_region = %s ORDER BY code_dept", (region_id.strip(),))
+                cur.execute(
+                    "SELECT code_dept FROM foncier.ref_departements "
+                    "WHERE code_region = %s ORDER BY code_dept",
+                    (region_id.strip(),),
+                )
                 dept_list = [row["code_dept"] for row in cur.fetchall()]
             except (psycopg2.Error, KeyError, TypeError):
                 dept_list = None
-            if not dept_list:
-                for reg in REGIONS_METRO:
-                    if reg["id"] == region_id:
-                        dept_list = reg["departements"]
-                        break
             if not dept_list:
                 raise HTTPException(status_code=400, detail="Région inconnue")
         elif niveau == "department":
@@ -383,7 +424,7 @@ def get_stats(
                prix_med_T1, surf_med_T1, prix_m2_w_T1, prix_med_T2, surf_med_T2, prix_m2_w_T2,
                prix_med_T3, surf_med_T3, prix_m2_w_T3, prix_med_T4, surf_med_T4, prix_m2_w_T4,
                prix_med_T5, surf_med_T5, prix_m2_w_T5
-        FROM vf_communes
+        FROM foncier.vf_communes
         WHERE code_dept IN ({placeholders_dept})
           AND type_local IN ({placeholders_type})
           AND annee BETWEEN %s AND %s
@@ -477,7 +518,7 @@ def rechercher_ventes(
                 SIN(RADIANS(%s)) * SIN(RADIANS(latitude))
               )
             ) AS distance_km
-        FROM valeursfoncieres
+        FROM foncier.valeursfoncieres
         WHERE latitude IS NOT NULL
           AND longitude IS NOT NULL
           AND latitude BETWEEN %s AND %s

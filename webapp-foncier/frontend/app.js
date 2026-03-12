@@ -1,16 +1,54 @@
+// =============================================================================
+// Variables Globales — À modifier ici pour changer de fournisseur ou de config
+// =============================================================================
+
+// — API & adresse
 const BAN_URL = "https://api-adresse.data.gouv.fr/search/";
-// Vide = même origine ; si page ouverte en file:// (ancienne URL), appeler le backend sur localhost:8000
+const BAN_SUGGESTIONS_LIMIT = 10;
 const API_BASE_URL =
   typeof window !== "undefined" && window.location?.protocol === "file:"
     ? "http://localhost:8000"
     : "";
+
+// — Cache adresses
 const ADDRESS_CACHE_KEY = "foncier_address_cache";
 const ADDRESS_CACHE_MAX = 15;
 
-// France métropolitaine : Dunkerque (N) → Perpignan (S), Brest (O) → Strasbourg (E)
+// — Cartographie (changer TILE_LAYER_* pour un autre fournisseur, ex. OSM, Carto, etc.)
+const TILE_LAYER_URL =
+  "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/png&TILEMATRIX={z}&TILECOL={x}&TILEROW={y}";
+const TILE_LAYER_ATTRIBUTION =
+  '&copy; <a href="https://www.ign.fr/">IGN</a> &amp; <a href="https://cartes.gouv.fr/">Géoplateforme</a>';
+const TILE_LAYER_MIN_ZOOM = 2;
+const TILE_LAYER_MAX_ZOOM = 19;
+const MAP_MIN_ZOOM = 5;
+const MAP_MAX_ZOOM = 19;
+const MAP_FIT_PADDING = [8, 8];
+const MAP_FIT_PADDING_CIRCLE = [20, 20];
+
+// — Cercle de recherche (couleur et opacité)
+const SEARCH_CIRCLE_COLOR = "#0077cc";
+const SEARCH_CIRCLE_FILL_OPACITY = 0.1;
+
+// — Marqueurs ventes sur la carte
+const SALE_MARKER_RADIUS = 5;
+const SALE_MARKER_COLOR = "#2563eb";
+const SELECTED_MARKER_RADIUS = 10;
+const SELECTED_MARKER_COLOR = "#dc2626";
+
+// — Limites requêtes
+const VENTES_LIMIT_MAX = 250;
+const VENTES_LIMIT_DEFAULT = 50;
+
+// — UI / timing
+const DEFAULT_RAYON_KM = 1;
+const BAN_DEBOUNCE_MS = 350;
+const MAP_INVALIDATE_DELAY_MS = 100;
+
+// — Carte : France métropolitaine (Dunkerque → Perpignan, Brest → Strasbourg)
 const FRANCE_BOUNDS = L.latLngBounds(
-  [42.70, -4.49],   // sud-ouest (Perpignan / Brest)
-  [51.04, 7.75]     // nord-est (Dunkerque / Strasbourg)
+  [42.70, -4.49],
+  [51.04, 7.75]
 );
 
 let map;
@@ -28,23 +66,18 @@ function initMap() {
   map = L.map("map", {
     maxBounds: FRANCE_BOUNDS,
     maxBoundsViscosity: 1,
-    minZoom: 5,
-    maxZoom: 19,
+    minZoom: MAP_MIN_ZOOM,
+    maxZoom: MAP_MAX_ZOOM,
   });
 
-  L.tileLayer(
-    "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/png&TILEMATRIX={z}&TILECOL={x}&TILEROW={y}",
-    {
-      attribution:
-        '&copy; <a href="https://www.ign.fr/">IGN</a> &amp; ' +
-        '<a href="https://cartes.gouv.fr/">Géoplateforme</a>',
-      minZoom: 2,
-      maxZoom: 19,
-      tms: false,
-    }
-  ).addTo(map);
+  L.tileLayer(TILE_LAYER_URL, {
+    attribution: TILE_LAYER_ATTRIBUTION,
+    minZoom: TILE_LAYER_MIN_ZOOM,
+    maxZoom: TILE_LAYER_MAX_ZOOM,
+    tms: false,
+  }).addTo(map);
 
-  map.fitBounds(FRANCE_BOUNDS, { padding: [8, 8] });
+  map.fitBounds(FRANCE_BOUNDS, { padding: MAP_FIT_PADDING });
 }
 
 function setMapCenter(lat, lon, rayonKm) {
@@ -59,9 +92,9 @@ function setMapCenter(lat, lon, rayonKm) {
   if (!searchCircle) {
     searchCircle = L.circle([lat, lon], {
       radius: rayonKm * 1000,
-      color: "#0077cc",
-      fillColor: "#0077cc",
-      fillOpacity: 0.1,
+      color: SEARCH_CIRCLE_COLOR,
+      fillColor: SEARCH_CIRCLE_COLOR,
+      fillOpacity: SEARCH_CIRCLE_FILL_OPACITY,
     }).addTo(map);
   } else {
     searchCircle.setLatLng([lat, lon]);
@@ -69,7 +102,7 @@ function setMapCenter(lat, lon, rayonKm) {
   }
 
   const bounds = searchCircle.getBounds();
-  map.fitBounds(bounds, { padding: [20, 20] });
+  map.fitBounds(bounds, { padding: MAP_FIT_PADDING_CIRCLE });
 }
 
 function renderDetails(v) {
@@ -136,7 +169,7 @@ function addAddressToCache(label, lon, lat) {
 async function searchBanAddresses(query) {
   const url = new URL(BAN_URL);
   url.searchParams.set("q", query);
-  url.searchParams.set("limit", "10");
+  url.searchParams.set("limit", String(BAN_SUGGESTIONS_LIMIT));
 
   const res = await fetch(url.toString());
   if (!res.ok) return [];
@@ -165,7 +198,7 @@ function setupAddressAutocomplete() {
       const [lon, lat] = coords;
       addAddressToCache(label, lon, lat);
       const rayonKm = parseFloat(
-        document.getElementById("rayon-km").value || "1"
+        document.getElementById("rayon-km").value || String(DEFAULT_RAYON_KM)
       );
       setMapCenter(lat, lon, rayonKm);
     }
@@ -238,14 +271,14 @@ function setupAddressAutocomplete() {
 
 async function searchVentes() {
   const rayonKm = parseFloat(
-    document.getElementById("rayon-km").value || "1"
+    document.getElementById("rayon-km").value || String(DEFAULT_RAYON_KM)
   );
   const typeLocal = document.getElementById("type-local").value || "";
   const surfMin = document.getElementById("surf-min").value || "";
   const surfMax = document.getElementById("surf-max").value || "";
   const dateMin = document.getElementById("date-min").value || "";
   const dateMax = document.getElementById("date-max").value || "";
-  const limit = parseInt(document.getElementById("limit-ventes").value || "50", 10);
+  const limit = parseInt(document.getElementById("limit-ventes").value || String(VENTES_LIMIT_DEFAULT), 10);
 
   if (!lastCenter) {
     alert("Veuillez d'abord choisir une adresse.");
@@ -256,7 +289,7 @@ async function searchVentes() {
   params.set("lat", lastCenter.lat.toString());
   params.set("lon", lastCenter.lon.toString());
   params.set("rayon_km", rayonKm.toString());
-  params.set("limit", Math.min(250, Math.max(1, limit)).toString());
+  params.set("limit", Math.min(VENTES_LIMIT_MAX, Math.max(1, limit)).toString());
 
   if (typeLocal) params.set("type_local", typeLocal);
   if (surfMin) params.set("surf_min", surfMin);
@@ -352,9 +385,9 @@ function fillTableAndMarkers(ventes) {
       selectedSaleMarker.setLatLng([v.latitude, v.longitude]);
     } else {
       selectedSaleMarker = L.circleMarker([v.latitude, v.longitude], {
-        radius: 10,
-        color: "#dc2626",
-        fillColor: "#dc2626",
+        radius: SELECTED_MARKER_RADIUS,
+        color: SELECTED_MARKER_COLOR,
+        fillColor: SELECTED_MARKER_COLOR,
         fillOpacity: 1,
         weight: 2,
       });
@@ -397,9 +430,9 @@ function fillTableAndMarkers(ventes) {
   ventes.forEach((v, idx) => {
     if (v.latitude == null || v.longitude == null) return;
     const circle = L.circleMarker([v.latitude, v.longitude], {
-      radius: 5,
-      color: "#2563eb",
-      fillColor: "#2563eb",
+      radius: SALE_MARKER_RADIUS,
+      color: SALE_MARKER_COLOR,
+      fillColor: SALE_MARKER_COLOR,
       fillOpacity: 1,
       weight: 1,
     });
@@ -466,7 +499,7 @@ function init() {
   initMap();
   setTimeout(() => {
     if (map) map.invalidateSize();
-  }, 100);
+  }, MAP_INVALIDATE_DELAY_MS);
   setupAddressAutocomplete();
 
   const searchBtn = document.getElementById("search-btn");
@@ -487,7 +520,7 @@ function init() {
   const rayonInput = document.getElementById("rayon-km");
   rayonInput.addEventListener("change", () => {
     if (!lastCenter) return;
-    const rayonKm = parseFloat(rayonInput.value || "1");
+    const rayonKm = parseFloat(rayonInput.value || String(DEFAULT_RAYON_KM));
     setMapCenter(lastCenter.lat, lastCenter.lon, rayonKm);
   });
 

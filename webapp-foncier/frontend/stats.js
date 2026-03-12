@@ -1,55 +1,33 @@
-// Vide = même origine ; si page ouverte en file:// (ancienne URL), appeler le backend sur localhost:8000
+// =============================================================================
+// Variables Globales — À modifier ici pour changer d’API, limites, délais, couleurs
+// =============================================================================
+
+// — API backend (vide = même origine ; file:// → localhost:8000)
 const API_BASE =
   typeof window !== "undefined" && window.location?.protocol === "file:"
     ? "http://localhost:8000"
     : "";
+const API_PATH_GEO = "/api/geo";
+const API_PATH_PERIOD = "/api/period";
+const API_PATH_COMMUNES = "/api/communes";
+const API_PATH_STATS = "/api/stats";
 
-/** Noms des départements français (code INSEE → nom) */
-const DEPT_NAMES = {
-  "01": "Ain", "02": "Aisne", "03": "Allier", "04": "Alpes-de-Haute-Provence", "05": "Hautes-Alpes",
-  "06": "Alpes-Maritimes", "07": "Ardèche", "08": "Ardennes", "09": "Ariège", "10": "Aube",
-  "11": "Aude", "12": "Aveyron", "13": "Bouches-du-Rhône", "14": "Calvados", "15": "Cantal",
-  "16": "Charente", "17": "Charente-Maritime", "18": "Cher", "19": "Corrèze", "21": "Côte-d'Or",
-  "22": "Côtes-d'Armor", "23": "Creuse", "24": "Dordogne", "25": "Doubs", "26": "Drôme",
-  "27": "Eure", "28": "Eure-et-Loir", "29": "Finistère", "30": "Gard", "31": "Haute-Garonne",
-  "32": "Gers", "33": "Gironde", "34": "Hérault", "35": "Ille-et-Vilaine", "36": "Indre",
-  "37": "Indre-et-Loire", "38": "Isère", "39": "Jura", "40": "Landes", "41": "Loir-et-Cher",
-  "42": "Loire", "43": "Haute-Loire", "44": "Loire-Atlantique", "45": "Loiret", "46": "Lot",
-  "47": "Lot-et-Garonne", "48": "Lozère", "49": "Maine-et-Loire", "50": "Manche", "51": "Marne",
-  "52": "Haute-Marne", "53": "Mayenne", "54": "Meurthe-et-Moselle", "55": "Meuse", "56": "Morbihan",
-  "57": "Moselle", "58": "Nièvre", "59": "Nord", "60": "Oise", "61": "Orne", "62": "Pas-de-Calais",
-  "63": "Puy-de-Dôme", "64": "Pyrénées-Atlantiques", "65": "Hautes-Pyrénées", "66": "Pyrénées-Orientales",
-  "67": "Bas-Rhin", "68": "Haut-Rhin", "69": "Rhône", "70": "Haute-Saône", "71": "Saône-et-Loire",
-  "72": "Sarthe", "73": "Savoie", "74": "Haute-Savoie", "75": "Paris", "76": "Seine-Maritime",
-  "77": "Seine-et-Marne", "78": "Yvelines", "79": "Deux-Sèvres", "80": "Somme", "81": "Tarn",
-  "82": "Tarn-et-Garonne", "83": "Var", "84": "Vaucluse", "85": "Vendée", "86": "Vienne",
-  "87": "Haute-Vienne", "88": "Vosges", "89": "Yonne", "90": "Territoire de Belfort",
-  "91": "Essonne", "92": "Hauts-de-Seine", "93": "Seine-Saint-Denis", "94": "Val-de-Marne",
-  "95": "Val-d'Oise", "2A": "Corse-du-Sud", "2B": "Haute-Corse",
-};
+// — Communes (liste déroulante et autocomplete)
+const COMMUNES_CHUNK_SIZE = 1500;
+const COMMUNE_AUTOCOMPLETE_MAX = 50;
+const COMMUNE_DROPDOWN_HIDE_DELAY_MS = 150;
 
-let geo = { regions: [], departements: [] };
-let communesList = []; // liste des communes (lieu unique ou lieu 1)
-let communesList2 = [];
-let communesList3 = [];
-let communesList4 = [];
+// — Période (bornes min/max par défaut, toast)
+const PERIOD_YEAR_MIN_DEFAULT = "2000";
+const PERIOD_YEAR_MAX_DEFAULT = "2030";
+const PERIOD_TOAST_DURATION_MS = 4000;
+const PERIOD_TOAST_FADEOUT_MS = 220;
+
+// — Comparaison multi-lieux
 const MAX_COMPARE_PLACES = 4;
-let comparePlaceCount = 2;
-let allCommunesList = []; // copie de la liste complète pour restaurer quand on désélectionne le département
-let charts = { prix: null, surface: null, prixm2: null };
-let compareMode = false;
-/** Données du Lieu 1 après une comparaison, pour réafficher en vue simple sans refetch */
-let lastCompareDataForSingle = null;
-/** Données et titres des lieux après une comparaison (index 0 = lieu 1, pour mode superposition) */
-let lastCompareData = [null, null, null, null];
-let lastCompareTitre = [null, null, null, null];
-/** Mode superposition des graphiques (courbes des 2 lieux sur les mêmes graphiques) */
-let overlayMode = false;
-/** Groupe actif pour les graphiques overlay (0 = moyenne, 1 = médiane, 2 = Q1, 3 = Q3) ; synchronisé sur les 3 onglets. */
-let overlayActiveGroup = 0;
 const OVERLAY_CHART_KEYS = ["overlay-prix", "overlay-surface", "overlay-prixm2"];
 
-/** Configs datasets pour buildChartOverlayMulti (un lieu ou N lieux). group: 0 = moyenne, 1 = médiane, 2 = Q1, 3 = Q3. */
+/** Configs datasets pour buildChartOverlayMulti. group: 0 = moyenne, 1 = médiane, 2 = Q1, 3 = Q3. */
 const PRIX_CONFIG = [
   { key: "prix_moyen", label: "Prix moyen (€)", group: 0 },
   { key: "prix_median", label: "Prix médian (€)", group: 1 },
@@ -66,6 +44,57 @@ const PRIXM2_CONFIG = [
   { key: "prix_m2_q1", label: "Prix/m² Q1 (€)", group: 2 },
   { key: "prix_m2_q3", label: "Prix/m² Q3 (€)", group: 3 },
 ];
+
+// — Graphiques : palettes de couleurs (4 courbes : moyenne, médiane, Q1, Q3)
+const CHART_COLORS = [
+  { border: "#2563eb", fill: "rgba(37, 99, 235, 0.1)" },
+  { border: "#059669", fill: "rgba(5, 150, 105, 0.1)" },
+  { border: "#d97706", fill: "rgba(217, 119, 6, 0.1)" },
+  { border: "#7c3aed", fill: "rgba(124, 58, 237, 0.1)" },
+];
+const CHART_COLORS_LIGHT = [
+  { border: "#93c5fd", fill: "rgba(147, 197, 253, 0.08)" },
+  { border: "#6ee7b7", fill: "rgba(110, 231, 183, 0.08)" },
+  { border: "#fcd34d", fill: "rgba(252, 211, 77, 0.08)" },
+  { border: "#c4b5fd", fill: "rgba(196, 181, 253, 0.08)" },
+];
+const CHART_COLORS_2 = [
+  { border: "#ea580c", fill: "rgba(234, 88, 12, 0.1)" },
+  { border: "#ca8a04", fill: "rgba(202, 138, 4, 0.1)" },
+  { border: "#c026d3", fill: "rgba(192, 38, 211, 0.1)" },
+  { border: "#0891b2", fill: "rgba(8, 145, 178, 0.1)" },
+];
+const CHART_COLORS_3 = [
+  { border: "#fb923c", fill: "rgba(251, 146, 60, 0.08)" },
+  { border: "#eab308", fill: "rgba(234, 179, 8, 0.08)" },
+  { border: "#d946ef", fill: "rgba(217, 70, 239, 0.08)" },
+  { border: "#22d3ee", fill: "rgba(34, 211, 238, 0.08)" },
+];
+const OVERLAY_PALETTES = [CHART_COLORS, CHART_COLORS_LIGHT, CHART_COLORS_2, CHART_COLORS_3];
+const OVERLAY_DASH = [[], [5, 4], [2, 2], [8, 4, 2, 4]];
+
+// — Chart.js : mise en page
+const CHART_LAYOUT_PADDING_LEFT = 14;
+const CHART_TICKS_PADDING = 10;
+
+// =============================================================================
+// État applicatif (variables mutables)
+// =============================================================================
+
+let geo = { regions: [], departements: [], deptNomByCode: {} };
+let communesList = [];
+let communesList2 = [];
+let communesList3 = [];
+let communesList4 = [];
+let comparePlaceCount = 2;
+let allCommunesList = [];
+let charts = { prix: null, surface: null, prixm2: null };
+let compareMode = false;
+let lastCompareDataForSingle = null;
+let lastCompareData = [null, null, null, null];
+let lastCompareTitre = [null, null, null, null];
+let overlayMode = false;
+let overlayActiveGroup = 0;
 
 /** Liste des clés des graphiques en mode comparaison (prix-1, surface-1, prixm2-1, prix-2, …) pour synchronisation. */
 function getCompareChartKeys() {
@@ -102,10 +131,11 @@ function fillDepartmentSelect(regionId, deptSelectId) {
   const id = deptSelectId || "dept-select";
   const deptSelect = document.getElementById(id);
   if (!deptSelect) return;
-  const list = regionId ? getDepartmentsForRegion(regionId) : (geo.departements || []);
+  const codes = regionId ? getDepartmentsForRegion(regionId) : (geo.departements || []).map((d) => (typeof d === "object" ? d.code : d));
   deptSelect.innerHTML = "<option value=''>— Choisir un département —</option>";
-  list.forEach((d) => {
-    deptSelect.innerHTML += `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`;
+  codes.forEach((code) => {
+    const libelle = geo.deptNomByCode[code] ? `${code} ${geo.deptNomByCode[code]}` : code;
+    deptSelect.innerHTML += `<option value="${escapeHtml(code)}">${escapeHtml(libelle)}</option>`;
   });
 }
 
@@ -150,7 +180,7 @@ function buildTitre(p, built, side) {
   const regionNom = region_id_for_api
     ? geo.regions.find((r) => r.id === region_id_for_api)?.nom
     : (code_dept ? geo.regions.find((r) => r.departements && r.departements.includes(code_dept))?.nom : null);
-  const deptLibelle = DEPT_NAMES[code_dept] ? `${code_dept} ${DEPT_NAMES[code_dept]}` : code_dept;
+  const deptLibelle = geo.deptNomByCode[code_dept] ? `${code_dept} ${geo.deptNomByCode[code_dept]}` : code_dept;
   if (built.niveau === "region") return regionNom || "Région";
   if (built.niveau === "department") return regionNom ? `${regionNom} / ${deptLibelle}` : deptLibelle;
   const postaux = list
@@ -274,34 +304,6 @@ function renderSingleView(data, titre, annee_min, annee_max) {
   }
 }
 
-/** Couleurs pour les 4 courbes (moyenne, médiane, Q1, Q3) — Lieu 1 = foncé, Lieu 2 = clair + pointillés */
-const CHART_COLORS = [
-  { border: "#2563eb", fill: "rgba(37, 99, 235, 0.1)" },
-  { border: "#059669", fill: "rgba(5, 150, 105, 0.1)" },
-  { border: "#d97706", fill: "rgba(217, 119, 6, 0.1)" },
-  { border: "#7c3aed", fill: "rgba(124, 58, 237, 0.1)" },
-];
-const CHART_COLORS_LIGHT = [
-  { border: "#93c5fd", fill: "rgba(147, 197, 253, 0.08)" },
-  { border: "#6ee7b7", fill: "rgba(110, 231, 183, 0.08)" },
-  { border: "#fcd34d", fill: "rgba(252, 211, 77, 0.08)" },
-  { border: "#c4b5fd", fill: "rgba(196, 181, 253, 0.08)" },
-];
-const CHART_COLORS_2 = [
-  { border: "#ea580c", fill: "rgba(234, 88, 12, 0.1)" },
-  { border: "#ca8a04", fill: "rgba(202, 138, 4, 0.1)" },
-  { border: "#c026d3", fill: "rgba(192, 38, 211, 0.1)" },
-  { border: "#0891b2", fill: "rgba(8, 145, 178, 0.1)" },
-];
-const CHART_COLORS_3 = [
-  { border: "#fb923c", fill: "rgba(251, 146, 60, 0.08)" },
-  { border: "#eab308", fill: "rgba(234, 179, 8, 0.08)" },
-  { border: "#d946ef", fill: "rgba(217, 70, 239, 0.08)" },
-  { border: "#22d3ee", fill: "rgba(34, 211, 238, 0.08)" },
-];
-const OVERLAY_PALETTES = [CHART_COLORS, CHART_COLORS_LIGHT, CHART_COLORS_2, CHART_COLORS_3];
-const OVERLAY_DASH = [[], [5, 4], [2, 2], [8, 4, 2, 4]];
-
 /**
  * Construit un graphique avec plusieurs courbes.
  * yMin: null = axe Y automatique ; number = origine fixe (ex. 0).
@@ -337,10 +339,10 @@ function buildChartMulti(canvasId, series, datasetsConfig, yMin = null) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { left: 14 } },
+      layout: { padding: { left: CHART_LAYOUT_PADDING_LEFT } },
       interaction: { mode: "index", intersect: false },
       scales: {
-        y: { ...yScale, ticks: { padding: 10 } },
+        y: { ...yScale, ticks: { padding: CHART_TICKS_PADDING } },
       },
       plugins: {
         legend: {
@@ -516,9 +518,9 @@ function buildChartOverlay(canvasId, series1, series2, datasetsConfig, yMin = nu
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { left: 14 } },
+      layout: { padding: { left: CHART_LAYOUT_PADDING_LEFT } },
       interaction: { mode: "index", intersect: false },
-      scales: { y: { ...yScale, ticks: { padding: 10 } } },
+      scales: { y: { ...yScale, ticks: { padding: CHART_TICKS_PADDING } } },
       plugins: {
         legend: {
           onClick: (e, legendItem, legend) => {
@@ -577,9 +579,9 @@ function buildChartOverlayMulti(canvasId, seriesArray, datasetsConfig, yMin = nu
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { left: 14 } },
+      layout: { padding: { left: CHART_LAYOUT_PADDING_LEFT } },
       interaction: { mode: "index", intersect: false },
-      scales: { y: { ...yScale, ticks: { padding: 10 } } },
+      scales: { y: { ...yScale, ticks: { padding: CHART_TICKS_PADDING } } },
       plugins: {
         legend: {
           onClick: (e, legendItem, legend) => {
@@ -598,9 +600,11 @@ function buildChartOverlayMulti(canvasId, seriesArray, datasetsConfig, yMin = nu
 }
 
 async function loadGeo() {
-  const res = await fetch(`${API_BASE}/api/geo`);
+  const res = await fetch(`${API_BASE}${API_PATH_GEO}`);
   if (!res.ok) throw new Error("Erreur chargement geo");
   geo = await res.json();
+  // Map code → nom pour l’affichage (source : ref_departements en base)
+  geo.deptNomByCode = Object.fromEntries((geo.departements || []).map((d) => [d.code, d.nom]));
   const regionOpts = "<option value=''>— Choisir une région —</option>" + geo.regions.map((r) => `<option value="${r.id}">${escapeHtml(r.nom)}</option>`).join("");
   ["region-select", "region-1-select", "region-2-select", "region-3-select", "region-4-select"].forEach((id) => {
     const el = document.getElementById(id);
@@ -614,15 +618,13 @@ async function loadGeo() {
 }
 
 async function loadPeriod() {
-  const res = await fetch(`${API_BASE}/api/period`);
+  const res = await fetch(`${API_BASE}${API_PATH_PERIOD}`);
   if (!res.ok) return;
   const p = await res.json();
   document.getElementById("annee-min").value = p.annee_min ?? "";
   document.getElementById("annee-max").value = p.annee_max ?? "";
   updatePeriodConstraints();
 }
-
-const COMMUNES_CHUNK_SIZE = 1500;
 
 function fillCommuneOptionsChunked(communeSelect, list, startIndex) {
   const end = Math.min(startIndex + COMMUNES_CHUNK_SIZE, list.length);
@@ -661,8 +663,8 @@ async function loadCommunes(codeDept, suffix) {
   placeholder.textContent = "— Choisir une commune —";
   communeSelect.appendChild(placeholder);
   const url = codeDept
-    ? `${API_BASE}/api/communes?code_dept=${encodeURIComponent(codeDept)}`
-    : `${API_BASE}/api/communes`;
+    ? `${API_BASE}${API_PATH_COMMUNES}?code_dept=${encodeURIComponent(codeDept)}`
+    : `${API_BASE}${API_PATH_COMMUNES}`;
   const res = await fetch(url);
   if (!res.ok) {
     return;
@@ -696,8 +698,6 @@ function restoreAllCommunesInDropdown(suffix) {
   communeSelect.appendChild(placeholder);
   fillCommuneOptionsChunked(communeSelect, list, 0);
 }
-
-const COMMUNE_AUTOCOMPLETE_MAX = 50;
 
 /** Normalise une chaîne pour la recherche : minuscules, sans accents, tirets et espaces multiples ramenés à un espace. */
 function normalizeForCommuneSearch(str) {
@@ -770,7 +770,7 @@ function initCommuneAutocomplete(inputId, dataId, dropdownId, placeOrSingle) {
     hideTimeout = setTimeout(() => {
       dropdown.setAttribute("aria-hidden", "true");
       input.setAttribute("aria-expanded", "false");
-    }, 150);
+    }, COMMUNE_DROPDOWN_HIDE_DELAY_MS);
   }
   function selectCommune(c) {
     input.value = `${c.commune} (${c.code_postal})`;
@@ -1009,7 +1009,7 @@ async function submitStats() {
     destroyCharts();
     for (let s = 1; s <= MAX_COMPARE_PLACES; s++) destroyChartsForSide(s);
     try {
-      const responses = await Promise.all(builds.map((b) => fetch(`${API_BASE}/api/stats?${b.params}`)));
+      const responses = await Promise.all(builds.map((b) => fetch(`${API_BASE}${API_PATH_STATS}?${b.params}`)));
       document.getElementById("stats-loading").setAttribute("aria-hidden", "true");
       const allData = await Promise.all(responses.map((r) => (r.ok ? r.json() : null)));
       for (let i = 0; i < comparePlaceCount; i++) {
@@ -1569,8 +1569,8 @@ function showPeriodToast(message) {
       el.setAttribute("hidden", "");
       el.textContent = "";
       periodToastTimeout = null;
-    }, 220);
-  }, 4000);
+    }, PERIOD_TOAST_FADEOUT_MS);
+  }, PERIOD_TOAST_DURATION_MS);
 }
 
 function updatePeriodConstraints() {
@@ -1580,8 +1580,8 @@ function updatePeriodConstraints() {
   const maxVal = maxEl.value.trim();
   const minNum = minVal ? parseInt(minVal, 10) : NaN;
   const maxNum = maxVal ? parseInt(maxVal, 10) : NaN;
-  minEl.max = !Number.isNaN(maxNum) ? String(maxNum) : "2030";
-  maxEl.min = !Number.isNaN(minNum) ? String(minNum) : "2000";
+  minEl.max = !Number.isNaN(maxNum) ? String(maxNum) : PERIOD_YEAR_MAX_DEFAULT;
+  maxEl.min = !Number.isNaN(minNum) ? String(minNum) : PERIOD_YEAR_MIN_DEFAULT;
 }
 
 function validatePeriodBounds() {
