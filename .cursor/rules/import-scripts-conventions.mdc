@@ -1,0 +1,40 @@
+---
+description: Conventions générales pour les scripts d'import CSV (webapp-foncier)
+alwaysApply: true
+---
+
+# Conventions pour les scripts d'importation
+
+- **Configuration base de données**
+  - Toujours lire les paramètres de connexion dans `config.postgres.json` ou `config.json` via une fonction dédiée (`get_db_config`).
+  - Ne jamais hardcoder `host`, `port`, `dbname`, `user`, `password` dans le code.
+
+- **Lecture des fichiers CSV**
+  - Utiliser `encoding="latin1"` pour la lecture et l'écriture des CSV (y compris fichiers de rejets).
+  - Utiliser `csv.DictReader` en streaming (pas de chargement complet en mémoire).
+  - Tolérer les séparateurs `;` et `,` en les détectant à partir de la première ligne.
+  - Tolérer les variations de casse sur les noms de colonnes (minuscule/MAJUSCULE).
+
+- **Batchs et performance**
+  - Prévoir un argument `--batch-size` pour gérer la taille des lots d'insert.
+  - Insérer par lots avec `execute_batch` / `execute_values` et faire un `commit` après chaque batch.
+  - Afficher la progression des imports même sans `--debug` (nombre cumulé de lignes insérées par fichier).
+
+- **Debug et logs**
+  - Prévoir un flag `--debug` qui active des logs plus verbeux (données du premier batch, requête SQL, lignes rejetées, etc.).
+
+- **Années et filtres de fichiers**
+  - Systématiquement prévoir :
+    - Lecture de l'année depuis le nom de fichier (quand pertinent) comme valeur de repli.
+    - Recherche d'une colonne d'année dans le fichier (`annee`, `ANNEE`, `exercice`, `EXERCICE`, `an`, `AN`, etc.) prioritaire sur l'année du nom de fichier.
+    - Possibilité de passer une année ou une plage d'années en paramètres, et filtrer les fichiers par préfixe + suffixe d'année.
+    - Option `all` pour traiter tous les fichiers correspondant à un préfixe donné.
+
+- **Parallélisation**
+  - Dès qu'on traite plusieurs fichiers, utiliser `ProcessPoolExecutor` (un process par fichier) avec une connexion DB par process.
+
+- **Fichiers de rejets**
+  - Pour chaque fichier CSV traité, générer un fichier de rejets contenant les enregistrements ignorés.
+  - Le fichier de rejets doit reprendre le même préfixe que le CSV d'entrée et ajouter le suffixe `.rejets.csv`.
+  - Logger le nombre de lignes lues, valides et rejetées, en indiquant le chemin du fichier de rejets.
+

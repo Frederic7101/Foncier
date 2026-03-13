@@ -1173,6 +1173,7 @@ def main() -> None:
         "sous_categorie",
     ]
     seen_urls = set()
+
     written_count_ref: List[int] = [0]  # compteur modifiable par référence
     date_bounds: List[Optional[str]] = [None, None]  # [date_min, date_max]
 
@@ -1183,10 +1184,74 @@ def main() -> None:
     # Fichier temporaire distinct pour éviter WinError 32 au renommage (OneDrive, IDE, etc.)
     csv_temp = f"{base}_tmp{ext}"
 
-    debug_print(True, f"Ouverture du fichier CSV de sortie: {csv_temp}")
+    # Avant de lancer _collect_for_url_streaming, on construit le set seen_urls à partir
+    # des URLs déjà présentes dans un CSV précédent, pour éviter de retraiter les annonces
+    # déjà scrapées. On gère 2 cas :
+    #  - exécution normale terminée : fichier final args.csv existe
+    #  - interruption brutale : seul le fichier temporaire csv_temp existe
+    existing_csv_path = None
+    if os.path.exists(args.csv):
+        existing_csv_path = args.csv
+    elif os.path.exists(csv_temp):
+        existing_csv_path = csv_temp
+
+    if existing_csv_path:
+        # On détecte automatiquement le séparateur (',' ou ';') pour relire
+        # proprement un ancien CSV, puis on récupère les URLs existantes.
+        with open(existing_csv_path, newline="", encoding="utf-8") as f_in:
+            first_line = f_in.readline()
+            # Sniffer pour trouver le délimiteur parmi ',' et ';'
+            try:
+                dialect = csv.Sniffer().sniff(first_line, delimiters=";,")
+            except csv.Error:
+                # Fallback: on suppose le ';'
+                dialect = csv.excel
+                dialect.delimiter = ";"
+            f_in.seek(0)
+            reader = csv.DictReader(f_in, dialect=dialect)
+            for row in reader:
+                url = row.get("url")
+                if url:
+                    seen_urls.add(url)
+        debug_print(
+            True,
+            f"{len(seen_urls)} URLs déjà présentes récupérées depuis {existing_csv_path}; "
+            "elles ne seront pas retraitées."
+        )
+    else:
+        debug_print(
+            True,
+            f"Aucun fichier CSV précédent trouvé ({args.csv} ni {csv_temp}); on repart de zéro."
+        )
+
+    # Pré-remplir le fichier temporaire avec les enregistrements déjà présents dans le CSV
+    # précédent (final ou temporaire) afin que le nouveau run ajoute simplement les nouvelles
+    # annonces à la suite.
     with open(csv_temp, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        # On fixe le séparateur de sortie à ';' et on ignore les éventuelles
+        # colonnes supplémentaires des anciens fichiers.
+        writer = csv.DictWriter(
+            f,
+            fieldnames=fieldnames,
+            delimiter=";",
+            extrasaction="ignore",
+        )
         writer.writeheader()
+
+        if existing_csv_path:
+            # Réécriture normalisée du CSV précédent dans le nouveau temporaire,
+            # en utilisant le même dialecte détecté plus haut.
+            with open(existing_csv_path, newline="", encoding="utf-8") as f_in:
+                first_line = f_in.readline()
+                try:
+                    dialect = csv.Sniffer().sniff(first_line, delimiters=";,")
+                except csv.Error:
+                    dialect = csv.excel
+                    dialect.delimiter = ";"
+                f_in.seek(0)
+                reader = csv.DictReader(f_in, dialect=dialect)
+                for row in reader:
+                    writer.writerow(row)
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=args.headless)

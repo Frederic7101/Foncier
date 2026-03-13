@@ -291,7 +291,7 @@ def _ensure_geocode_failed_column(conn) -> None:
         if "geocode_failed" in str(e).lower() or "column" in str(e).lower():
             raise SystemExit(
                 "La colonne 'geocode_failed' est absente. Exécutez la migration SQL.\n"
-                "Exemple : psql -U postgres -d foncier -f sql/add_geocode_failed.sql"
+                "Exemple : psql -U postgres -d foncier -f webapp-foncier/sql/add_geocode_failed.sql"
             ) from e
         raise
 

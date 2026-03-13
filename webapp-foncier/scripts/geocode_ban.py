@@ -231,8 +231,8 @@ def _ensure_geocode_failed_column(conn) -> None:
             raise SystemExit(
                 "La colonne 'geocode_failed' est absente. Exécutez la migration.\n"
                 "PowerShell (à la racine du projet) :\n"
-                "  Get-Content .\\sql\\add_geocode_failed.sql -Raw | mysql -u root -p foncier\n"
-                "CMD :  cmd /c \"mysql -u root -p foncier < sql\\add_geocode_failed.sql\""
+                "  Get-Content .\\webapp-foncier\\sql\\add_geocode_failed.sql -Raw | mysql -u root -p foncier\n"
+                "CMD :  cmd /c \"mysql -u root -p foncier < webapp-foncier\\sql\\add_geocode_failed.sql\""
             ) from e
         raise
     finally:

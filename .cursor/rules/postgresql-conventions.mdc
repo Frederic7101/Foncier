@@ -1,0 +1,14 @@
+---
+description: Conventions PostgreSQL pour ce projet (syntaxe supportée)
+alwaysApply: true
+---
+
+# Conventions PostgreSQL
+
+- **Contraintes**  
+  - Ne **pas** utiliser la syntaxe `ALTER TABLE ... ADD CONSTRAINT IF NOT EXISTS` (PostgreSQL ne la supporte pas).  
+  - Utiliser simplement `ALTER TABLE ... ADD CONSTRAINT ...` et, si nécessaire, gérer l'existence de la contrainte séparément (par exemple via un script de migration dédié).
+
+- **Schémas**  
+  - Pour ce projet, les tables applicatives doivent être créées dans le schéma `foncier` (par exemple `foncier.rpls_logements`, `foncier.aides_logement_part`, etc.), sauf indication contraire explicite.
+
