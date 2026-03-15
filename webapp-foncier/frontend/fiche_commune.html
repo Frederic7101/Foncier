@@ -1,0 +1,1118 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Fiche commune investisseur — depuis Figma</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <style>
+      .fiche-commune { max-width: 1200px; margin: 0 auto; padding: 0 0.75rem 2rem; background: #f5f5f7; min-height: 100vh; }
+      /* Alternance des fonds de section pour la lisibilité */
+      .page-section { margin: 0 -0.75rem; padding: 1rem 0.75rem 1.5rem; }
+      .page-section--base { background: #f5f5f7; }
+      .page-section--pastel { background: #e5eaf2; }
+      /* Sous-sections : même teinte que la section, intensité alternée (odd = fond section, even = plus soutenu) */
+      .sub-sections .sub-section { border-radius: 0.5rem; padding: 0 0.5rem 0.5rem; margin-bottom: 0.25rem; }
+      .page-section--base .sub-sections .sub-section:nth-child(odd) { background: #f5f5f7; }
+      .page-section--base .sub-sections .sub-section:nth-child(even) { background: #ebebef; }
+      .page-section--pastel .sub-sections .sub-section:nth-child(odd) { background: #e5eaf2; }
+      .page-section--pastel .sub-sections .sub-section:nth-child(even) { background: #dce4f0; }
+      .fiche-badge { position: fixed; top: 0.5rem; right: 0.5rem; background: #f59e0b; color: #fff; padding: 0.25rem 0.5rem; border-radius: 0.25rem; font-size: 0.75rem; font-weight: 600; z-index: 1000; }
+      .fiche-header { text-align: center; margin-bottom: 0.5rem; }
+      .fiche-title-wrap { position: relative; display: inline-block; padding: 0.75rem 0; min-height: 3rem; }
+      .fiche-header h1 { margin: 0; font-size: 1.75rem; color: #000080; line-height: 1.3; padding: 0.5rem 0; }
+      .fiche-header .subtitle-banner { position: absolute; top: 100%; left: 50%; transform: translateX(-50%); margin-top: 0.25rem; padding: 0.5rem 0.75rem; background: #f8fafc; color: #6b7280; font-size: 0.8rem; border-radius: 0.4rem; box-shadow: 0 2px 8px rgba(0,0,0,0.08); max-width: 90vw; white-space: normal; text-align: center; opacity: 0; pointer-events: none; transition: opacity 0.2s ease; z-index: 10; }
+      .fiche-title-wrap:hover .subtitle-banner { opacity: 1; }
+      .fiche-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 1rem; margin-bottom: 1rem; padding: 0.75rem; background: #fff; border-radius: 0.75rem; box-shadow: 0 8px 20px rgba(15,23,42,0.08); }
+      .fiche-bar .title-commune { font-size: 1.2rem; color: #1e3a5f; font-weight: 700; flex: 1 1 auto; }
+      .fiche-bar .search-wrap { display: flex; align-items: center; gap: 0.35rem; }
+      .fiche-bar .search-input-wrap { position: relative; }
+      .fiche-bar input[type="text"] { padding: 0.4rem 0.5rem; border: 1px solid #d1d5db; border-radius: 0.4rem; min-width: 180px; }
+      .fiche-bar .btn-afficher { padding: 0.4rem 0.75rem; background: #2563eb; color: #fff; border: none; border-radius: 0.4rem; font-size: 0.85rem; font-weight: 600; cursor: pointer; }
+      .fiche-bar .btn-afficher:hover { background: #1d4ed8; }
+      .commune-suggestions { position: absolute; top: 100%; left: 0; right: 0; margin-top: 2px; background: #fff; border: 1px solid #d1d5db; border-radius: 0.4rem; box-shadow: 0 4px 12px rgba(0,0,0,0.12); max-height: 220px; overflow-y: auto; z-index: 100; list-style: none; padding: 0; margin-left: 0; }
+      .commune-suggestions li { padding: 0.4rem 0.5rem; cursor: pointer; font-size: 0.9rem; border-bottom: 1px solid #f1f5f9; }
+      .commune-suggestions li:last-child { border-bottom: none; }
+      .commune-suggestions li:hover, .commune-suggestions li[aria-selected="true"] { background: #eff6ff; }
+      .fiche-bar nav { margin-left: auto; display: flex; flex-direction: row; gap: 0.5rem; align-items: center; }
+      .fiche-bar nav a { display: inline-block; padding: 0.4rem 0.75rem; background: #2563eb; color: #fff; text-decoration: none; font-size: 0.85rem; font-weight: 600; border-radius: 0.4rem; border: none; cursor: pointer; }
+      .fiche-bar nav a:hover { background: #1d4ed8; }
+      .section-title { font-size: 1.1rem; font-weight: 700; color: #1e3a5f; margin: 1.5rem 0 0.75rem; padding-bottom: 0.35rem; border-bottom: 2px solid #2563eb; }
+      .section-title:first-of-type { margin-top: 0; }
+      .section-title-row { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: 1.5rem 0 0.75rem; padding-bottom: 0; border-bottom: 2px solid #2563eb; }
+      .section-title-row:first-of-type { margin-top: 0; }
+      .section-title-row h2 { margin: 0; font-size: 1.1rem; font-weight: 700; color: #1e3a5f; }
+      .section-title-row .panorama-tabs { display: flex; flex-wrap: wrap; gap: 0; align-items: stretch; margin-left: 0.5rem; }
+      .section-title-row .panorama-tabs .tab { display: inline-block; padding: 0.4rem 0.6rem; font-size: 0.8rem; color: #4b5563; background: transparent; border: none; border-bottom: 3px solid transparent; cursor: pointer; text-decoration: none; font-weight: 500; margin-bottom: -2px; border-radius: 0.25rem 0.25rem 0 0; }
+      .section-title-row .panorama-tabs .tab:hover { color: #2563eb; background: #f1f5f9; }
+      .section-title-row .panorama-tabs .tab.active { color: #2563eb; border-bottom-color: #2563eb; font-weight: 600; background: #eff6ff; }
+      .panorama-section-anchor { scroll-margin-top: 0.5rem; }
+      .panorama-tabs-row-only { margin-top: 1.5rem; }
+      .panorama-tabs-row-only:first-of-type { margin-top: 0; }
+      /* Panorama global : 4 colonnes égales (hauteur et largeur) dans un conteneur commun */
+      .panorama-global-container { display: grid; grid-template-columns: repeat(4, 1fr); grid-template-rows: 1fr; gap: 0; margin-bottom: 1rem; min-height: 320px; background: #fff; overflow: hidden; }
+      .panorama-global-container .panorama-col { display: flex; flex-direction: column; min-width: 0; padding: 0.75rem; }
+      @media (max-width: 900px) { .panorama-global-container { grid-template-columns: 1fr; grid-template-rows: auto; } .panorama-global-container .panorama-col { min-height: 200px; } }
+      .photo-placeholder { background: #fff; border-radius: 0.5rem; flex: 1; min-height: 120px; display: flex; align-items: center; justify-content: center; color: #6b7280; font-size: 0.85rem; overflow: hidden; }
+      #photo-commune.photo-loaded { min-height: 120px; flex: 1; display: flex; align-items: center; justify-content: center; }
+      #photo-commune img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; border-radius: 0.35rem; display: block; }
+      .score-badge { display: inline-block; background: #47de7a; color: #111827; padding: 0.35rem 0.75rem; border-radius: 0.5rem; font-size: 0.9rem; font-weight: 700; margin-bottom: 0.5rem; flex-shrink: 0; }
+      .fiche-desc { font-size: 0.85rem; color: #4b5563; line-height: 1.5; flex: 1; overflow-y: auto; margin: 0; }
+      .fiche-desc strong { color: #111827; }
+      .fiche-identite { margin-bottom: 0.75rem; flex-shrink: 0; }
+      .fiche-identite p { margin: 0.2rem 0; font-size: 0.9rem; color: #4b5563; }
+      .chiffres-cles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; flex: 1; align-content: start; }
+      .fiche-renta-note { margin: 0.5rem 0 0; font-size: 0.7rem; color: #6b7280; line-height: 1.35; }
+      .chiffre-card { background: #f8fafc; border-radius: 0.5rem; padding: 0.5rem 0.6rem; border-left: 4px solid #2563eb; }
+      .chiffre-card .label { font-size: 0.7rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.02em; }
+      .chiffre-card .value { font-size: 1rem; font-weight: 700; color: #1e3a5f; }
+      #map-panorama { width: 100%; flex: 1; min-height: 200px; border-radius: 0.5rem; }
+      .zone-content { background: #fff; border-radius: 0.75rem; padding: 1rem; box-shadow: 0 8px 20px rgba(15,23,42,0.08); margin-bottom: 0.75rem; }
+      /* Parc logements : 4 colonnes égales (Nb maisons, Nb appart., Ratio propriétaires, Ratio logements vacants), sans colonne entête */
+      .parc-logement-block { width: 100%; margin-bottom: 1rem; }
+      .parc-logement-block h3 { font-size: 1rem; color: #374151; margin: 0 0 10px; font-weight: 600; }
+      .parc-logement-block .zone-content { max-width: none; }
+      .table-parc { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.875rem; }
+      .table-parc th, .table-parc td { width: 25%; padding: 6px 10px; text-align: right; border-bottom: 1px solid #e5e7eb; }
+      .table-parc th { background: #f8fafc; color: #4b5563; font-weight: 600; font-size: 0.7rem; }
+      .table-parc tbody tr:last-child td { border-bottom: none; }
+      /* Blocs Ventes et Locations (sans grille) */
+      .logement-block { width: 100%; margin-bottom: 1rem; }
+      .logement-block .title-row { display: flex; align-items: center; gap: 0.75rem; margin-bottom: 10px; flex-wrap: wrap; }
+      .logement-block .title-row h3 { font-size: 1rem; color: #374151; margin: 0; font-weight: 600; }
+      .btn-plus-infos { display: inline-block; padding: 0.25rem 0.5rem; font-size: 0.8rem; color: #2563eb; background: #eff6ff; border-radius: 0.35rem; text-decoration: none; font-weight: 500; }
+      .btn-plus-infos:hover { background: #dbeafe; }
+      .logement-block .zone-content { padding: 16px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+      /* Rentabilité locative (sous Locations) */
+      .table-rentabilite { width: 100%; border-collapse: collapse; font-size: 0.875rem; margin-top: 0.75rem; table-layout: fixed; }
+      .table-rentabilite th, .table-rentabilite td { width: 16.66%; padding: 8px 10px; text-align: right; border: 1px solid #e5e7eb; }
+      .table-rentabilite th:first-child, .table-rentabilite td:first-child { text-align: left; width: 14%; }
+      .table-rentabilite th { background: #f8fafc; color: #4b5563; font-weight: 600; font-size: 0.8rem; }
+      .rentabilite-subtitle { margin-top: 1rem; margin-bottom: 0.25rem; font-size: 0.85rem; font-weight: 600; color: #374151; }
+      .tableaux-logement .tableau-bloc { border-radius: 0.5rem; padding: 0.75rem 1rem; margin-bottom: 0.5rem; }
+      .tableaux-logement .tableau-bloc .tableau-bloc-title { font-size: 0.95rem; font-weight: 600; color: #374151; margin: 0 0 0.5rem; }
+      .page-section--pastel .tableaux-logement .tableau-bloc:nth-child(odd) { background: #e5eaf2; }
+      .page-section--pastel .tableaux-logement .tableau-bloc:nth-child(even) { background: #dce4f0; }
+      .rentabilite-notes { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #6b7280; }
+      .rentabilite-notes p { margin: 0.2rem 0; }
+      /* Panorama Ventes / Panorama Locations (sections détaillées) */
+      .panorama-ventes-section, .panorama-locations-section { margin-bottom: 2rem; scroll-margin-top: 0.5rem; }
+      .panorama-filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 1rem; padding: 0.75rem; background: #f8fafc; border-radius: 0.5rem; }
+      .panorama-filters label { font-size: 0.85rem; color: #374151; font-weight: 500; }
+      .panorama-filters select { padding: 0.35rem 0.5rem; border: 1px solid #d1d5db; border-radius: 0.35rem; font-size: 0.85rem; min-width: 120px; }
+      .panorama-filters select[multiple] { min-height: 80px; }
+      .panorama-sub-block { margin-bottom: 1.5rem; }
+      .panorama-sub-block h4 { font-size: 0.95rem; color: #374151; margin: 0 0 0.5rem; font-weight: 600; }
+      .table-ventes tr, .table-locations tr { height: 2.25rem; }
+      .table-ventes, .table-locations { width: 100%; border-collapse: collapse; font-size: 0.8rem; table-layout: fixed; }
+      .table-ventes th, .table-ventes td, .table-locations th, .table-locations td { padding: 6px 8px; border-bottom: 1px solid #e5e7eb; text-align: right; }
+      .table-ventes th:first-child, .table-ventes td:first-child, .table-locations th:first-child, .table-locations td:first-child { text-align: left; }
+      .table-ventes .col-sep, .table-locations .col-sep { width: 4px; padding: 0 4px; border-left: 2px solid #cbd5e1; }
+      .table-ventes th, .table-locations th { background: #f8fafc; color: #4b5563; font-weight: 600; }
+      .table-ventes tbody tr:last-child td, .table-locations tbody tr:last-child td { border-bottom: none; }
+      /* Fiscalité locale : 4 colonnes (Année, Taxe Foncière Non Bâti, Taxe Foncière, TEOM) */
+      .fiscalite-locale-block { width: 100%; margin-bottom: 1rem; }
+      .fiscalite-locale-block h3 { font-size: 1rem; color: #374151; margin: 0 0 10px; font-weight: 600; }
+      .fiscalite-locale-block .zone-content { max-width: none; }
+      .fiscalite-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; table-layout: fixed; }
+      .fiscalite-table th, .fiscalite-table td { padding: 6px 12px; text-align: right; border-bottom: 1px solid #e5e7eb; }
+      .fiscalite-table th { background: #f8fafc; color: #4b5563; font-weight: 600; }
+      .fiscalite-table .col-sep { width: 4px; padding: 0 4px; border-left: 2px solid #cbd5e1; }
+      .fiscalite-table tbody tr { height: 1.875rem; }
+      .fiscalite-table tbody tr:last-child td { border-bottom: none; }
+      .fiscalite-note { margin-top: 0.5rem; font-size: 0.75rem; color: #6b7280; }
+      .chart-placeholder { background: #f8fafc; border-radius: 0.5rem; height: 200px; display: flex; align-items: center; justify-content: center; color: #9ca3af; font-size: 0.9rem; border: 1px dashed #d1d5db; }
+      .location-card { background: #f8fafc; padding: 0.75rem; border-radius: 0.5rem; border-left: 4px solid #059669; }
+      .location-card .lbl { font-size: 0.75rem; color: #6b7280; }
+      .location-card .val { font-weight: 700; color: #065f46; }
+      .population-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem; }
+      .population-card { background: #fff; border-radius: 0.5rem; padding: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border-left: 4px solid #7c3aed; }
+      .population-card .lbl { font-size: 0.75rem; color: #6b7280; }
+      .population-card .val { font-weight: 700; color: #5b21b6; }
+      .a-venir { background: #fef3c7; border: 1px dashed #f59e0b; border-radius: 0.5rem; padding: 1.5rem; text-align: center; color: #92400e; font-size: 0.9rem; }
+      .a-venir-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem; }
+      @media (max-width: 600px) { .a-venir-grid { grid-template-columns: 1fr; } }
+      .fiche-footer { margin-top: 2rem; font-size: 0.8rem; color: #9ca3af; }
+    </style>
+  </head>
+  <body>
+    <div class="fiche-badge">Maquette — Données fictives</div>
+    <div class="fiche-commune">
+      <header class="fiche-header">
+        <div class="fiche-title-wrap">
+          <h1>Panorama des Communes</h1>
+          <div class="subtitle-banner">Vision fiche commune : chiffres globaux, panorama du logement/ventes/locations et panorama population</div>
+        </div>
+      </header>
+
+      <div class="fiche-bar">
+        <span class="title-commune">Fiche commune — Lyon (69001)</span>
+        <div class="search-wrap">
+          <div class="search-input-wrap">
+            <input id="commune-search" type="text" placeholder="Code postal ou nom commune" autocomplete="off" aria-autocomplete="list" aria-controls="commune-suggestions" />
+            <ul id="commune-suggestions" class="commune-suggestions" role="listbox" aria-expanded="false" hidden></ul>
+          </div>
+          <button type="button" class="btn-afficher" id="btn-afficher-commune">Afficher</button>
+        </div>
+        <nav>
+          <a id="nav-ventes" href="recherche_ventes.html">Ventes</a>
+          <a id="nav-stats" href="stats_ventes.html">Stats agrégées</a>
+        </nav>
+      </div>
+
+      <div class="page-section page-section--base">
+      <div class="section-title-row" id="panorama-global">
+        <h2 class="section-title" data-panorama-title="Panorama global sur la ville">Panorama global sur la ville</h2>
+        <div class="panorama-tabs" role="tablist">
+          <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
+          <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
+          <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
+          <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
+          <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
+          <a class="tab" href="#panorama-securite" role="tab" data-panorama="panorama-securite">Panorama sécurité</a>
+        </div>
+      </div>
+      <div class="panorama-global-container">
+        <!-- Colonne 1 : photo de la commune (remplie via Wikipedia si commune connue) -->
+        <div class="panorama-col">
+          <div id="photo-commune" class="photo-placeholder">Photo commune</div>
+        </div>
+        <!-- Colonne 2 : score investisseur + texte descriptif -->
+        <div class="panorama-col">
+          <div class="score-badge">Score investisseur : 55.2/100</div>
+          <p class="fiche-desc">
+            Lyon est une commune du centre-est de la France, dans le département du Rhône et la région Auvergne-Rhône-Alpes.
+            Il s'agit d'une grande ville de 519 100 habitants. La commune est au cœur d'une agglomération de 2 240 000 habitants.
+            C'est l'une des trois villes avec des arrondissements en France, avec Paris et Marseille.
+            En 2026, Lyon a un score général de 66.7 / 100. Elle est 16ᵉ / 21 du palmarès des grandes villes en 2026.
+            Il s'agit de la 3ᵉ ville la plus peuplée de France, 1ʳᵉ ville la plus peuplée d'Auvergne-Rhône-Alpes, 7ᵉ ville la plus dense d'Auvergne-Rhône-Alpes et 7ᵉ ville la plus dense du Rhône.
+          </p>
+        </div>
+        <!-- Colonne 3 : synthèse administrative + 4 pavés chiffrés -->
+        <div class="panorama-col">
+          <div class="fiche-identite">
+            <p id="fiche-identite-nom"><strong>Lyon</strong> — 69001</p>
+            <p id="fiche-identite-insee">Code INSEE : —</p>
+            <p id="fiche-identite-dept-reg">Département : Rhône (69) · Région : Auvergne-Rhône-Alpes</p>
+            <p id="fiche-identite-epci">EPCI : —</p>
+          </div>
+          <div class="chiffres-cles">
+            <div class="chiffre-card"><span class="label">Population</span><div class="value" id="fiche-population">—</div></div>
+            <div class="chiffre-card"><span class="label">Prix moyen</span><div class="value" id="fiche-prix-moyen">—</div></div>
+            <div class="chiffre-card"><span class="label">Loyer moyen €/m²</span><div class="value" id="fiche-loyer-m2">—</div></div>
+            <div class="chiffre-card"><span class="label">Taux rentabilité brute %</span><div class="value" id="fiche-renta-brute">—</div></div>
+          </div>
+          <p class="fiche-renta-note">Le taux de rentabilité brute est calculé comme (loyer annuel au m² / prix au m²) × 100 ; il n'est pas pondéré par le nombre de ventes.</p>
+        </div>
+        <!-- Colonne 4 : carte Leaflet IGN centrée sur la commune, zoom 2 km -->
+        <div class="panorama-col" style="padding: 0;">
+          <div id="map-panorama"></div>
+        </div>
+      </div>
+      </div>
+
+      <div class="page-section page-section--pastel">
+      <h2 class="section-title panorama-section-anchor" id="panorama-logement" data-panorama-title="Panorama logement">Panorama logement</h2>
+      <div class="section-title-row panorama-tabs-row-only">
+        <div class="panorama-tabs" role="tablist">
+          <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
+          <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
+          <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
+          <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
+          <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
+          <a class="tab" href="#panorama-securite" role="tab" data-panorama="panorama-securite">Panorama sécurité</a>
+        </div>
+      </div>
+
+      <div class="sub-sections">
+      <div class="sub-section">
+      <!-- Parc logements : 4 colonnes égales, sans colonne entête -->
+      <div class="parc-logement-block">
+        <h3>Parc logements <span class="logement-annee">2024</span></h3>
+        <div class="zone-content">
+          <table class="table-parc">
+            <thead>
+              <tr><th>Nb maisons</th><th>Nb d'appartements</th><th>Ratio propriétaires</th><th>Ratio logements vacants</th></tr>
+            </thead>
+            <tbody>
+              <tr><td id="parc-maisons">—</td><td id="parc-appts">—</td><td id="parc-ratio">—</td><td id="parc-vacants">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </div>
+
+      <div class="sub-section">
+      <div class="logement-block">
+        <div class="title-row">
+          <h3>Ventes <span class="logement-annee">2024</span></h3>
+          <a class="btn-plus-infos" href="#panorama-ventes">Plus d'infos</a>
+        </div>
+        <div class="zone-content">
+          <table class="table-ventes">
+            <thead>
+              <tr><th>Type</th><th>Nb ventes</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Maisons / Appart.</td><td id="ventes-total-nb">2 847</td><td class="col-sep"></td><td id="ventes-total-prix">285 000 €</td><td id="ventes-total-prixm2">4 120 €</td><td id="ventes-total-surf">68 m²</td><td class="col-sep"></td><td id="ventes-total-prixmoy">—</td><td id="ventes-total-prixm2moy">—</td><td id="ventes-total-surfmoy">—</td></tr>
+              <tr><td>Maisons</td><td id="ventes-maisons-nb">—</td><td class="col-sep"></td><td id="ventes-maisons-prix">—</td><td id="ventes-maisons-prixm2">—</td><td id="ventes-maisons-surf">—</td><td class="col-sep"></td><td id="ventes-maisons-prixmoy">—</td><td id="ventes-maisons-prixm2moy">—</td><td id="ventes-maisons-surfmoy">—</td></tr>
+              <tr><td>Appartements</td><td id="ventes-appts-nb">—</td><td class="col-sep"></td><td id="ventes-appts-prix">—</td><td id="ventes-appts-prixm2">—</td><td id="ventes-appts-surf">—</td><td class="col-sep"></td><td id="ventes-appts-prixmoy">—</td><td id="ventes-appts-prixm2moy">—</td><td id="ventes-appts-surfmoy">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      </div>
+
+      <div class="sub-section">
+      <div class="logement-block">
+        <div class="title-row">
+          <h3>Locations <span class="logement-annee">2024</span></h3>
+          <a class="btn-plus-infos" href="#panorama-locations">Plus d'infos</a>
+        </div>
+        <div class="zone-content">
+          <div class="tableaux-logement">
+            <div class="tableau-bloc">
+              <h4 class="tableau-bloc-title">Loyers observés par l'ANIL</h4>
+              <table class="table-locations">
+                <thead>
+                  <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian/m²</th><th>Loyer Q1/m²</th><th>Loyer Q3/m²</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>Maisons / Appart.</td><td id="loc-total-nb">—</td><td class="col-sep"></td><td id="loc-total-loyerm2">—</td><td id="loc-total-loyerq1">—</td><td id="loc-total-loyerq3">—</td></tr>
+                  <tr><td>Maisons</td><td id="loc-maisons-nb">—</td><td class="col-sep"></td><td id="loc-maisons-loyerm2">—</td><td id="loc-maisons-loyerq1">—</td><td id="loc-maisons-loyerq3">—</td></tr>
+                  <tr><td>Appartements</td><td id="loc-appts-nb">—</td><td class="col-sep"></td><td id="loc-appts-loyerm2">—</td><td id="loc-appts-loyerq1">—</td><td id="loc-appts-loyerq3">—</td></tr>
+                  <tr><td>Apparts 1/2 pièces</td><td id="loc-appts12-nb">—</td><td class="col-sep"></td><td id="loc-appts12-loyerm2">—</td><td id="loc-appts12-loyerq1">—</td><td id="loc-appts12-loyerq3">—</td></tr>
+                  <tr><td>Apparts. 3p+</td><td id="loc-appts3p-nb">—</td><td class="col-sep"></td><td id="loc-appts3p-loyerm2">—</td><td id="loc-appts3p-loyerq1">—</td><td id="loc-appts3p-loyerq3">—</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="tableau-bloc">
+              <p class="tableau-bloc-title rentabilite-subtitle">Rentabilités basées sur les médianes</p>
+              <table class="table-rentabilite">
+                <thead>
+                  <tr><th>Type de bien</th><th>Rentabilité brute<sup>1</sup></th><th>Estimation Charges</th><th>Rentabilité HC<sup>2</sup></th><th>Rentabilité nette<sup>3</sup></th></tr>
+                </thead>
+                <tbody id="rentabilite-mediane-body">
+                  <tr><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="tableau-bloc">
+              <p class="tableau-bloc-title rentabilite-subtitle">Rentabilités basées sur les moyennes</p>
+              <table class="table-rentabilite table-rentabilite-moyenne">
+                <thead>
+                  <tr><th>Type de bien</th><th>Rentabilité brute<sup>1</sup></th><th>Estimation Charges</th><th>Rentabilité HC<sup>2</sup></th><th>Rentabilité nette<sup>3</sup></th></tr>
+                </thead>
+                <tbody id="rentabilite-moyenne-body">
+                  <tr><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div class="rentabilite-notes">
+            <p><strong>1.</strong> Rentabilité brute = (Loyers annuels / Prix d'acquisition) × 100.</p>
+            <p><strong>2.</strong> Rentabilité hors charges (HC) = (Loyers annuels nets de charges récupérables / (Prix d'acquisition × (1 + taux_frais_mutation))) × 100, avec pour la simulation taux_frais_mutation = 10 %.</p>
+            <p><strong>3.</strong> Rentabilité nette = après déduction des charges, taxe foncière, assurance, gestion et provision vacance.</p>
+          </div>
+        </div>
+      </div>
+      </div>
+
+      <div class="sub-section">
+      <div class="fiscalite-locale-block">
+        <h3>Fiscalité locale</h3>
+        <div class="zone-content">
+          <table class="fiscalite-table">
+            <thead>
+              <tr><th>Année</th><th class="col-sep"></th><th>Taxe Foncière (simulée)<sup>4</sup></th><th>Taux TF (Taxe Foncière)</th><th>TEOM (Taxe Ordures Ménagères)</th></tr>
+            </thead>
+            <tbody id="fiscalite-tbody">
+              <tr><td colspan="5">—</td></tr>
+            </tbody>
+          </table>
+          <p class="fiscalite-note"><strong>4.</strong> Taxe Foncière (simulée) = surface_moy × coeff_valeur_locative_cadas × loyer_ref_m2 × taux_TFB.</p>
+        </div>
+      </div>
+      </div>
+      </div>
+
+      <div class="page-section page-section--base">
+      <h2 class="section-title" id="panorama-ventes" data-panorama-title="Panorama Ventes">Panorama Ventes</h2>
+      <section class="panorama-ventes-section">
+        <div class="panorama-filters">
+          <label>Type de biens <select id="panorama-ventes-type" multiple><option value="Maison">Maison</option><option value="Appartement">Appartement</option><option value="Local">Local</option></select></label>
+          <label>Catégorie surface <select id="panorama-ventes-surface"><option value="">Toutes</option><option value="S1">S1</option><option value="S2">S2</option><option value="S3">S3</option><option value="S4">S4</option><option value="S5">S5</option></select></label>
+          <label>Nb pièces <select id="panorama-ventes-pieces"><option value="">Toutes</option><option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option><option value="T4">T4</option><option value="T5">T5</option></select></label>
+        </div>
+        <div class="sub-sections">
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>Ventes <span class="logement-annee">2024</span></h4>
+          <div class="zone-content">
+            <table class="table-ventes">
+              <thead>
+                <tr><th>Type</th><th>Nb ventes</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Maisons / Appart.</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>Ventes enchères Licitor.fr (5 dernières années)</h4>
+          <div class="zone-content">
+            <table class="table-ventes">
+              <thead>
+                <tr><th>Type</th><th>Nb ventes</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Maisons / Appart.</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>Ventes Enchères-Publiques.fr (5 dernières années)</h4>
+          <div class="zone-content">
+            <table class="table-ventes">
+              <thead>
+                <tr><th>Type</th><th>Nb ventes</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Maisons / Appart.</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        </div>
+        </div>
+      </section>
+      </div>
+
+      <div class="page-section page-section--pastel">
+      <h2 class="section-title" id="panorama-locations" data-panorama-title="Panorama Locations">Panorama Locations</h2>
+      <section class="panorama-locations-section">
+        <div class="panorama-filters">
+          <label>Type de biens <select id="panorama-locations-type" multiple><option value="Maison">Maison</option><option value="Appartement">Appartement</option><option value="Local">Local</option></select></label>
+          <label>Catégorie surface <select id="panorama-locations-surface"><option value="">Toutes</option><option value="S1">S1</option><option value="S2">S2</option><option value="S3">S3</option><option value="S4">S4</option><option value="S5">S5</option></select></label>
+          <label>Nb pièces <select id="panorama-locations-pieces"><option value="">Toutes</option><option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option><option value="T4">T4</option><option value="T5">T5</option></select></label>
+        </div>
+        <div class="sub-sections">
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>Locations agrégées <span class="logement-annee">2024</span></h4>
+          <div class="zone-content">
+            <table class="table-locations">
+              <thead>
+                <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian</th><th>Loyer médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Loyer moyen</th><th>Loyer moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Maisons / Appart.</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>Castorus</h4>
+          <div class="zone-content">
+            <table class="table-locations">
+              <thead>
+                <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian</th><th>Loyer médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Loyer moyen</th><th>Loyer moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Maisons / Appart.</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>SeLoger</h4>
+          <div class="zone-content">
+            <table class="table-locations">
+              <thead>
+                <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian</th><th>Loyer médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Loyer moyen</th><th>Loyer moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Maisons / Appart.</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>LeBonCoin</h4>
+          <div class="zone-content">
+            <table class="table-locations">
+              <thead>
+                <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian</th><th>Loyer médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Loyer moyen</th><th>Loyer moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody>
+                <tr><td>Maisons / Appart.</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        </div>
+      </section>
+      </div>
+
+      <div class="page-section page-section--base">
+      <h2 class="section-title panorama-section-anchor" id="panorama-population" data-panorama-title="Panorama population">Panorama population</h2>
+      <div class="section-title-row panorama-tabs-row-only">
+        <div class="panorama-tabs" role="tablist">
+          <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
+          <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
+          <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
+          <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
+          <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
+          <a class="tab" href="#panorama-securite" role="tab" data-panorama="panorama-securite">Panorama sécurité</a>
+        </div>
+      </div>
+      <div class="zone-content">
+        <div class="population-grid">
+          <div class="population-card"><span class="lbl">Logements (RPLs)</span><div class="val">~ 185 000</div></div>
+          <div class="population-card"><span class="lbl">Répart. 1–2 pièces</span><div class="val">42 %</div></div>
+          <div class="population-card"><span class="lbl">Répart. 3+ pièces</span><div class="val">58 %</div></div>
+          <div class="population-card"><span class="lbl">Logts &lt; 1990</span><div class="val">35 %</div></div>
+        </div>
+        <div class="a-venir-grid">
+          <div class="a-venir"><strong>Population</strong><br>Effectifs, pyramide des âges — données à venir (Insee)</div>
+          <div class="a-venir"><strong>Revenus & emploi</strong><br>Revenu médian, chômage, CSP — données à venir (Insee)</div>
+        </div>
+      </div>
+      </div>
+
+      <div class="page-section page-section--pastel">
+      <h2 class="section-title panorama-section-anchor" id="panorama-infrastructures" data-panorama-title="Panorama infrastructures">Panorama infrastructures</h2>
+      <div class="section-title-row panorama-tabs-row-only">
+        <div class="panorama-tabs" role="tablist">
+          <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
+          <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
+          <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
+          <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
+          <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
+          <a class="tab" href="#panorama-securite" role="tab" data-panorama="panorama-securite">Panorama sécurité</a>
+        </div>
+      </div>
+      <div class="zone-content">
+        <div class="a-venir">Transports, équipements publics, fibre, etc. — contenu à venir.</div>
+      </div>
+      </div>
+
+      <div class="page-section page-section--base">
+      <h2 class="section-title panorama-section-anchor" id="panorama-risques" data-panorama-title="Panorama risques industriels & naturels">Panorama risques industriels & naturels</h2>
+      <div class="section-title-row panorama-tabs-row-only">
+        <div class="panorama-tabs" role="tablist">
+          <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
+          <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
+          <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
+          <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
+          <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
+          <a class="tab" href="#panorama-securite" role="tab" data-panorama="panorama-securite">Panorama sécurité</a>
+        </div>
+      </div>
+      <div class="zone-content">
+        <div class="a-venir">Risques naturels et technologiques (DDRM, sites Seveso, inondations, etc.) — contenu à venir.</div>
+      </div>
+
+      <h2 class="section-title panorama-section-anchor" id="panorama-securite" data-panorama-title="Panorama sécurité">Panorama sécurité</h2>
+      <div class="section-title-row panorama-tabs-row-only">
+        <div class="panorama-tabs" role="tablist">
+          <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
+          <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
+          <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
+          <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
+          <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
+          <a class="tab" href="#panorama-securite" role="tab" data-panorama="panorama-securite">Panorama sécurité</a>
+        </div>
+      </div>
+      <div class="zone-content">
+        <div class="a-venir">Délinquance, sécurité publique — contenu à venir.</div>
+      </div>
+      </div>
+
+      <p class="fiche-footer">Maquette graphique · Fiche commune investisseur · webapp-foncier</p>
+    </div>
+    <script>
+      (function () {
+        function initPanoramaTabs() {
+          var tabs = document.querySelectorAll(".panorama-tabs .tab");
+          var anchors = ["panorama-global", "panorama-logement", "panorama-population", "panorama-infrastructures", "panorama-risques", "panorama-securite"];
+          function setActiveTab(id) {
+            tabs.forEach(function (t) {
+              t.classList.toggle("active", t.getAttribute("data-panorama") === id);
+            });
+          }
+          function scrollToSection(id) {
+            var el = document.getElementById(id);
+            if (el) {
+              el.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+          }
+          tabs.forEach(function (tab) {
+            tab.addEventListener("click", function (e) {
+              e.preventDefault();
+              var id = tab.getAttribute("data-panorama");
+              if (id) {
+                setActiveTab(id);
+                scrollToSection(id);
+                if (history.replaceState) history.replaceState(null, "", "#" + id);
+              }
+            });
+          });
+          var hash = (window.location.hash || "").replace(/^#/, "");
+          if (anchors.indexOf(hash) !== -1) setActiveTab(hash);
+          else setActiveTab("panorama-global");
+        }
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", initPanoramaTabs);
+        } else {
+          initPanoramaTabs();
+        }
+      })();
+    </script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script>
+      (function () {
+        var defaultCenter = [46.603354, 1.888334];
+        var defaultRadiusM = 400000;
+        var map = L.map("map-panorama", { minZoom: 2, maxZoom: 18 });
+        L.tileLayer("https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&FORMAT=image/png&TILEMATRIX={z}&TILECOL={x}&TILEROW={y}", {
+          attribution: "&copy; <a href=\"https://www.ign.fr/\">IGN</a> &amp; <a href=\"https://cartes.gouv.fr/\">Géoplateforme</a>",
+          minZoom: 2,
+          maxZoom: 19
+        }).addTo(map);
+        var circle = L.circle(defaultCenter, { radius: defaultRadiusM, color: "#0077cc", fillColor: "#0077cc", fillOpacity: 0.1, weight: 2 }).addTo(map);
+        var marker = L.marker(defaultCenter).addTo(map);
+        map.fitBounds(L.latLngBounds(L.latLng(41.33, -5.14), L.latLng(51.09, 9.56)), { padding: [20, 20] });
+
+        window.updateFicheMapCenter = function (lat, lon, radiusM) {
+          var radius = radiusM != null ? radiusM : 2000;
+          var latlng = [lat, lon];
+          circle.setLatLng(latlng);
+          circle.setRadius(radius);
+          marker.setLatLng(latlng);
+          map.fitBounds(circle.getBounds(), { padding: [20, 20] });
+        };
+      })();
+    </script>
+    <script>
+      (function () {
+        // API sur le port 8000 : même origine si page servie par FastAPI, sinon localhost:8000 (file:// ou autre port)
+        const isLocal = typeof window !== "undefined" && (
+          window.location?.hostname === "localhost" ||
+          window.location?.hostname === "127.0.0.1" ||
+          window.location?.protocol === "file:"
+        );
+        const API_BASE = isLocal && window.location?.port !== "8000"
+          ? "http://localhost:8000"
+          : "";
+
+        function formatInt(n) {
+          const v = Number(n);
+          if (!Number.isFinite(v)) return "";
+          return v.toLocaleString("fr-FR");
+        }
+
+        function formatEuro(value) {
+          const v = Number(value);
+          if (!Number.isFinite(v)) return "";
+          return v.toLocaleString("fr-FR", {
+            style: "currency",
+            currency: "EUR",
+            maximumFractionDigits: 0
+          });
+        }
+
+        function formatEuroM2(value) {
+          const v = Number(value);
+          if (!Number.isFinite(v)) return "";
+          return v.toLocaleString("fr-FR", {
+            minimumFractionDigits: 1,
+            maximumFractionDigits: 1
+          }) + " €/m²";
+        }
+
+        /** Pourcentages au format xx.x % (toujours 1 décimale) */
+        function formatPct(value) {
+          const v = Number(value);
+          if (!Number.isFinite(v)) return "";
+          return v.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " %";
+        }
+
+        var WIKI_API = "https://fr.wikipedia.org/w/api.php";
+        var BAN_SEARCH = "https://api-adresse.data.gouv.fr/search/";
+
+        // Résout le nom commune (ex. ANGOULEME) vers le titre exact Wikipedia (ex. Angoulême) via l’API search.
+        function resolveWikipediaTitle(commune, callback) {
+          const q = (commune || "").trim();
+          if (!q) { if (callback) callback(null); return; }
+          const url = WIKI_API + "?action=query&list=search&srsearch=" + encodeURIComponent(q + " France") + "&srlimit=1&format=json&origin=*";
+          console.log("url", url);
+          fetch(url)
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              const list = data.query && data.query.search;
+              const title = list && list[0] && list[0].title ? list[0].title : null;
+              if (callback) callback(title || q);
+            })
+            .catch(function () { if (callback) callback(q); });
+        }
+
+        function getWikipediaTitleForCommune(commune, depNom, callback) {
+          resolveWikipediaTitle(commune, function (baseTitle) {
+            var full = baseTitle || commune;
+            if (depNom && full) {
+              var idx = full.indexOf(" (");
+              if (idx !== -1) {
+                var baseName = full.substring(0, idx).trim();
+                full = baseName + "_(" + depNom + ")";
+              }
+            }
+            if (callback) callback(full);
+          });
+        }
+
+        function loadWikipediaExtract(commune, depNom, callback) {
+          const q = (commune || "").trim();
+          if (!q) { if (callback) callback(null); return; }
+          getWikipediaTitleForCommune(commune, depNom, function (wikiTitle) {
+            const title = encodeURIComponent(String(wikiTitle).trim());
+            const url = WIKI_API + "?action=query&titles=" + title + "&prop=extracts&exintro=true&explaintext=true&exsentences=4&format=json&origin=*";
+            fetch(url)
+              .then(function (r) { return r.json(); })
+              .then(function (data) {
+                const pages = data.query && data.query.pages ? data.query.pages : {};
+                let extract = null;
+                for (const id in pages) {
+                  const page = pages[id];
+                  if (page && !page.missing && page.extract) {
+                    extract = String(page.extract).trim();
+                    break;
+                  }
+                }
+                if (callback) callback(extract);
+              })
+              .catch(function () { if (callback) callback(null); });
+          });
+        }
+
+        function loadWikipediaPhoto(commune, depNom) {
+          const el = document.getElementById("photo-commune");
+          if (!el || !commune) return;
+          getWikipediaTitleForCommune(commune, depNom, function (wikiTitle) {
+            const title = encodeURIComponent(String(wikiTitle).trim());
+            fetch(WIKI_API + "?action=query&titles=" + title + "&prop=pageimages&format=json&pithumbsize=500&piprop=thumbnail&origin=*")
+              .then(function (r) { return r.json(); })
+              .then(function (data) {
+                const pages = data.query && data.query.pages ? data.query.pages : {};
+                let src = null;
+                for (const id in pages) {
+                  const page = pages[id];
+                  if (page && !page.missing && page.thumbnail && page.thumbnail.source) {
+                    src = String(page.thumbnail.source).trim();
+                    if (src.indexOf("http") === 0) break;
+                  }
+                }
+                if (src) {
+                  el.textContent = "";
+                  el.classList.add("photo-loaded");
+                  const img = document.createElement("img");
+                  img.alt = commune;
+                  img.loading = "lazy";
+                  el.appendChild(img);
+                  img.src = src;
+                }
+              })
+              .catch(function () {});
+          });
+        }
+
+        function geocodeCommune(code_postal, commune, callback) {
+          const q = (code_postal || "").trim() + " " + (commune || "").trim();
+          if (!q.trim()) { if (callback) callback(null); return; }
+          fetch(BAN_SEARCH + "?q=" + encodeURIComponent(q) + "&limit=1")
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              const features = data.features;
+              if (features && features[0] && features[0].geometry && features[0].geometry.coordinates) {
+                const c = features[0].geometry.coordinates;
+                if (callback) callback({ lon: c[0], lat: c[1] });
+              } else if (callback) callback(null);
+            })
+            .catch(function () { if (callback) callback(null); });
+        }
+
+        function updateNavLinksFromParams() {
+          const sp = new URLSearchParams(window.location.search || "");
+          const code_dept = sp.get("code_dept");
+          const code_postal = sp.get("code_postal");
+          const commune = sp.get("commune");
+          const navVentes = document.getElementById("nav-ventes");
+          const navStats = document.getElementById("nav-stats");
+          if (code_dept && code_postal && commune) {
+            if (navStats) navStats.href = "stats_ventes.html?code_dept=" + encodeURIComponent(code_dept) + "&code_postal=" + encodeURIComponent(code_postal) + "&commune=" + encodeURIComponent(commune);
+            if (navVentes) navVentes.href = "recherche_ventes.html?commune=" + encodeURIComponent(commune) + "&code_postal=" + encodeURIComponent(code_postal) + "&code_dept=" + encodeURIComponent(code_dept);
+          }
+          // Ajouter " - <Commune>" aux titres des sections Panorama
+          document.querySelectorAll("[data-panorama-title]").forEach(function (el) {
+            var base = el.getAttribute("data-panorama-title") || "";
+            el.textContent = base + (commune ? " - " + commune : "");
+          });
+        }
+
+        function goToCommune(item) {
+          if (!item || !item.code_dept || !item.code_postal || !item.commune) return;
+          const url = "fiche_commune.html?code_dept=" + encodeURIComponent(item.code_dept) + "&code_postal=" + encodeURIComponent(item.code_postal) + "&commune=" + encodeURIComponent(item.commune);
+          window.location.href = url;
+        }
+
+        function initCommuneSearch() {
+          const input = document.getElementById("commune-search");
+          const listEl = document.getElementById("commune-suggestions");
+          const btn = document.getElementById("btn-afficher-commune");
+          if (!input || !listEl || !btn) return;
+
+          let suggestions = [];
+          let selectedIndex = -1;
+          let debounceTimer = null;
+
+          function hideSuggestions() {
+            listEl.innerHTML = "";
+            listEl.hidden = true;
+            listEl.setAttribute("aria-expanded", "false");
+            selectedIndex = -1;
+          }
+
+          function showSuggestions(items) {
+            suggestions = items || [];
+            selectedIndex = -1;
+            listEl.innerHTML = "";
+            if (suggestions.length === 0) {
+              listEl.hidden = true;
+              listEl.setAttribute("aria-expanded", "false");
+              return;
+            }
+            suggestions.forEach(function (item, i) {
+              const li = document.createElement("li");
+              li.role = "option";
+              li.id = "commune-opt-" + i;
+              li.textContent = item.commune + " (" + item.code_postal + ")";
+              li.dataset.index = String(i);
+              li.addEventListener("click", function (e) {
+                e.preventDefault();
+                goToCommune(suggestions[i]);
+              });
+              listEl.appendChild(li);
+            });
+            listEl.hidden = false;
+            listEl.setAttribute("aria-expanded", "true");
+          }
+
+          function fetchSuggestions(q) {
+            const qq = (q || "").trim();
+            if (qq.length < 2) {
+              hideSuggestions();
+              return;
+            }
+            fetch(API_BASE + "/api/communes?q=" + encodeURIComponent(qq))
+              .then(function (r) { return r.json(); })
+              .then(function (data) {
+                showSuggestions(Array.isArray(data) ? data : []);
+              })
+              .catch(function () { hideSuggestions(); });
+          }
+
+          function tryGo() {
+            const q = (input.value || "").trim();
+            if (!q) return;
+            if (selectedIndex >= 0 && suggestions[selectedIndex]) {
+              goToCommune(suggestions[selectedIndex]);
+              return;
+            }
+            if (suggestions.length === 1) {
+              goToCommune(suggestions[0]);
+              return;
+            }
+            if (suggestions.length > 0) {
+              goToCommune(suggestions[0]);
+              return;
+            }
+            if (q.length >= 2) {
+              fetch(API_BASE + "/api/communes?q=" + encodeURIComponent(q))
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                  const arr = Array.isArray(data) ? data : [];
+                  if (arr.length === 1) goToCommune(arr[0]);
+                  else if (arr.length > 1) showSuggestions(arr);
+                })
+                .catch(function () {});
+            }
+          }
+
+          input.addEventListener("input", function () {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(function () { fetchSuggestions(input.value); }, 200);
+          });
+
+          input.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") {
+              hideSuggestions();
+              input.blur();
+              return;
+            }
+            if (e.key === "Enter") {
+              e.preventDefault();
+              tryGo();
+              return;
+            }
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              if (suggestions.length === 0) return;
+              selectedIndex = (selectedIndex + 1) % suggestions.length;
+              listEl.querySelectorAll("li").forEach(function (el, i) {
+                el.setAttribute("aria-selected", i === selectedIndex);
+              });
+              var opt = document.getElementById("commune-opt-" + selectedIndex);
+              if (opt) opt.scrollIntoView({ block: "nearest" });
+              return;
+            }
+            if (e.key === "ArrowUp") {
+              e.preventDefault();
+              if (suggestions.length === 0) return;
+              selectedIndex = selectedIndex <= 0 ? suggestions.length - 1 : selectedIndex - 1;
+              listEl.querySelectorAll("li").forEach(function (el, i) {
+                el.setAttribute("aria-selected", i === selectedIndex);
+              });
+              var opt = document.getElementById("commune-opt-" + selectedIndex);
+              if (opt) opt.scrollIntoView({ block: "nearest" });
+            }
+          });
+
+          input.addEventListener("focus", function () {
+            if (suggestions.length > 0) showSuggestions(suggestions);
+          });
+
+          btn.addEventListener("click", function () {
+            tryGo();
+          });
+
+          document.addEventListener("click", function (e) {
+            if (input.contains(e.target) || listEl.contains(e.target) || btn.contains(e.target)) return;
+            hideSuggestions();
+          });
+        }
+
+        async function loadCommuneFiche() {
+          const sp = new URLSearchParams(window.location.search || "");
+          const code_dept = sp.get("code_dept");
+          const code_postal = sp.get("code_postal");
+          const commune = sp.get("commune");
+
+          if (!code_dept || !code_postal || !commune) {
+            return;
+          }
+
+          var depNom = null;
+          try {
+            const geoRes = await fetch(API_BASE + "/api/geo");
+            if (geoRes.ok) {
+              const geo = await geoRes.json();
+              const depts = geo.departements || [];
+              const dep = depts.find(function (d) { return d.code === code_dept; });
+              depNom = dep ? dep.nom : null;
+            }
+          } catch (e) {}
+          loadWikipediaPhoto(commune, depNom);
+          loadWikipediaExtract(commune, depNom, function (extract) {
+            const descEl = document.querySelector(".fiche-desc");
+            if (descEl && extract) descEl.textContent = extract;
+          });
+          geocodeCommune(code_postal, commune, function (coords) {
+            if (coords && typeof window.updateFicheMapCenter === "function") {
+              window.updateFicheMapCenter(coords.lat, coords.lon, 2000);
+            }
+          });
+
+          const qs = new URLSearchParams({
+            niveau: "commune",
+            code_dept: code_dept,
+            code_postal: code_postal,
+            commune: commune
+          });
+
+          try {
+            const res = await fetch(`${API_BASE}/api/stats?${qs.toString()}`);
+            if (!res.ok) {
+              return;
+            }
+            const data = await res.json();
+            const g = data.global || {};
+            const displayName = data.nom_standard || commune;
+            const codesPostauxDisplay = data.codes_postaux_display != null ? data.codes_postaux_display : (code_postal || "—");
+
+            const titleEl = document.querySelector(".title-commune");
+            if (titleEl) {
+              titleEl.textContent = "Fiche commune — " + displayName;
+            }
+
+            const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+            const identNom = document.getElementById("fiche-identite-nom");
+            if (identNom) identNom.innerHTML = "<strong>" + displayName + "</strong> — " + codesPostauxDisplay;
+            set("fiche-identite-insee", data.code_insee != null ? "Code INSEE : " + data.code_insee : "Code INSEE : —");
+            const depNom = data.dep_nom != null ? String(data.dep_nom) : "";
+            const depCode = data.dep_code != null ? String(data.dep_code) : code_dept || "";
+            const regNom = data.reg_nom != null ? String(data.reg_nom) : "";
+            set("fiche-identite-dept-reg", [depNom || depCode ? "Département : " + (depNom ? depNom + " (" + depCode + ")" : depCode) : "", regNom ? "Région : " + regNom : ""].filter(Boolean).join(" · ") || "—");
+            set("fiche-identite-epci", "EPCI : " + (data.epci_nom != null && data.epci_nom !== "" ? data.epci_nom : "—"));
+            if (data.population != null) set("fiche-population", formatInt(data.population));
+            else set("fiche-population", "—");
+            if (g.prix_moyen != null) set("fiche-prix-moyen", formatEuro(g.prix_moyen));
+            else set("fiche-prix-moyen", "—");
+            if (data.loypredm2 != null) set("fiche-loyer-m2", formatEuroM2(data.loypredm2));
+            else set("fiche-loyer-m2", "—");
+            var rentaBrute = "";
+            if (data.loypredm2 != null && g.prix_m2_moyenne != null && g.prix_m2_moyenne > 0) {
+              var renta = (data.loypredm2 * 12 / g.prix_m2_moyenne) * 100;
+              rentaBrute = formatPct(renta);
+            }
+            set("fiche-renta-brute", rentaBrute || "—");
+
+            // Tableau Ventes (ligne Total maisons/appartements)
+            if (g.nb_ventes != null) set("ventes-total-nb", formatInt(g.nb_ventes));
+            if (g.prix_median != null) set("ventes-total-prix", formatEuro(g.prix_median));
+            if (g.prix_m2_mediane != null) set("ventes-total-prixm2", formatEuroM2(g.prix_m2_mediane));
+            if (g.surface_mediane != null) set("ventes-total-surf", formatInt(g.surface_mediane) + " m²");
+
+            // Panorama Logement : parc, ventes, locations, rentabilités
+            try {
+              const flRes = await fetch(API_BASE + "/api/fiche-logement?code_dept=" + encodeURIComponent(code_dept) + "&code_postal=" + encodeURIComponent(code_postal) + "&commune=" + encodeURIComponent(commune));
+              if (!flRes.ok) return;
+              const fl = await flRes.json();
+              const setFl = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+              // Années dans les titres (Parc, Ventes, Locations)
+              if (fl.parc && fl.parc.annee) {
+                document.querySelectorAll(".parc-logement-block .logement-annee").forEach(function (el) { el.textContent = fl.parc.annee; });
+                setFl("parc-maisons", fl.parc.nb_maisons != null ? formatInt(fl.parc.nb_maisons) : "—");
+                setFl("parc-appts", fl.parc.nb_apparts != null ? formatInt(fl.parc.nb_apparts) : "—");
+                setFl("parc-ratio", fl.parc.ratio_proprietaires != null ? formatPct(fl.parc.ratio_proprietaires) : "—");
+              }
+              if (fl.ventes && fl.ventes.annee) {
+                document.querySelectorAll(".logement-block .title-row .logement-annee").forEach(function (el, i) { if (i === 0) el.textContent = fl.ventes.annee; });
+                const ventesLignes = fl.ventes.lignes || [];
+                const ventesIds = ["ventes-total", "ventes-maisons", "ventes-appts"];
+                ventesIds.forEach(function (prefix, idx) {
+                  const row = ventesLignes[idx];
+                  if (!row) return;
+                  setFl(prefix + "-nb", row.nb_ventes != null ? formatInt(row.nb_ventes) : "—");
+                  setFl(prefix + "-prix", row.prix_median != null ? formatEuro(row.prix_median) : "—");
+                  setFl(prefix + "-prixm2", row.prix_m2_mediane != null ? formatEuroM2(row.prix_m2_mediane) : "—");
+                  setFl(prefix + "-surf", row.surface_mediane != null ? formatInt(row.surface_mediane) + " m²" : "—");
+                  setFl(prefix + "-prixmoy", row.prix_moyen != null ? formatEuro(row.prix_moyen) : "—");
+                  setFl(prefix + "-prixm2moy", row.prix_m2_moyenne != null ? formatEuroM2(row.prix_m2_moyenne) : "—");
+                  setFl(prefix + "-surfmoy", row.surface_moyenne != null ? formatInt(row.surface_moyenne) + " m²" : "—");
+                });
+              }
+              if (fl.locations && fl.locations.annee) {
+                const logementBlocks = document.querySelectorAll(".logement-block");
+                if (logementBlocks[1]) {
+                  const span = logementBlocks[1].querySelector(".title-row .logement-annee");
+                  if (span) span.textContent = fl.locations.annee;
+                }
+                const locLignes = fl.locations.lignes || [];
+                const locRows = [
+                  { prefix: "loc-total", key: "Maisons/Appart." },
+                  { prefix: "loc-maisons", key: "Maisons" },
+                  { prefix: "loc-appts", key: "Appartements" },
+                  { prefix: "loc-appts12", key: "Apparts 1/2 pièces" },
+                  { prefix: "loc-appts3p", key: "Apparts. 3p+" }
+                ];
+                locRows.forEach(function (r) {
+                  const row = locLignes.find(function (l) { return l.type === r.key; });
+                  if (!row) return;
+                  setFl(r.prefix + "-nb", row.nb_loyers != null ? formatInt(row.nb_loyers) : "—");
+                  setFl(r.prefix + "-loyerm2", row.loyer_med_m2 != null ? formatEuroM2(row.loyer_med_m2) : "—");
+                  setFl(r.prefix + "-loyerq1", row.loyer_q1_m2 != null ? formatEuroM2(row.loyer_q1_m2) : "—");
+                  setFl(r.prefix + "-loyerq3", row.loyer_q3_m2 != null ? formatEuroM2(row.loyer_q3_m2) : "—");
+                });
+              }
+              // Fiscalité locale
+              const fiscaliteTbody = document.getElementById("fiscalite-tbody");
+              if (fiscaliteTbody && fl.fiscalite && fl.fiscalite.length > 0) {
+                fiscaliteTbody.innerHTML = fl.fiscalite.map(function (f) {
+                  var sim = f.taxe_fonciere_simulee != null ? formatEuro(f.taxe_fonciere_simulee) : "—";
+                  var tfb = f.taux_tfb != null ? formatPct(f.taux_tfb) : "—";
+                  var teom = f.taux_teom != null ? formatPct(f.taux_teom) : "—";
+                  return "<tr><td>" + f.annee + "</td><td class=\"col-sep\"></td><td>" + sim + "</td><td>" + tfb + "</td><td>" + teom + "</td></tr>";
+                }).join("");
+              } else if (fiscaliteTbody) {
+                fiscaliteTbody.innerHTML = "<tr><td colspan=\"5\">—</td></tr>";
+              }
+              // Rentabilités médianes (Type, Rentabilité brute, Estimation Charges, Rentabilité HC, Rentabilité nette)
+              const tbodyMed = document.getElementById("rentabilite-mediane-body");
+              if (tbodyMed && fl.rentabilite_mediane && fl.rentabilite_mediane.lignes) {
+                tbodyMed.innerHTML = fl.rentabilite_mediane.lignes.map(function (r) {
+                  var ch = r.charges_mediane != null ? formatEuro(r.charges_mediane) : "—";
+                  return "<tr><td>" + (r.type_bien || "—") + "</td><td>" + (r.renta_brute != null ? formatPct(r.renta_brute) : "—") + "</td><td>" + ch + "</td><td>" + (r.renta_hc != null ? formatPct(r.renta_hc) : "—") + "</td><td>" + (r.renta_nette != null ? formatPct(r.renta_nette) : "—") + "</td></tr>";
+                }).join("");
+              }
+              // Rentabilités moyennes (mêmes colonnes, sans colonne Taxe foncière)
+              const tbodyMoy = document.getElementById("rentabilite-moyenne-body");
+              if (tbodyMoy && fl.rentabilite_moyenne && fl.rentabilite_moyenne.lignes) {
+                tbodyMoy.innerHTML = fl.rentabilite_moyenne.lignes.map(function (r) {
+                  var ch = r.charges_mediane != null ? formatEuro(r.charges_mediane) : "—";
+                  return "<tr><td>" + (r.type_bien || "—") + "</td><td>" + (r.renta_brute != null ? formatPct(r.renta_brute) : "—") + "</td><td>" + ch + "</td><td>" + (r.renta_hc != null ? formatPct(r.renta_hc) : "—") + "</td><td>" + (r.renta_nette != null ? formatPct(r.renta_nette) : "—") + "</td></tr>";
+                }).join("");
+              }
+            } catch (e) {
+              console.error("Erreur chargement fiche logement", e);
+            }
+          } catch (e) {
+            console.error("Erreur chargement fiche commune", e);
+          }
+        }
+
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", function () {
+            updateNavLinksFromParams();
+            initCommuneSearch();
+            loadCommuneFiche();
+          });
+        } else {
+          updateNavLinksFromParams();
+          initCommuneSearch();
+          loadCommuneFiche();
+        }
+      })();
+    </script>
+  </body>
+</html>
