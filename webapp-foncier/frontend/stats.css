@@ -256,6 +256,41 @@
   flex-shrink: 0;
 }
 
+/* Autocomplétion commune (même apparence que fiche_commune / autres pages) */
+.stats-form .search-input-wrap {
+  position: relative;
+}
+.stats-form .commune-suggestions {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  margin-top: 2px;
+  padding: 0;
+  margin-left: 0;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 0.4rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  max-height: 220px;
+  overflow-y: auto;
+  z-index: 100;
+}
+.stats-form .commune-suggestions li {
+  padding: 0.4rem 0.5rem;
+  cursor: pointer;
+  font-size: 0.9rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+.stats-form .commune-suggestions li:last-child {
+  border-bottom: none;
+}
+.stats-form .commune-suggestions li:hover,
+.stats-form .commune-suggestions li[aria-selected="true"] {
+  background: #eff6ff;
+}
+
 /* Bloc lieu unique vs onglets Lieu 1 / Lieu 2 */
 .stats-place-block {
   display: block;

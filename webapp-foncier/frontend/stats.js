@@ -2,11 +2,16 @@
 // Variables Globales — À modifier ici pour changer d’API, limites, délais, couleurs
 // =============================================================================
 
-// — API backend (vide = même origine ; file:// → localhost:8000)
-const API_BASE =
-  typeof window !== "undefined" && window.location?.protocol === "file:"
-    ? "http://localhost:8000"
-    : "";
+// — API backend : localhost:8000 si page en file:// ou servie depuis un autre port (ex. 8765)
+const API_BASE = (function () {
+  if (typeof window === "undefined" || !window.location) return "";
+  const p = window.location.protocol;
+  const host = window.location.hostname || "";
+  const port = window.location.port || (p === "https:" ? "443" : "80");
+  const isLocal = host === "localhost" || host === "127.0.0.1";
+  if (p === "file:" || (isLocal && port !== "8000")) return "http://localhost:8000";
+  return "";
+})();
 const API_PATH_GEO = "/api/geo";
 const API_PATH_PERIOD = "/api/period";
 const API_PATH_COMMUNES = "/api/communes";
@@ -183,8 +188,13 @@ function buildTitre(p, built, side) {
   const deptLibelle = geo.deptNomByCode[code_dept] ? `${code_dept} ${geo.deptNomByCode[code_dept]}` : code_dept;
   if (built.niveau === "region") return regionNom || "Région";
   if (built.niveau === "department") return regionNom ? `${regionNom} / ${deptLibelle}` : deptLibelle;
+  const normCommune = normalizeNameCanonical(commune || "");
   const postaux = list
-    .filter((c) => c.commune === commune && c.code_dept === code_dept)
+    .filter(
+      (c) =>
+        c.code_dept === code_dept &&
+        normalizeNameCanonical((c.commune || "").trim()) === normCommune
+    )
     .map((c) => c.code_postal)
     .filter((v, i, a) => a.indexOf(v) === i)
     .sort();
@@ -605,7 +615,7 @@ async function loadGeo() {
   geo = await res.json();
   // Map code → nom pour l’affichage (source : ref_departements en base)
   geo.deptNomByCode = Object.fromEntries((geo.departements || []).map((d) => [d.code, d.nom]));
-  const regionOpts = "<option value=''>— Choisir une région —</option>" + geo.regions.map((r) => `<option value="${r.id}">${escapeHtml(r.nom)}</option>`).join("");
+  const regionOpts = "<option value=''>— Choisir une région —</option>" + (geo.regions || []).map((r) => `<option value="${r.id}">${escapeHtml(r.nom)}</option>`).join("");
   ["region-select", "region-1-select", "region-2-select", "region-3-select", "region-4-select"].forEach((id) => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = regionOpts;
@@ -626,20 +636,27 @@ async function loadPeriod() {
   updatePeriodConstraints();
 }
 
+/** Remplit le select par chunks (rAF). Retourne une Promise résolue quand toutes les options sont en DOM. */
 function fillCommuneOptionsChunked(communeSelect, list, startIndex) {
-  const end = Math.min(startIndex + COMMUNES_CHUNK_SIZE, list.length);
-  const fragment = document.createDocumentFragment();
-  for (let i = startIndex; i < end; i++) {
-    const c = list[i];
-    const opt = document.createElement("option");
-    opt.value = i;
-    opt.textContent = `${c.commune} (${c.code_postal})`;
-    fragment.appendChild(opt);
-  }
-  communeSelect.appendChild(fragment);
-  if (end < list.length) {
-    requestAnimationFrame(() => fillCommuneOptionsChunked(communeSelect, list, end));
-  }
+  return new Promise((resolve) => {
+    const end = Math.min(startIndex + COMMUNES_CHUNK_SIZE, list.length);
+    const fragment = document.createDocumentFragment();
+    for (let i = startIndex; i < end; i++) {
+      const c = list[i];
+      const opt = document.createElement("option");
+      opt.value = i;
+      opt.textContent = `${c.commune} (${c.code_postal})`;
+      fragment.appendChild(opt);
+    }
+    communeSelect.appendChild(fragment);
+    if (end < list.length) {
+      requestAnimationFrame(() => {
+        fillCommuneOptionsChunked(communeSelect, list, end).then(resolve);
+      });
+    } else {
+      resolve();
+    }
+  });
 }
 
 function getCommuneSelectId(suffix) {
@@ -677,7 +694,24 @@ async function loadCommunes(codeDept, suffix) {
     communesList = list.slice(0);
     if (!codeDept) allCommunesList = list.slice(0);
   }
-  fillCommuneOptionsChunked(communeSelect, list, 0);
+  await fillCommuneOptionsChunked(communeSelect, list, 0);
+}
+
+/** Réinitialise la liste des communes à l’état vide (placeholder uniquement). À appeler après changement de région. */
+function resetCommuneSelect(suffix) {
+  const s = String(suffix ?? "");
+  const selectId = getCommuneSelectId(s);
+  const communeSelect = document.getElementById(selectId);
+  if (!communeSelect) return;
+  communeSelect.innerHTML = "";
+  const placeholder = document.createElement("option");
+  placeholder.value = "";
+  placeholder.textContent = "— Choisir une commune —";
+  communeSelect.appendChild(placeholder);
+  if (s === "2") communesList2 = [];
+  else if (s === "3") communesList3 = [];
+  else if (s === "4") communesList4 = [];
+  else communesList = [];
 }
 
 function restoreAllCommunesInDropdown(suffix) {
@@ -699,7 +733,26 @@ function restoreAllCommunesInDropdown(suffix) {
   fillCommuneOptionsChunked(communeSelect, list, 0);
 }
 
-/** Normalise une chaîne pour la recherche : minuscules, sans accents, tirets et espaces multiples ramenés à un espace. */
+/**
+ * Forme canonique pour comparaison de noms (communes, etc.), alignée sur le backend _normalize_name_canonical :
+ * uniquement lettres A-Z majuscules (désaccentuer, supprimer apostrophes, parenthèses finales, tout hors A-Z).
+ * À utiliser pour toute comparaison avec des noms issus de la base (listes régions/départements/communes).
+ */
+function normalizeNameCanonical(s) {
+  if (s == null || typeof s !== "string") return "";
+  let str = s.trim();
+  if (!str) return "";
+  const APOSTROPHE_VARIANTS = "\u2019\u02bc\u02b9\u2032";
+  str = str.replace(/\s*\([^)]*\)\s*$/, "").trim();
+  for (let i = 0; i < APOSTROPHE_VARIANTS.length; i++) str = str.split(APOSTROPHE_VARIANTS[i]).join("");
+  str = str.replace(/'/g, "");
+  const nfd = str.normalize("NFD");
+  const sansAccent = nfd.replace(/\p{Mn}/gu, "");
+  const lettersOnly = sansAccent.replace(/[^A-Za-z]/g, "");
+  return lettersOnly.toUpperCase();
+}
+
+/** Normalise une chaîne pour la recherche (affichage/filtre) : minuscules, sans accents, espaces. */
 function normalizeForCommuneSearch(str) {
   if (str == null || typeof str !== "string") return "";
   const s = str
@@ -713,27 +766,34 @@ function normalizeForCommuneSearch(str) {
 
 function getCommuneListForInputId(inputId) {
   if (!inputId) return [];
-  if (inputId === "commune-select" || inputId === "commune-1-select") return communesList || [];
-  if (inputId === "commune-2-select") return communesList2 || [];
-  if (inputId === "commune-3-select") return communesList3 || [];
-  if (inputId === "commune-4-select") return communesList4 || [];
+  if (inputId === "commune-search" || inputId === "commune-select" || inputId === "commune-1-select") return communesList || [];
+  if (inputId === "commune-2-search" || inputId === "commune-2-select") return communesList2 || [];
+  if (inputId === "commune-3-search" || inputId === "commune-3-select") return communesList3 || [];
+  if (inputId === "commune-4-search" || inputId === "commune-4-select") return communesList4 || [];
   return [];
 }
 
 function showCommuneAutocomplete(input, dropdown, dataEl, list) {
   const rawQuery = (input.value || "").trim();
-  const q = normalizeForCommuneSearch(rawQuery);
-  const filtered = !q
+  // Logique similaire à /api/communes pour la partie "nom" :
+  // - saisie sans '%' en début → recherche par préfixe sur le nom normalisé
+  // - saisie commençant par '%' → recherche "contient" sur le nom normalisé
+  // Pour le code postal, on reste sur une recherche "contient" (fragment).
+  const qCanonical = normalizeNameCanonical(rawQuery);
+  const startsWithPercent = rawQuery.startsWith("%");
+  const termCanonical = startsWithPercent ? normalizeNameCanonical(rawQuery.slice(1)) : qCanonical;
+  const filtered = !rawQuery.trim()
     ? list.slice(0, COMMUNE_AUTOCOMPLETE_MAX)
     : list.filter((c) => {
-        const normCommune = normalizeForCommuneSearch(c.commune);
+        const normCommune = normalizeNameCanonical(c.commune || "");
         const normPostal = String(c.code_postal || "").replace(/\s/g, "");
-        const queryNoSpace = q.replace(/\s/g, "");
-        return (
-          (normCommune && normCommune.includes(q)) ||
-          (normCommune && normCommune.replace(/\s/g, "").includes(queryNoSpace)) ||
-          (normPostal && normPostal.includes(queryNoSpace))
-        );
+        const queryNoSpace = termCanonical.replace(/\s/g, "");
+        if (!normCommune && !normPostal) return false;
+        const communeMatch = startsWithPercent
+          ? normCommune && normCommune.includes(termCanonical)
+          : normCommune && normCommune.startsWith(termCanonical);
+        const cpMatch = normPostal && normPostal.includes(queryNoSpace);
+        return communeMatch || cpMatch;
       }).slice(0, COMMUNE_AUTOCOMPLETE_MAX);
   dropdown.innerHTML = "";
   dropdown.removeAttribute("aria-hidden");
@@ -741,7 +801,7 @@ function showCommuneAutocomplete(input, dropdown, dataEl, list) {
   if (filtered.length === 0) {
     const empty = document.createElement("div");
     empty.className = "stats-commune-option-empty";
-    empty.textContent = q ? "Aucune commune trouvée" : "Choisissez un département ou tapez pour rechercher";
+    empty.textContent = rawQuery.trim() ? "Aucune commune trouvée" : "Choisissez un département ou tapez pour rechercher";
     dropdown.appendChild(empty);
   } else {
     filtered.forEach((c) => {
@@ -757,7 +817,8 @@ function showCommuneAutocomplete(input, dropdown, dataEl, list) {
   }
 }
 
-function initCommuneAutocomplete(inputId, dataId, dropdownId, placeOrSingle) {
+/** Autocomplétion locale (liste en mémoire) pour les selects commune par lieu — ne pas confondre avec window.initCommuneAutocomplete (communes_autocomplete.js). */
+function initStatsCommuneDropdown(inputId, dataId, dropdownId, placeOrSingle) {
   const input = document.getElementById(inputId);
   const dataEl = document.getElementById(dataId);
   const dropdown = document.getElementById(dropdownId);
@@ -840,8 +901,10 @@ function loadCommunesInBackground() {
     })
     .then((list) => {
       allCommunesList = list.slice(0);
-      communesList = list.slice(0);
+      // Ne pas écraser communesList si un département est déjà choisi (ex. init depuis URL) :
+      // communesList doit rester la liste du département courant, sinon l’index du select pointe sur la mauvaise commune.
       if (document.getElementById("dept-select").value) return;
+      communesList = list.slice(0);
       restoreAllCommunesInDropdown("");
     })
     .catch(() => {
@@ -865,6 +928,47 @@ function getCommuneValue() {
   if (!c) return { code_dept: null, code_postal: null, commune: null };
   return { code_dept: c.code_dept || null, code_postal: c.code_postal || null, commune: c.commune || null };
 }
+
+/**
+ * Applique une commune choisie via l'autocomplétion : met à jour région, département,
+ * charge les communes du département puis sélectionne la commune dans le select.
+ * À appeler depuis onSelect de l'autocomplétion (stats_ventes, mode simple).
+ */
+function applyCommuneFromAutocomplete(item) {
+  if (!item || !item.code_dept) return;
+  const regionId = getRegionForDepartment(item.code_dept);
+  const regionSelect = document.getElementById("region-select");
+  const deptSelect = document.getElementById("dept-select");
+  const communeSelect = document.getElementById("commune-select");
+  const communeSearch = document.getElementById("commune-search");
+  if (regionSelect && regionId) {
+    regionSelect.value = regionId;
+    fillDepartmentSelect(regionId, "dept-select");
+  }
+  if (deptSelect) deptSelect.value = item.code_dept;
+  loadCommunes(item.code_dept).then(() => {
+    const list = communesList || [];
+    const normCommune = normalizeNameCanonical((item.commune || "").trim());
+    const idx = list.findIndex(
+      (c) =>
+        String(c.code_postal || "").trim() === String(item.code_postal || "").trim() &&
+        normalizeNameCanonical((c.commune || "").trim()) === normCommune
+    );
+    if (communeSelect && idx >= 0) communeSelect.value = String(idx);
+    if (communeSearch) communeSearch.value = "";
+    // Mettre à jour l'URL avec le contexte commune (code_dept, code_postal, commune)
+    const baseUrl = window.location.origin + window.location.pathname;
+    const params = new URLSearchParams();
+    params.set("code_dept", item.code_dept);
+    if (item.code_postal) params.set("code_postal", String(item.code_postal));
+    if (item.commune) params.set("commune", item.commune);
+    window.history.replaceState({}, document.title, baseUrl + "?" + params.toString());
+    // Mettre à jour les boutons de navigation en fonction de la nouvelle commune
+    updateFicheCommuneLink();
+    if (typeof refreshStatsIfResultsVisible === "function") refreshStatsIfResultsVisible();
+  });
+}
+if (typeof window !== "undefined") window.applyCommuneFromAutocomplete = applyCommuneFromAutocomplete;
 
 function getCommuneValueForPlace(place) {
   const p = typeof place === "number" ? place : parseInt(place, 10);
@@ -1073,11 +1177,17 @@ async function submitStats() {
   destroyChartsForSide(2);
   try {
     const res = await fetch(`${API_BASE}/api/stats?${params}`);
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
-      throw new Error(err.detail || res.statusText);
+    const text = await res.text();
+    let data;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (_) {
+      data = null;
     }
-    const data = await res.json();
+    if (!res.ok) {
+      const err = data && typeof data === "object" ? data : {};
+      throw new Error(err.detail || res.statusText || text || "Erreur serveur");
+    }
     document.getElementById("stats-loading").setAttribute("aria-hidden", "true");
     const g = data.global || {};
     const series = data.series || [];
@@ -1149,6 +1259,12 @@ async function submitStats() {
     document.getElementById("stats-loading").setAttribute("aria-hidden", "true");
     alert("Erreur : " + (e.message || String(e)));
   }
+}
+
+// Exécute les statistiques avec les critères actuellement saisis.
+// Utilisé au chargement initial quand l'URL pré-remplit les paramètres (initFromUrlParams).
+function runStats() {
+  submitStats();
 }
 
 function switchTab(tabId) {
@@ -1309,7 +1425,7 @@ document.getElementById("region-select").addEventListener("change", () => {
   const regionId = document.getElementById("region-select").value;
   fillDepartmentSelect(regionId || null);
   document.getElementById("dept-select").value = "";
-  restoreAllCommunesInDropdown();
+  resetCommuneSelect();
   refreshStatsIfResultsVisible();
 });
 
@@ -1345,7 +1461,7 @@ function bindPlaceSelects(place) {
     const regionVal = this.value;
     fillDepartmentSelect(regionVal || null, deptId);
     document.getElementById(deptId).value = "";
-    restoreAllCommunesInDropdown(s);
+    resetCommuneSelect(s);
     refreshStatsIfResultsVisible();
   });
   document.getElementById(deptId)?.addEventListener("change", function () {
@@ -1625,9 +1741,9 @@ document.getElementById("stats-reset-btn").addEventListener("click", () => {
   document.getElementById("region-select").value = "";
   document.getElementById("dept-select").value = "";
   const communeInput = document.getElementById("commune-select");
-  const communeData = document.getElementById("commune-data");
+  const communeSearch = document.getElementById("commune-search");
   if (communeInput) communeInput.value = "";
-  if (communeData) communeData.value = "";
+  if (communeSearch) communeSearch.value = "";
   fillDepartmentSelect(null);
   restoreAllCommunesInDropdown("");
   if (compareMode) {
@@ -1643,6 +1759,7 @@ document.getElementById("stats-reset-btn").addEventListener("click", () => {
     lastCompareDataForSingle = null;
     lastCompareData = [];
     lastCompareTitre = [];
+
     // Sortir du mode comparaison : ne conserver que le formulaire simple (un seul « lieu »)
     setCompareMode(false);
   }
@@ -1678,6 +1795,10 @@ document.getElementById("stats-reset-btn").addEventListener("click", () => {
     toast.removeAttribute("data-visible");
     toast.textContent = "";
   }
+  // Réinitialiser l'URL et les boutons de navigation (Fiche commune / Recherche par adresse sans flèche)
+  const baseUrl = window.location.origin + window.location.pathname;
+  window.history.replaceState({}, document.title, baseUrl);
+  updateFicheCommuneLink();
 });
 
 document.getElementById("stats-controls").addEventListener("keydown", (e) => {
@@ -1807,9 +1928,47 @@ document.getElementById("stats-results").addEventListener("input", (e) => {
   }
 });
 
+/** Si l'URL contient code_dept, code_postal et commune (ex. depuis fiche commune), pré-remplit les critères et retourne true pour lancer runStats. */
+function initFromUrlParams() {
+  const params = new URLSearchParams(window.location.search || "");
+  const code_dept = params.get("code_dept")?.trim() || null;
+  const code_postal = params.get("code_postal")?.trim() || null;
+  const commune = params.get("commune")?.trim() || null;
+  if (!code_dept || !code_postal || !commune) return Promise.resolve(false);
+  const regionId = getRegionForDepartment(code_dept);
+  fillDepartmentSelect(regionId || null);
+  const regionSelect = document.getElementById("region-select");
+  const deptSelect = document.getElementById("dept-select");
+  if (regionSelect) regionSelect.value = regionId || "";
+  if (deptSelect) deptSelect.value = code_dept;
+  return loadCommunes(code_dept).then(() => {
+    const normCommune = normalizeNameCanonical(commune);
+    const idx = (communesList || []).findIndex(
+      (c) => String(c.code_postal).trim() === String(code_postal).trim() && normalizeNameCanonical((c.commune || "").trim()) === normCommune
+    );
+    const communeSelect = document.getElementById("commune-select");
+    if (communeSelect && idx >= 0) communeSelect.value = String(idx);
+    return true;
+  });
+}
+
+function updateFicheCommuneLink() {
+  const v = getCommuneValue();
+  if (typeof window.updateNavLinksFromCommune === "function") {
+    window.updateNavLinksFromCommune(v.code_dept, v.code_postal, v.commune);
+  }
+}
+
 loadGeo()
   .then(loadPeriod)
   .then(() => {
     setTimeout(() => loadCommunesInBackground(), 0);
+    return initFromUrlParams();
+  })
+  .then((shouldRun) => {
+    updateFicheCommuneLink();
+    if (shouldRun) runStats();
   })
   .catch((e) => console.error(e));
+
+document.getElementById("commune-select")?.addEventListener("change", updateFicheCommuneLink);

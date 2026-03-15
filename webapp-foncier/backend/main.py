@@ -297,32 +297,73 @@ def get_communes(
         cur = conn.cursor()
         search = (q or "").strip()
         if search:
-            search_like = "%" + search + "%"
-            search_norm_like = "%" + _normalize_name_canonical(search) + "%"
-            try:
-                cur.execute(
-                    """
-                    SELECT dep_code AS code_dept, code_postal, nom_standard_majuscule AS commune
-                    FROM foncier.ref_communes
-                    WHERE """ + _sql_norm_name_canonical("nom_standard_majuscule") + """ LIKE %s
-                       OR code_postal::text LIKE %s
-                    ORDER BY nom_standard_majuscule, code_postal
-                    LIMIT 25
-                    """,
-                    (search_norm_like, search_like),
-                )
-            except psycopg2.Error:
-                cur.execute(
-                    """
-                    SELECT DISTINCT code_dept, code_postal, commune
-                    FROM foncier.vf_communes
-                    WHERE """ + _sql_norm_name_canonical("commune") + """ LIKE %s
-                       OR code_postal::text LIKE %s
-                    ORDER BY commune, code_postal
-                    LIMIT 25
-                    """,
-                    (search_norm_like, search_like),
-                )
+            # Saisie uniquement numérique → filtre par code postal commençant par cette chaîne
+            if search.isdigit():
+                cp_prefix = search + "%"
+                try:
+                    cur.execute(
+                        """
+                        SELECT dep_code AS code_dept, code_postal, nom_standard_majuscule AS commune
+                        FROM foncier.ref_communes
+                        WHERE code_postal::text LIKE %s
+                        ORDER BY code_postal, nom_standard_majuscule
+                        LIMIT 50
+                        """,
+                        (cp_prefix,),
+                    )
+                except psycopg2.Error:
+                    cur.execute(
+                        """
+                        SELECT DISTINCT code_dept, code_postal, commune
+                        FROM foncier.vf_communes
+                        WHERE code_postal::text LIKE %s
+                        ORDER BY code_postal, commune
+                        LIMIT 50
+                        """,
+                        (cp_prefix,),
+                    )
+            else:
+                # Saisie avec lettres :
+                # - par défaut : filtre par NOM commençant par la chaîne (préfixe)
+                # - si l'utilisateur commence par '%' : recherche "contient" (LIKE %...%)
+                # Pour le code postal, on conserve un LIKE %...% pour permettre de taper un fragment.
+                raw = search
+                starts_with_percent = raw.startswith("%")
+                term = raw[1:].strip() if starts_with_percent else raw
+                if not term:
+                    starts_with_percent = False
+                    term = raw.strip()
+                norm = _normalize_name_canonical(term)
+                if starts_with_percent:
+                    search_norm_like = "%" + norm + "%"
+                    search_cp_like = "%" + term + "%"
+                else:
+                    search_norm_like = norm + "%"
+                    search_cp_like = "%" + term + "%"
+                try:
+                    cur.execute(
+                        """
+                        SELECT dep_code AS code_dept, code_postal, nom_standard_majuscule AS commune
+                        FROM foncier.ref_communes
+                        WHERE """ + _sql_norm_name_canonical("nom_standard_majuscule") + """ LIKE %s
+                           OR code_postal::text LIKE %s
+                        ORDER BY nom_standard_majuscule, code_postal
+                        LIMIT 25
+                        """,
+                        (search_norm_like, search_cp_like),
+                    )
+                except psycopg2.Error:
+                    cur.execute(
+                        """
+                        SELECT DISTINCT code_dept, code_postal, commune
+                        FROM foncier.vf_communes
+                        WHERE """ + _sql_norm_name_canonical("commune") + """ LIKE %s
+                           OR code_postal::text LIKE %s
+                        ORDER BY commune, code_postal
+                        LIMIT 25
+                        """,
+                        (search_norm_like, search_cp_like),
+                    )
         elif code_dept:
             cur.execute(
                 """

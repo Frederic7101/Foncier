@@ -5,6 +5,25 @@ webapp-foncier/config.json
 venv/
 env/
 
+# Environnements virtuels
+webapp-foncier/.venv-foncier/
+.venv/
+# Gros dumps SQL et CSV volumineux
+webapp-foncier/sql/foncier_dump.sql
+webapp-foncier/sql/ventes_notaire_dump.sql
+webapp-foncier/scripts/import/*.csv
+
+# Répertoires de données de scraping
+encheres/
+webapp-foncier/scripts/import/encheres_publiques.csv
+# Fichiers temporaires / binaires bureautiques
+*.odt
+*.doc
+*.docx
+*.ods
+*.png
+*.jpg
+
 # Python
 __pycache__/
 *.py[cod]
@@ -23,3 +42,7 @@ __pycache__/
 *.swo
 Thumbs.db
 .DS_Store
+
+*.jsonl
+# Résumés de session 
+Résumés de session*.md

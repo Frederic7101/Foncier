@@ -106,6 +106,25 @@ header nav a:hover {
   margin-bottom: 0.9rem;
 }
 
+/* Boutons de navigation de page (utilisés dans les en-têtes fiche_commune / stats / recherche) */
+.header-nav-btn {
+  display: inline-block;
+  padding: 0.4rem 0.75rem;
+  background: #2563eb;
+  color: #fff;
+  text-decoration: none;
+  font-size: 0.85rem;
+  font-weight: 600;
+  border-radius: 0.4rem;
+  border: none;
+  cursor: pointer;
+}
+.header-nav-btn:hover {
+  background: #1d4ed8;
+  color: #fff;
+  text-decoration: none;
+}
+
 header h1 {
   color: #000080;
 }
@@ -195,9 +214,29 @@ select:focus {
   background: linear-gradient(135deg, #1d4ed8, #1e40af);
 }
 
+#reset-btn {
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.5rem;
+  border: 1px solid #7dd3fc;
+  background: #e0f2fe;
+  color: #075985;
+  font-weight: 500;
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin-left: 0.5rem;
+}
+
+#reset-btn:hover {
+  background: #bae6fd;
+}
+
 #map-cell {
   padding: 0;
   overflow: hidden;
+}
+
+#map-cell {
+  position: relative;
 }
 
 #map {
@@ -205,6 +244,44 @@ select:focus {
   height: 100%;
   min-height: 200px;
   border-radius: 0.75rem;
+}
+
+/* Overlay discret : nom de la commune en mode exploration (clic sur la carte) */
+.map-commune-overlay {
+  position: absolute;
+  bottom: 0.5rem;
+  left: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8rem;
+  color: #4b5563;
+  background: rgba(255, 255, 255, 0.88);
+  border-radius: 0.25rem;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  z-index: 500;
+  max-width: 80%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-commune-overlay.visible {
+  opacity: 1;
+}
+
+/* Tooltip discret au survol des points de vente (mode recherche) */
+.leaflet-tooltip.sale-tooltip {
+  font-size: 0.75rem;
+  color: #374151;
+  background: rgba(255, 255, 255, 0.95);
+  border: 1px solid #e5e7eb;
+  padding: 0.25rem 0.4rem;
+  border-radius: 0.25rem;
+  white-space: nowrap;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #results-list {

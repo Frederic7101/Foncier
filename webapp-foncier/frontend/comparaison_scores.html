@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Comparaison des villes</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="communes_autocomplete.js"></script>
+    <script src="nav_links.js"></script>
+    <style>
+      /* Page Comparaison scores — alignée fiche_commune / stats_ventes */
+      #app-comparaison {
+        width: 100%;
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 0 0.75rem 2rem;
+        background: #f5f5f7;
+        min-height: 100vh;
+        box-sizing: border-box;
+      }
+      #app-comparaison header {
+        text-align: center;
+        margin-bottom: 0.5rem;
+      }
+      #app-comparaison header .comparaison-title-wrap {
+        position: relative;
+        display: inline-block;
+        padding: 0.75rem 0;
+        min-height: 3rem;
+      }
+      #app-comparaison header h1 { margin: 0; font-size: 1.75rem; color: #000080; line-height: 1.3; padding: 0.5rem 0; }
+      #app-comparaison header .subtitle-banner {
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        margin-top: 0.25rem;
+        padding: 0.5rem 0.75rem;
+        background: #f8fafc;
+        color: #6b7280;
+        font-size: 0.8rem;
+        border-radius: 0.4rem;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        max-width: 90vw;
+        white-space: normal;
+        text-align: center;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease;
+        z-index: 10;
+      }
+      #app-comparaison header .comparaison-title-wrap:hover .subtitle-banner { opacity: 1; }
+      #app-comparaison header nav { margin-top: 0.5rem; display: flex; flex-wrap: wrap; gap: 0.5rem; justify-content: center; }
+
+      .comparaison-controls {
+        background: #fff;
+        border-radius: 0.75rem;
+        padding: 1rem 1.25rem;
+        margin-bottom: 1rem;
+        box-shadow: 0 8px 20px rgba(15,23,42,0.08);
+      }
+      .comparaison-controls h2 { margin: 0 0 0.75rem; font-size: 1rem; color: #374151; font-weight: 600; }
+      .comparaison-controls .help { font-size: 0.8rem; color: #6b7280; margin-bottom: 0.75rem; }
+      .comparaison-filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
+      .comparaison-filters .field { margin: 0; }
+      .comparaison-filters label { display: block; font-size: 0.85rem; color: #4b5563; margin-bottom: 0.25rem; }
+      .comparaison-filters select,
+      .comparaison-filters input[type="number"],
+      .comparaison-filters input[type="text"] {
+        padding: 0.4rem 0.5rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.4rem;
+        font-size: 0.9rem;
+        min-width: 140px;
+      }
+      .comparaison-filters .search-input-wrap { position: relative; min-width: 200px; }
+      .comparaison-suggestions {
+        position: absolute; top: 100%; left: 0; right: 0; margin-top: 2px;
+        background: #fff; border: 1px solid #d1d5db; border-radius: 0.4rem;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12); max-height: 220px; overflow-y: auto;
+        z-index: 100; list-style: none; padding: 0; margin: 0;
+      }
+      .comparaison-suggestions li { padding: 0.4rem 0.5rem; cursor: pointer; font-size: 0.9rem; border-bottom: 1px solid #f1f5f9; }
+      .comparaison-suggestions li:last-child { border-bottom: none; }
+      .comparaison-suggestions li:hover, .comparaison-suggestions li[aria-selected="true"] { background: #eff6ff; }
+
+      .comparaison-scores-block { margin-top: 1rem; padding-top: 1rem; border-top: 1px solid #e5e7eb; }
+      .comparaison-scores-block h3 { margin: 0 0 0.5rem; font-size: 0.95rem; color: #374151; font-weight: 600; }
+      .comparaison-scores-row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 0.5rem; }
+      .comparaison-scores-row .score-secondary { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+      .comparaison-scores-row .score-secondary label { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: normal; white-space: nowrap; }
+      .comparaison-btn { padding: 0.5rem 1.25rem; background: #2563eb; color: #fff; border: none; border-radius: 0.4rem; font-size: 0.95rem; font-weight: 600; cursor: pointer; }
+      .comparaison-btn:hover { background: #1d4ed8; }
+      .comparaison-btn:disabled { background: #9ca3af; cursor: not-allowed; }
+      #app-comparaison .stats-reset-btn {
+        margin-left: 0.5rem;
+        padding: 0.5rem 1rem;
+        background: #bae6fd;
+        color: #0c4a6e;
+        border: 1px solid #7dd3fc;
+        border-radius: 0.4rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      #app-comparaison .stats-reset-btn:hover { background: #7dd3fc; color: #075985; }
+
+      .comparaison-selected-list { margin-top: 1rem; padding: 0.5rem 0; }
+      .comparaison-selected-list h3 { margin: 0 0 0.5rem; font-size: 0.9rem; color: #374151; }
+      .comparaison-selected-list ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      .comparaison-selected-list li { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.5rem; background: #e5e7eb; border-radius: 0.35rem; font-size: 0.85rem; }
+      .comparaison-selected-list li button { background: none; border: none; cursor: pointer; color: #6b7280; padding: 0 0.2rem; font-size: 1rem; line-height: 1; }
+      .comparaison-selected-list li button:hover { color: #dc2626; }
+      .comparaison-selected-list .btn-vider { margin-left: 0.5rem; font-size: 0.8rem; color: #6b7280; background: none; border: none; cursor: pointer; text-decoration: underline; }
+      .comparaison-selected-list .btn-vider:hover { color: #111; }
+
+      .comparaison-table-wrap { background: #fff; border-radius: 0.75rem; padding: 0; margin-top: 1rem; box-shadow: 0 8px 20px rgba(15,23,42,0.08); overflow-x: auto; }
+      .comparaison-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.875rem;
+        table-layout: auto;
+      }
+      .comparaison-table th, .comparaison-table td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #e5e7eb; }
+      .comparaison-table th { background: #f8fafc; color: #4b5563; font-weight: 600; text-align: left; white-space: nowrap; }
+      .comparaison-table th.col-num, .comparaison-table td.col-num { text-align: right; }
+      .comparaison-table tbody tr:nth-child(even) { background: #fafafa; }
+      .comparaison-table tbody tr:hover { background: #f1f5f9; }
+      .comparaison-table tbody tr:last-child td { border-bottom: none; }
+      .comparaison-table .commune-link { color: #2563eb; text-decoration: none; font-weight: 500; }
+      .comparaison-table .commune-link:hover { text-decoration: underline; }
+      #comparaison-empty, #comparaison-loading, #comparaison-error { padding: 1.5rem; text-align: center; color: #6b7280; font-size: 0.9rem; }
+      #comparaison-error { color: #dc2626; }
+      #comparaison-loading { display: none; }
+      #comparaison-loading.visible { display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="app-comparaison">
+      <header>
+        <div class="comparaison-title-wrap">
+          <h1>Comparaison des communes</h1>
+          <div class="subtitle-banner" aria-hidden="true">Classement des communes selon les scores (rentabilité, charges, fiscalité, risque, …)</div>
+        </div>
+        <nav>
+          <a href="fiche_commune.html" id="nav-fiche-commune" class="header-nav-btn" target="_blank" rel="noopener noreferrer">Fiche commune</a>
+          <a href="stats_ventes.html" id="nav-stats" class="header-nav-btn" target="_blank" rel="noopener noreferrer">Stats des ventes</a>
+          <a href="recherche_ventes.html" id="nav-recherche" class="header-nav-btn" target="_blank" rel="noopener noreferrer">Ventes</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="comparaison-controls">
+          <h2>Périmètre géographique</h2>
+          <p class="help">Choisissez un périmètre (région / département) ou ajoutez directement des communes via la recherche.</p>
+          <div class="comparaison-filters">
+            <div class="field">
+              <label for="comparaison-region">Région</label>
+              <select id="comparaison-region">
+                <option value="">— Choisir une région —</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="comparaison-dept">Département</label>
+              <select id="comparaison-dept">
+                <option value="">— Choisir un département —</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="comparaison-commune">Commune</label>
+              <select id="comparaison-commune">
+                <option value="">— Toutes les communes du département —</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="comparaison-search">Recherche rapide (nom ou CP)</label>
+              <div class="search-input-wrap">
+                <input id="comparaison-search" type="text" placeholder="Nom ou code postal" autocomplete="off" aria-autocomplete="list" />
+                <ul id="comparaison-suggestions" class="comparaison-suggestions" role="listbox" aria-expanded="false" hidden></ul>
+              </div>
+            </div>
+          </div>
+
+          <div class="comparaison-scores-block">
+            <h3>Scores</h3>
+            <div class="comparaison-scores-row">
+              <div class="field">
+                <label for="comparaison-score-principal">Score principal</label>
+                <select id="comparaison-score-principal">
+                  <option value="renta_brute">Rentabilité brute simulée</option>
+                  <option value="renta_nette">Rentabilité nette simulée</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="comparaison-n-max">Nombre max de communes</label>
+                <input id="comparaison-n-max" type="number" min="1" max="500" value="20" aria-label="Nombre max de communes" />
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <button type="button" class="comparaison-btn" id="comparaison-btn">Comparer</button>
+                <button type="button" class="stats-reset-btn" id="comparaison-reset-btn">Réinitialiser</button>
+              </div>
+            </div>
+            <div class="comparaison-scores-row">
+              <span style="font-size: 0.85rem; color: #6b7280;">Scores secondaires (affichage dans le tableau) :</span>
+              <div class="score-secondary">
+                <label><input type="checkbox" id="score-sec-renta-brute" value="renta_brute" /> Rentabilité brute</label>
+                <label><input type="checkbox" id="score-sec-renta-nette" value="renta_nette" /> Rentabilité nette</label>
+                <label><input type="checkbox" id="score-sec-tfb" value="taux_tfb" /> Taux TF</label>
+                <label><input type="checkbox" id="score-sec-teom" value="taux_teom" /> Taux TEOM</label>
+              </div>
+            </div>
+          </div>
+
+          <div class="comparaison-selected-list" id="comparaison-selected-block" aria-hidden="true">
+            <h3>Communes sélectionnées</h3>
+            <ul id="comparaison-selected-ul"></ul>
+            <button type="button" class="btn-vider" id="comparaison-vider-liste">Vider la liste</button>
+          </div>
+        </section>
+
+        <div class="comparaison-table-wrap">
+          <div id="comparaison-empty">Choisissez un périmètre (au minimum un département), un score principal et cliquez sur Comparer.</div>
+          <div id="comparaison-loading" aria-hidden="true">Chargement…</div>
+          <div id="comparaison-error" role="alert" hidden></div>
+          <table class="comparaison-table" id="comparaison-table" aria-hidden="true">
+            <thead id="comparaison-thead">
+              <tr>
+                <th class="col-num">Rang</th>
+                <th>Région</th>
+                <th class="col-num">Code dépt</th>
+                <th class="col-num">Code postal</th>
+                <th>Commune</th>
+                <th class="col-num" id="th-score-principal">Score</th>
+              </tr>
+            </thead>
+            <tbody id="comparaison-tbody"></tbody>
+          </table>
+        </div>
+      </main>
+    </div>
+
+    <script>
+(function () {
+        const isLocal = (typeof window !== "undefined" && (window.location?.hostname === "localhost" || window.location?.hostname === "127.0.0.1" || window.location?.protocol === "file:"));
+        const API_BASE = isLocal && window.location?.port !== "8000" ? "http://localhost:8000" : "";
+
+        const geo = { regions: [], departements: [], deptNomByCode: {} };
+        let communesList = [];
+        const selectedCommunes = []; // { code_dept, code_postal, commune, code_insee? }
+
+        function escapeHtml(s) {
+          if (s == null) return "";
+          const div = document.createElement("div");
+          div.textContent = s;
+          return div.innerHTML;
+        }
+
+        function formatPct(value) {
+          const v = Number(value);
+          if (!Number.isFinite(v)) return "—";
+          return v.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " %";
+        }
+
+        function getScoreLabel(key) {
+          const labels = { renta_brute: "Renta. brute", renta_nette: "Renta. nette", taux_tfb: "Taux TF", taux_teom: "Taux TEOM" };
+          return labels[key] || key;
+        }
+
+        function fillRegions() {
+          const sel = document.getElementById("comparaison-region");
+          if (!sel) return;
+          sel.innerHTML = "<option value=''>— Choisir une région —</option>" +
+            (geo.regions || []).map(function (r) {
+              return "<option value=\"" + escapeHtml(r.id) + "\">" + escapeHtml(r.nom) + "</option>";
+            }).join("");
+        }
+
+        function getDepartmentsForRegion(regionId) {
+          if (!regionId) return (geo.departements || []).map(function (d) { return typeof d === "object" ? d.code : d; });
+          const reg = geo.regions.find(function (r) { return r.id === regionId; });
+          return reg && reg.departements ? reg.departements : [];
+        }
+
+        function fillDepartments() {
+          const regionId = document.getElementById("comparaison-region").value;
+          const deptSelect = document.getElementById("comparaison-dept");
+          if (!deptSelect) return;
+          const codes = getDepartmentsForRegion(regionId);
+          deptSelect.innerHTML = "<option value=''>— Choisir un département —</option>";
+          codes.forEach(function (code) {
+            const lib = geo.deptNomByCode[code] ? code + " " + geo.deptNomByCode[code] : code;
+            deptSelect.innerHTML += "<option value=\"" + escapeHtml(code) + "\">" + escapeHtml(lib) + "</option>";
+          });
+          deptSelect.dispatchEvent(new Event("change"));
+        }
+
+        function fillCommunes() {
+          const codeDept = document.getElementById("comparaison-dept").value;
+          const communeSelect = document.getElementById("comparaison-commune");
+          if (!communeSelect) return;
+          // 1ère ligne : libellé neutre
+          communeSelect.innerHTML = "<option value=''>— Choisir une commune —</option>";
+          // 2ème ligne : toutes les communes du département
+          const optAll = document.createElement("option");
+          optAll.value = "__ALL__";
+          optAll.textContent = "Toutes les communes du département";
+          communeSelect.appendChild(optAll);
+          if (!codeDept) return;
+          fetch(API_BASE + "/api/communes?code_dept=" + encodeURIComponent(codeDept))
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              communesList = Array.isArray(data) ? data : [];
+              communesList.forEach(function (c) {
+                const opt = document.createElement("option");
+                opt.value = JSON.stringify({ code_dept: c.code_dept || "", code_postal: c.code_postal || "", commune: c.commune || "" });
+                opt.textContent = (c.commune || "") + " (" + (c.code_postal || "") + ")";
+                communeSelect.appendChild(opt);
+              });
+            })
+            .catch(function () { communesList = []; });
+        }
+
+        function getRegionForDepartment(codeDept) {
+          var reg = (geo.regions || []).find(function (r) { return r.departements && r.departements.indexOf(codeDept) !== -1; });
+          return reg ? reg.id : null;
+        }
+
+        function loadGeo() {
+          return fetch(API_BASE + "/api/geo")
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              geo.regions = data.regions || [];
+              geo.departements = data.departements || [];
+              geo.deptNomByCode = Object.fromEntries((geo.departements || []).map(function (d) { return [d.code, d.nom]; }));
+              fillRegions();
+              fillDepartments();
+            })
+            .catch(function () {});
+        }
+
+        function initFromUrlParams() {
+          var sp = new URLSearchParams(window.location.search || "");
+          var code_dept = (sp.get("code_dept") || "").trim();
+          var code_postal = (sp.get("code_postal") || "").trim();
+          var commune = (sp.get("commune") || "").trim();
+          if (!code_dept || !code_postal || !commune) return;
+          var regionId = getRegionForDepartment(code_dept);
+          var regionSelect = document.getElementById("comparaison-region");
+          var deptSelect = document.getElementById("comparaison-dept");
+          var searchInput = document.getElementById("comparaison-search");
+          if (regionSelect && regionId) regionSelect.value = regionId;
+          fillDepartments();
+          if (deptSelect) deptSelect.value = code_dept;
+          fillCommunes();
+          addSelectedCommuneItem({ code_dept: code_dept, code_postal: code_postal, commune: commune });
+          if (searchInput) searchInput.value = code_postal + " " + commune;
+        }
+
+        document.getElementById("comparaison-region").addEventListener("change", fillDepartments);
+        document.getElementById("comparaison-dept").addEventListener("change", fillCommunes);
+
+        // Ajout d'une commune à la liste sélectionnée (utilisé par autocomplete + select)
+        function addSelectedCommuneItem(item) {
+          const key = (item.code_dept || "") + "|" + (item.code_postal || "") + "|" + (item.commune || "");
+          if (selectedCommunes.some(function (c) { return (c.code_dept || "") + "|" + (c.code_postal || "") + "|" + (c.commune || "") === key; })) return;
+          selectedCommunes.push({ code_dept: item.code_dept || "", code_postal: item.code_postal || "", commune: item.commune || "" });
+          renderSelectedList();
+        }
+
+        // Autocomplete recherche commune (nom ou code postal)
+        (function initSearch() {
+          initCommuneAutocomplete({
+            inputId: "comparaison-search",
+            suggestionsId: "comparaison-suggestions",
+            minChars: 2,
+            onSelect: function (item) {
+              addSelectedCommuneItem(item);
+            }
+          });
+        })();
+
+        function renderSelectedList() {
+          const block = document.getElementById("comparaison-selected-block");
+          const ul = document.getElementById("comparaison-selected-ul");
+          if (!block || !ul) return;
+          if (selectedCommunes.length === 0) {
+            block.setAttribute("aria-hidden", "true");
+            ul.innerHTML = "";
+            return;
+          }
+          block.removeAttribute("aria-hidden");
+          ul.innerHTML = selectedCommunes.map(function (c, i) {
+            const label = escapeHtml(c.commune) + " (" + escapeHtml(c.code_postal) + ")";
+            return "<li>" + label + " <button type=\"button\" data-i=\"" + i + "\" aria-label=\"Retirer\">×</button></li>";
+          }).join("");
+          ul.querySelectorAll("button").forEach(function (btn) {
+            btn.addEventListener("click", function () {
+              const i = parseInt(btn.getAttribute("data-i"), 10);
+              selectedCommunes.splice(i, 1);
+              renderSelectedList();
+            });
+          });
+        }
+
+        document.getElementById("comparaison-vider-liste").addEventListener("click", function () {
+          selectedCommunes.length = 0;
+          renderSelectedList();
+        });
+
+        // Sélection via le select de communes
+        (function initCommuneSelect() {
+          const sel = document.getElementById("comparaison-commune");
+          if (!sel) return;
+          sel.addEventListener("change", function () {
+            const v = sel.value;
+            if (!v) return; // « Choisir une commune »
+            if (v === "__ALL__") {
+              // Remplir la liste avec toutes les communes du département
+              (communesList || []).forEach(function (c) { addSelectedCommuneItem(c); });
+              sel.value = "";
+              return;
+            }
+            try {
+              const c = JSON.parse(v);
+              addSelectedCommuneItem(c);
+            } catch (e) {}
+            sel.value = "";
+          });
+        })();
+
+        function runComparaison() {
+          const regionId = document.getElementById("comparaison-region").value;
+          const codeDept = document.getElementById("comparaison-dept").value;
+          const communeOpt = document.getElementById("comparaison-commune").value;
+          const scorePrincipal = document.getElementById("comparaison-score-principal").value;
+          const nMax = parseInt(document.getElementById("comparaison-n-max").value, 10) || 20;
+          const secRentaBrute = document.getElementById("score-sec-renta-brute").checked;
+          const secRentaNette = document.getElementById("score-sec-renta-nette").checked;
+          const secTfb = document.getElementById("score-sec-tfb").checked;
+          const secTeom = document.getElementById("score-sec-teom").checked;
+          const scoresSecondaires = [];
+          if (secRentaBrute) scoresSecondaires.push("renta_brute");
+          if (secRentaNette) scoresSecondaires.push("renta_nette");
+          if (secTfb) scoresSecondaires.push("taux_tfb");
+          if (secTeom) scoresSecondaires.push("taux_teom");
+
+          const emptyEl = document.getElementById("comparaison-empty");
+          const loadingEl = document.getElementById("comparaison-loading");
+          const errorEl = document.getElementById("comparaison-error");
+          const tableEl = document.getElementById("comparaison-table");
+          const theadEl = document.getElementById("comparaison-thead");
+          const tbodyEl = document.getElementById("comparaison-tbody");
+
+          if (!codeDept && selectedCommunes.length === 0) {
+            errorEl.textContent = "Veuillez choisir au moins un département ou ajouter des communes.";
+            errorEl.hidden = false;
+            emptyEl.style.display = "none";
+            tableEl.setAttribute("aria-hidden", "true");
+            return;
+          }
+          errorEl.hidden = true;
+          emptyEl.style.display = "none";
+          loadingEl.classList.add("visible");
+          tableEl.setAttribute("aria-hidden", "true");
+
+          const params = new URLSearchParams();
+          if (regionId) params.set("region_id", regionId);
+          if (codeDept) params.set("code_dept", codeDept);
+          if (communeOpt) {
+            try {
+              const c = JSON.parse(communeOpt);
+              if (c.commune) params.set("commune", c.commune);
+              if (c.code_postal) params.set("code_postal", c.code_postal);
+            } catch (e) {}
+          }
+          params.set("score_principal", scorePrincipal);
+          params.set("n_max", String(nMax));
+          scoresSecondaires.forEach(function (s) { params.append("scores_secondaires", s); });
+          if (selectedCommunes.length > 0) {
+            selectedCommunes.forEach(function (c) {
+              params.append("code_insee", c.code_insee || "");
+            });
+          }
+
+          fetch(API_BASE + "/api/comparaison_scores?" + params.toString())
+            .then(function (r) {
+              if (!r.ok) throw new Error(r.status === 404 ? "Endpoint /api/comparaison_scores non encore implémenté." : "Erreur " + r.status);
+              return r.json();
+            })
+            .then(function (data) {
+              loadingEl.classList.remove("visible");
+              const rows = data.rows || data.lignes || data.communes || [];
+              const scorePrincipalLabel = getScoreLabel(scorePrincipal);
+              theadEl.innerHTML = "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th class=\"col-num\">Code postal</th><th>Commune</th><th class=\"col-num\">" + escapeHtml(scorePrincipalLabel) + "</th>" +
+                scoresSecondaires.map(function (s) { return "<th class=\"col-num\">" + escapeHtml(getScoreLabel(s)) + "</th>"; }).join("") + "</tr>";
+              tbodyEl.innerHTML = rows.map(function (row, idx) {
+                const rank = idx + 1;
+                const commune = row.commune || row.nom_commune || "—";
+                const codeDeptR = row.code_dept || "—";
+                const codePostalR = row.code_postal || row.code_postal_principal || "—";
+                const region = row.region || row.reg_nom || "—";
+                const scoreVal = row[scorePrincipal] != null ? formatPct(row[scorePrincipal]) : "—";
+                const link = (row.code_dept && row.code_postal && row.commune)
+                  ? "fiche_commune.html?code_dept=" + encodeURIComponent(row.code_dept) + "&code_postal=" + encodeURIComponent(row.code_postal) + "&commune=" + encodeURIComponent(row.commune)
+                  : "#";
+                const cellCommune = link !== "#" ? "<a class=\"commune-link\" href=\"" + escapeHtml(link) + "\">" + escapeHtml(commune) + "</a>" : escapeHtml(commune);
+                const secCells = scoresSecondaires.map(function (s) {
+                  const v = row[s];
+                  return "<td class=\"col-num\">" + (v != null ? (s.indexOf("taux") === 0 ? formatPct(v) : formatPct(v)) : "—") + "</td>";
+                }).join("");
+                return "<tr><td class=\"col-num\">" + rank + "</td><td>" + escapeHtml(region) + "</td><td class=\"col-num\">" + escapeHtml(codeDeptR) + "</td><td class=\"col-num\">" + escapeHtml(codePostalR) + "</td><td>" + cellCommune + "</td><td class=\"col-num\">" + scoreVal + "</td>" + secCells + "</tr>";
+              }).join("");
+              if (rows.length === 0) {
+                emptyEl.textContent = "Aucune commune trouvée pour ce périmètre.";
+                emptyEl.style.display = "block";
+              } else {
+                tableEl.removeAttribute("aria-hidden");
+              }
+            })
+            .catch(function (err) {
+              loadingEl.classList.remove("visible");
+              errorEl.textContent = err.message || "Erreur lors du chargement.";
+              errorEl.hidden = false;
+              emptyEl.style.display = "none";
+              tableEl.setAttribute("aria-hidden", "true");
+            });
+        }
+
+        document.getElementById("comparaison-btn").addEventListener("click", runComparaison);
+
+        document.getElementById("comparaison-reset-btn").addEventListener("click", function () {
+          selectedCommunes.length = 0;
+          renderSelectedList();
+          var baseUrl = window.location.origin + window.location.pathname;
+          window.history.replaceState({}, document.title, baseUrl);
+          if (typeof window.updateNavLinksFromCommune === "function") {
+            window.updateNavLinksFromCommune();
+          }
+          var regionSelect = document.getElementById("comparaison-region");
+          var deptSelect = document.getElementById("comparaison-dept");
+          var communeSelect = document.getElementById("comparaison-commune");
+          var searchInput = document.getElementById("comparaison-search");
+          if (regionSelect) regionSelect.value = "";
+          fillDepartments();
+          if (deptSelect) deptSelect.value = "";
+          fillCommunes();
+          if (searchInput) searchInput.value = "";
+          document.getElementById("score-sec-renta-brute").checked = false;
+          document.getElementById("score-sec-renta-nette").checked = false;
+          document.getElementById("score-sec-tfb").checked = false;
+          document.getElementById("score-sec-teom").checked = false;
+          document.getElementById("comparaison-score-principal").value = "renta_brute";
+          document.getElementById("comparaison-n-max").value = "20";
+          var emptyEl = document.getElementById("comparaison-empty");
+          var tableEl = document.getElementById("comparaison-table");
+          var errorEl = document.getElementById("comparaison-error");
+          var loadingEl = document.getElementById("comparaison-loading");
+          if (emptyEl) { emptyEl.style.display = "block"; }
+          if (tableEl) { tableEl.setAttribute("aria-hidden", "true"); }
+          if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+          if (loadingEl) { loadingEl.classList.remove("visible"); }
+          var tbodyEl = document.getElementById("comparaison-tbody");
+          if (tbodyEl) { tbodyEl.innerHTML = ""; }
+        });
+
+        function initNavFromUrl() {
+          var sp = new URLSearchParams(window.location.search || "");
+          var code_dept = sp.get("code_dept");
+          var code_postal = sp.get("code_postal");
+          var commune = sp.get("commune");
+          if (typeof window.updateNavLinksFromCommune === "function") {
+            window.updateNavLinksFromCommune(code_dept, code_postal, commune);
+          }
+        }
+
+        if (document.readyState === "loading") {
+          document.addEventListener("DOMContentLoaded", function () {
+            loadGeo().then(function () {
+              initFromUrlParams();
+              initNavFromUrl();
+            });
+          });
+        } else {
+          loadGeo().then(function () {
+            initFromUrlParams();
+            initNavFromUrl();
+          });
+        }
+      })();
+    </script>
+  </body>
+</html>

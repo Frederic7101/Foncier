@@ -4,11 +4,18 @@
 
 // — API & adresse
 const BAN_URL = "https://api-adresse.data.gouv.fr/search/";
+const BAN_REVERSE_URL = "https://api-adresse.data.gouv.fr/reverse/";
 const BAN_SUGGESTIONS_LIMIT = 10;
-const API_BASE_URL =
-  typeof window !== "undefined" && window.location?.protocol === "file:"
-    ? "http://localhost:8000"
-    : "";
+// Backend API : utiliser localhost:8000 si page en file:// ou servie depuis un autre port (ex. 8765)
+const API_BASE_URL = (function () {
+  if (typeof window === "undefined" || !window.location) return "";
+  const p = window.location.protocol;
+  const host = window.location.hostname || "";
+  const port = window.location.port || (p === "https:" ? "443" : "80");
+  const isLocal = host === "localhost" || host === "127.0.0.1";
+  if (p === "file:" || (isLocal && port !== "8000")) return "http://localhost:8000";
+  return "";
+})();
 
 // — Cache adresses
 const ADDRESS_CACHE_KEY = "foncier_address_cache";
@@ -61,6 +68,7 @@ let currentVentes = [];
 let sortColumn = "date_mutation";
 let sortDir = -1; // 1 = croissant, -1 = décroissant
 let selectedVente = null;
+let hasSearched = false; // true après un clic sur "Rechercher" (mode recherche)
 
 function initMap() {
   map = L.map("map", {
@@ -78,6 +86,29 @@ function initMap() {
   }).addTo(map);
 
   map.fitBounds(FRANCE_BOUNDS, { padding: MAP_FIT_PADDING });
+}
+
+/** Géocodage inverse BAN : retourne { commune, postcode, lat, lon } ou null. */
+async function reverseGeocode(lat, lon) {
+  const url = `${BAN_REVERSE_URL}?lon=${lon}&lat=${lat}`;
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const data = await res.json();
+  const features = data.features;
+  if (!Array.isArray(features) || features.length === 0) return null;
+  const f = features[0];
+  const city = f.properties?.city;
+  const coords = f.geometry?.coordinates;
+  if (!city || !coords || coords.length < 2) return null;
+  const postcode = f.properties?.postcode ? String(f.properties.postcode).trim() : "";
+  return { commune: city, postcode, lon: coords[0], lat: coords[1] };
+}
+
+function setCommuneOverlay(text) {
+  const el = document.getElementById("map-commune-overlay");
+  if (!el) return;
+  el.textContent = text || "";
+  el.classList.toggle("visible", !!text);
 }
 
 function setMapCenter(lat, lon, rayonKm) {
@@ -113,7 +144,7 @@ function renderDetails(v) {
     <table class="details-table">
       <tr><td class="details-label">Date de vente</td><td class="details-value">${formatDateDMY(v.date_mutation)}</td></tr>
       <tr><td class="details-label">Nature</td><td class="details-value">${v.nature_mutation ?? "—"}</td></tr>
-      <tr><td class="details-label">Type de local</td><td class="details-value">${v.type_local ?? "—"}</td></tr>
+      <tr><td class="details-label">Type de local</td><td class="details-value">${formatTypeLocal(v.type_local) ?? "—"}</td></tr>
       <tr><td class="details-label">Surface bâtie</td><td class="details-value">${v.surface_reelle_bati != null ? v.surface_reelle_bati + " m²" : "—"}</td></tr>
       <tr><td class="details-label">Surface terrain</td><td class="details-value">${v.surface_terrain != null ? v.surface_terrain + " m²" : "—"}</td></tr>
       <tr><td class="details-label">Prix de vente fiscal</td><td class="details-value">${v.valeur_fonciere.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €</td></tr>
@@ -138,6 +169,16 @@ function padCodePostal(cp) {
 
 function adresseLine(v) {
   return [v.no_voie, v.type_de_voie, v.voie].filter(Boolean).join(" ") || "—";
+}
+
+/** Libellé affiché pour le type de local (remplace l’ancien libellé DVF). */
+function formatTypeLocal(typeLocal) {
+  if (!typeLocal) return typeLocal;
+  const s = String(typeLocal).trim();
+  if (s === "Local industriel. commercial ou assimilé" || s === "Local industriel, commercial ou assimilé") {
+    return "Local industriel ou commercial";
+  }
+  return s;
 }
 
 function getAddressCache() {
@@ -185,6 +226,15 @@ function setupAddressAutocomplete() {
 
   let timeoutId = null;
 
+  // Met à jour l'URL et les boutons de navigation (délégué à nav_links.js)
+  function setCommuneContextFromPostalAndName(code_postal, commune) {
+    if (!code_postal || !commune) return;
+    const code_dept = code_postal.slice(0, 2);
+    if (typeof window.updateNavLinksFromCommune === "function") {
+      window.updateNavLinksFromCommune(code_dept, code_postal, commune);
+    }
+  }
+
   function hideSuggestions() {
     suggestions.innerHTML = "";
   }
@@ -201,6 +251,17 @@ function setupAddressAutocomplete() {
         document.getElementById("rayon-km").value || String(DEFAULT_RAYON_KM)
       );
       setMapCenter(lat, lon, rayonKm);
+      // Tenter de déduire code postal / commune à partir des propriétés BAN ou du label
+      let cp = feature?.properties?.postcode || "";
+      let city = feature?.properties?.city || "";
+      if ((!cp || !city) && typeof label === "string") {
+        const m = label.match(/(\d{5})\s+(.+)$/);
+        if (m) {
+          cp = cp || m[1];
+          city = city || m[2];
+        }
+      }
+      if (cp && city) setCommuneContextFromPostalAndName(cp, city);
     }
   }
 
@@ -297,6 +358,9 @@ async function searchVentes() {
   if (dateMin) params.set("date_min", dateMin);
   if (dateMax) params.set("date_max", dateMax);
 
+  hasSearched = true;
+  setCommuneOverlay("");
+
   const url = `${API_BASE_URL}/api/ventes?${params.toString()}`;
 
   const loadingEl = document.getElementById("results-loading");
@@ -306,7 +370,13 @@ async function searchVentes() {
 
   try {
     const res = await fetch(url);
-    const body = await res.json().catch(() => res.text());
+    const text = await res.text();
+    let body;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch (_) {
+      body = text;
+    }
     if (!res.ok) {
       const msg = typeof body === "string" ? body : (body?.detail || JSON.stringify(body));
       console.error("Erreur API", res.status, msg);
@@ -381,8 +451,10 @@ function fillTableAndMarkers(ventes) {
 
   function updateSelectedMarkerOnMap(v) {
     if (!v || v.latitude == null || v.longitude == null || !map) return;
+    const tip = `${formatTypeLocal(v.type_local) || "—"} · ${(v.valeur_fonciere != null ? v.valeur_fonciere.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " €" : "—")} · ${adresseLine(v)}`;
     if (selectedSaleMarker && map.hasLayer(selectedSaleMarker)) {
       selectedSaleMarker.setLatLng([v.latitude, v.longitude]);
+      selectedSaleMarker.setTooltipContent(tip);
     } else {
       selectedSaleMarker = L.circleMarker([v.latitude, v.longitude], {
         radius: SELECTED_MARKER_RADIUS,
@@ -390,6 +462,12 @@ function fillTableAndMarkers(ventes) {
         fillColor: SELECTED_MARKER_COLOR,
         fillOpacity: 1,
         weight: 2,
+      });
+      selectedSaleMarker.bindTooltip(tip, {
+        permanent: false,
+        direction: "top",
+        className: "sale-tooltip",
+        offset: [0, -SELECTED_MARKER_RADIUS - 2],
       });
       selectedSaleMarker.addTo(map);
     }
@@ -415,7 +493,7 @@ function fillTableAndMarkers(ventes) {
     if (v === selectedVente) tr.classList.add("selected");
     tr.innerHTML = `
       <td>${formatDateDMY(v.date_mutation)}</td>
-      <td>${v.type_local || "—"}</td>
+      <td>${formatTypeLocal(v.type_local) || "—"}</td>
       <td class="col-right">${v.surface_reelle_bati != null ? v.surface_reelle_bati : "—"}</td>
       <td class="col-right">${v.valeur_fonciere.toLocaleString("fr-FR", { maximumFractionDigits: 0 })} €</td>
       <td>${adresseLine(v)}</td>
@@ -429,12 +507,19 @@ function fillTableAndMarkers(ventes) {
   saleMarkersLayer = L.layerGroup();
   ventes.forEach((v, idx) => {
     if (v.latitude == null || v.longitude == null) return;
+    const tip = `${formatTypeLocal(v.type_local) || "—"} · ${(v.valeur_fonciere != null ? v.valeur_fonciere.toLocaleString("fr-FR", { maximumFractionDigits: 0 }) + " €" : "—")} · ${adresseLine(v)}`;
     const circle = L.circleMarker([v.latitude, v.longitude], {
       radius: SALE_MARKER_RADIUS,
       color: SALE_MARKER_COLOR,
       fillColor: SALE_MARKER_COLOR,
       fillOpacity: 1,
       weight: 1,
+    });
+    circle.bindTooltip(tip, {
+      permanent: false,
+      direction: "top",
+      className: "sale-tooltip",
+      offset: [0, -SALE_MARKER_RADIUS - 2],
     });
     circle.on("click", () => selectRow(idx));
     saleMarkersLayer.addLayer(circle);
@@ -481,6 +566,17 @@ function updateResults(ventes) {
     return;
   }
 
+  // Adapter le rayon : unité = arrondi à l'entier de (distance max × 110 %), rayon = entier supérieur
+  const maxDist = Math.max(...ventes.map((v) => Number(v.distance_km) || 0));
+  const rayonAdapte = Math.max(1, Math.ceil(maxDist * 1.1));
+  if (lastCenter && searchCircle && rayonAdapte > 0) {
+    searchCircle.setRadius(rayonAdapte * 1000);
+    const rayonInput = document.getElementById("rayon-km");
+    if (rayonInput) rayonInput.value = String(rayonAdapte);
+    const bounds = searchCircle.getBounds();
+    map.fitBounds(bounds, { padding: MAP_FIT_PADDING_CIRCLE });
+  }
+
   summary.textContent = `${ventes.length} vente(s) trouvée(s).`;
   updateSortButtonsActive();
   fillTableAndMarkers(getSortedVentes());
@@ -501,6 +597,91 @@ function init() {
     if (map) map.invalidateSize();
   }, MAP_INVALIDATE_DELAY_MS);
   setupAddressAutocomplete();
+
+  // Pré-remplir l'adresse et lien fiche commune depuis l'URL (ex. depuis fiche : ?commune=Lyon&code_postal=69001&code_dept=69)
+  const urlParams = new URLSearchParams(window.location.search || "");
+  const commune = urlParams.get("commune")?.trim();
+  const code_postal = urlParams.get("code_postal")?.trim();
+  const code_dept = urlParams.get("code_dept")?.trim();
+  if (typeof window.updateNavLinksFromCommune === "function") {
+    window.updateNavLinksFromCommune(code_dept, code_postal, commune);
+  }
+  if (commune && code_postal) {
+    const addressInput = document.getElementById("address-input");
+    if (addressInput) {
+      addressInput.value = `${code_postal} ${commune}`;
+      // Géocoder pour que lastCenter soit défini et "Rechercher" fonctionne sans resaisie
+      (async () => {
+        try {
+          const features = await searchBanAddresses(addressInput.value.trim());
+          if (features && features.length > 0) {
+            const coords = features[0].geometry?.coordinates;
+            if (coords && coords.length >= 2) {
+              const [lon, lat] = coords;
+              const rayonKm = parseFloat(document.getElementById("rayon-km")?.value || String(DEFAULT_RAYON_KM));
+              setMapCenter(lat, lon, rayonKm);
+              if (!marker) marker = L.marker([lat, lon]).addTo(map);
+              else marker.setLatLng([lat, lon]);
+            }
+          }
+        } catch (e) {
+          console.error("Géocodage adresse pré-remplie", e);
+        }
+      })();
+    }
+    // Si l'URL contient déjà la commune / code postal, conserver ce contexte (navs déjà mis à jour plus haut).
+  }
+
+  // Mode exploration : clic sur la carte → commune la plus proche, affichage discret, zoom 2 km
+  map.on("click", async (e) => {
+    // En mode recherche : n'appliquer l'exploration que si le clic est en dehors du cercle
+    if (hasSearched && searchCircle) {
+      const center = searchCircle.getLatLng();
+      const radiusM = searchCircle.getRadius();
+      const distM = map.distance(center, e.latlng);
+      if (distM <= radiusM) return;
+    }
+    const { lat, lng: lon } = e.latlng;
+    setCommuneOverlay("…");
+    try {
+      const result = await reverseGeocode(lat, lon);
+      if (result) {
+        setCommuneOverlay(result.commune);
+        const addressLabel = result.postcode
+          ? `${padCodePostal(result.postcode)} ${result.commune}`
+          : result.commune;
+        const addressInput = document.getElementById("address-input");
+        if (addressInput) addressInput.value = addressLabel;
+        lastCenter = { lat: result.lat, lon: result.lon };
+        if (!marker) {
+          marker = L.marker([result.lat, result.lon]).addTo(map);
+        } else {
+          marker.setLatLng([result.lat, result.lon]);
+        }
+        const rayonCommune = 2;
+        if (!searchCircle) {
+          searchCircle = L.circle([result.lat, result.lon], {
+            radius: rayonCommune * 1000,
+            color: SEARCH_CIRCLE_COLOR,
+            fillColor: SEARCH_CIRCLE_COLOR,
+            fillOpacity: SEARCH_CIRCLE_FILL_OPACITY,
+          }).addTo(map);
+        } else {
+          searchCircle.setLatLng([result.lat, result.lon]);
+          searchCircle.setRadius(rayonCommune * 1000);
+        }
+        const rayonInput = document.getElementById("rayon-km");
+        if (rayonInput) rayonInput.value = String(rayonCommune);
+        const bounds = searchCircle.getBounds();
+        map.fitBounds(bounds, { padding: MAP_FIT_PADDING_CIRCLE });
+      } else {
+        setCommuneOverlay("");
+      }
+    } catch (err) {
+      console.error("Erreur géocodage inverse", err);
+      setCommuneOverlay("");
+    }
+  });
 
   const searchBtn = document.getElementById("search-btn");
   searchBtn.addEventListener("click", searchVentes);
@@ -539,6 +720,59 @@ function init() {
     .catch(() => {
       titleEl.textContent = "Historique des ventes immobilières";
     });
+
+  // Bouton Réinitialiser : remettre à zéro les champs, les résultats, l'URL et les boutons de nav
+  const resetBtn = document.getElementById("reset-btn");
+  if (resetBtn) {
+      resetBtn.addEventListener("click", () => {
+        // 1) Réinitialiser tous les champs
+      const addressInput = document.getElementById("address-input");
+      const typeLocal = document.getElementById("type-local");
+      const surfMin = document.getElementById("surf-min");
+      const surfMax = document.getElementById("surf-max");
+      const rayonKm = document.getElementById("rayon-km");
+      const dateMin = document.getElementById("date-min");
+      const dateMax = document.getElementById("date-max");
+      const limitVentes = document.getElementById("limit-ventes");
+      if (addressInput) addressInput.value = "";
+      if (typeLocal) typeLocal.value = "";
+      if (surfMin) surfMin.value = "";
+      if (surfMax) surfMax.value = "";
+      if (rayonKm) rayonKm.value = String(DEFAULT_RAYON_KM);
+      if (dateMin) dateMin.value = "";
+      if (dateMax) dateMax.value = "";
+      if (limitVentes) limitVentes.value = "50";
+
+      // 2) Nettoyer carte + résultats
+      hasSearched = false;
+      lastCenter = null;
+      if (marker) {
+        map.removeLayer(marker);
+        marker = null;
+      }
+      if (searchCircle) {
+        map.removeLayer(searchCircle);
+        searchCircle = null;
+      }
+      if (saleMarkersLayer && map) {
+        map.removeLayer(saleMarkersLayer);
+        saleMarkersLayer = null;
+      }
+      if (map) map.fitBounds(FRANCE_BOUNDS, { padding: MAP_FIT_PADDING });
+      const tbody = document.getElementById("results-tbody");
+      if (tbody) tbody.innerHTML = "";
+      const summary = document.getElementById("results-summary");
+      if (summary) summary.textContent = "";
+      const loading = document.getElementById("results-loading");
+      if (loading) loading.setAttribute("aria-hidden", "true");
+
+      // 3) Réinitialiser l’URL
+      // 3) Réinitialiser URL et boutons nav (délégué à nav_links.js)
+      if (typeof window.updateNavLinksFromCommune === "function") {
+        window.updateNavLinksFromCommune();
+      }
+    });
+  }
 }
 
 window.addEventListener("DOMContentLoaded", init);

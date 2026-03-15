@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Historique des ventes immobilières</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="style.css?v=3" />
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1 id="page-title">Chargement…</h1>
+        <nav>
+          <a href="fiche_commune.html" id="nav-fiche-commune" class="header-nav-btn" target="_blank" rel="noopener noreferrer">Fiche commune</a>
+          <a href="stats_ventes.html" id="nav-stats" class="header-nav-btn" target="_blank" rel="noopener noreferrer">Stats des ventes</a>
+          <a href="comparaison_scores.html" id="nav-comparaison-scores" class="header-nav-btn" target="_blank" rel="noopener noreferrer">Comparaison communes</a>
+        </nav>
+      </header>
+
+      <main class="layout-grid">
+        <section id="controls" class="zone">
+          <div class="controls-columns">
+            <div class="controls-col">
+              <div class="field field-address">
+                <label for="address-input">Adresse</label>
+                <input
+                  id="address-input"
+                  type="text"
+                  placeholder="Saisir une adresse..."
+                  autocomplete="off"
+                />
+                <ul id="address-suggestions"></ul>
+              </div>
+              <div class="field">
+                <label for="type-local">Type de local</label>
+                <select id="type-local">
+                  <option value="">Tous</option>
+                  <option value="Appartement">Appartement</option>
+                  <option value="Maison">Maison</option>
+                  <option value="Dépendance">Dépendance</option>
+                  <option value="Local industriel. commercial ou assimilé">Local industriel ou commercial</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>Surface (m²)</label>
+                <div class="range-group">
+                  <input id="surf-min" type="number" min="0" placeholder="Min" />
+                  <span>à</span>
+                  <input id="surf-max" type="number" min="0" placeholder="Max" />
+                </div>
+              </div>
+            </div>
+            <div class="controls-col">
+              <div class="field">
+                <label for="rayon-km">Rayon (km)</label>
+                <input id="rayon-km" type="number" min="0.5" max="20" step="0.5" value="1" />
+              </div>
+              <div class="field">
+                <label>Période des transactions</label>
+                <div class="range-group">
+                  <input id="date-min" type="date" />
+                  <span>à</span>
+                  <input id="date-max" type="date" />
+                </div>
+              </div>
+              <div class="field">
+                <label for="limit-ventes">Nombre maximum de transactions</label>
+                <input id="limit-ventes" type="number" min="50" max="250" step="50" value="50" />
+              </div>
+            </div>
+          </div>
+          <div class="search-btn-wrap">
+            <button id="search-btn">Rechercher</button>
+            <button id="reset-btn" type="button" class="stats-reset-btn">Réinitialiser</button>
+          </div>
+        </section>
+
+        <div id="map-cell" class="zone">
+          <div id="map"></div>
+          <div id="map-commune-overlay" class="map-commune-overlay" aria-live="polite"></div>
+        </div>
+
+        <section id="results-list" class="zone">
+          <h2>Ventes trouvées</h2>
+          <div id="results-summary"></div>
+          <div id="results-loading" class="results-loading" aria-hidden="true">
+            <div class="spinner"></div>
+            <span>Recherche en cours…</span>
+          </div>
+          <div id="results-table-wrap">
+            <table id="results-table">
+              <thead>
+                <tr>
+                  <th class="th-sort" data-sort="date_mutation">Date <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort" data-sort="type_local">Type <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort col-right" data-sort="surface_reelle_bati">Surface (m²) <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort col-right" data-sort="valeur_fonciere">Prix <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort" data-sort="adresse">Adresse <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort" data-sort="commune">Commune <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                  <th class="th-sort" data-sort="distance_km">Distance <span class="sort-btns"><button type="button" class="sort-btn sort-asc" title="Tri croissant">↑</button><button type="button" class="sort-btn sort-desc" title="Tri décroissant">↓</button></span></th>
+                </tr>
+              </thead>
+              <tbody id="results-tbody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <div id="results-details-cell" class="zone">
+          <div id="results-details"></div>
+        </div>
+      </main>
+    </div>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="nav_links.js"></script>
+    <script src="app.js?v=4"></script>
+  </body>
+</html>
+

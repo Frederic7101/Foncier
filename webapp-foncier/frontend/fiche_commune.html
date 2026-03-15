@@ -2,10 +2,12 @@
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
-    <title>Fiche commune investisseur — depuis Figma</title>
+    <title>Fiche commune pour investisseur</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>" />
     <link rel="stylesheet" href="style.css" />
+    <script src="communes_autocomplete.js"></script>
+    <script src="nav_links.js"></script>
     <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <style>
@@ -158,8 +160,9 @@
           <button type="button" class="btn-afficher" id="btn-afficher-commune">Afficher</button>
         </div>
         <nav>
-          <a id="nav-ventes" href="recherche_ventes.html">Ventes</a>
-          <a id="nav-stats" href="stats_ventes.html">Stats agrégées</a>
+          <a id="nav-ventes" href="recherche_ventes.html" class="header-nav-btn" target="_blank" rel="noopener noreferrer">Ventes</a>
+          <a id="nav-stats" href="stats_ventes.html" class="header-nav-btn" target="_blank" rel="noopener noreferrer">Stats des ventes</a>
+          <a href="comparaison_scores.html" id="nav-comparaison-scores" class="header-nav-btn" target="_blank" rel="noopener noreferrer">Comparaison communes</a>
         </nav>
       </div>
 
@@ -777,11 +780,8 @@
           const code_dept = sp.get("code_dept");
           const code_postal = sp.get("code_postal");
           const commune = sp.get("commune");
-          const navVentes = document.getElementById("nav-ventes");
-          const navStats = document.getElementById("nav-stats");
-          if (code_dept && code_postal && commune) {
-            if (navStats) navStats.href = "stats_ventes.html?code_dept=" + encodeURIComponent(code_dept) + "&code_postal=" + encodeURIComponent(code_postal) + "&commune=" + encodeURIComponent(commune);
-            if (navVentes) navVentes.href = "recherche_ventes.html?commune=" + encodeURIComponent(commune) + "&code_postal=" + encodeURIComponent(code_postal) + "&code_dept=" + encodeURIComponent(code_dept);
+          if (typeof window.updateNavLinksFromCommune === "function") {
+            window.updateNavLinksFromCommune(code_dept, code_postal, commune);
           }
           // Ajouter " - <Commune>" aux titres des sections Panorama
           document.querySelectorAll("[data-panorama-title]").forEach(function (el) {
@@ -794,142 +794,6 @@
           if (!item || !item.code_dept || !item.code_postal || !item.commune) return;
           const url = "fiche_commune.html?code_dept=" + encodeURIComponent(item.code_dept) + "&code_postal=" + encodeURIComponent(item.code_postal) + "&commune=" + encodeURIComponent(item.commune);
           window.location.href = url;
-        }
-
-        function initCommuneSearch() {
-          const input = document.getElementById("commune-search");
-          const listEl = document.getElementById("commune-suggestions");
-          const btn = document.getElementById("btn-afficher-commune");
-          if (!input || !listEl || !btn) return;
-
-          let suggestions = [];
-          let selectedIndex = -1;
-          let debounceTimer = null;
-
-          function hideSuggestions() {
-            listEl.innerHTML = "";
-            listEl.hidden = true;
-            listEl.setAttribute("aria-expanded", "false");
-            selectedIndex = -1;
-          }
-
-          function showSuggestions(items) {
-            suggestions = items || [];
-            selectedIndex = -1;
-            listEl.innerHTML = "";
-            if (suggestions.length === 0) {
-              listEl.hidden = true;
-              listEl.setAttribute("aria-expanded", "false");
-              return;
-            }
-            suggestions.forEach(function (item, i) {
-              const li = document.createElement("li");
-              li.role = "option";
-              li.id = "commune-opt-" + i;
-              li.textContent = item.commune + " (" + item.code_postal + ")";
-              li.dataset.index = String(i);
-              li.addEventListener("click", function (e) {
-                e.preventDefault();
-                goToCommune(suggestions[i]);
-              });
-              listEl.appendChild(li);
-            });
-            listEl.hidden = false;
-            listEl.setAttribute("aria-expanded", "true");
-          }
-
-          function fetchSuggestions(q) {
-            const qq = (q || "").trim();
-            if (qq.length < 2) {
-              hideSuggestions();
-              return;
-            }
-            fetch(API_BASE + "/api/communes?q=" + encodeURIComponent(qq))
-              .then(function (r) { return r.json(); })
-              .then(function (data) {
-                showSuggestions(Array.isArray(data) ? data : []);
-              })
-              .catch(function () { hideSuggestions(); });
-          }
-
-          function tryGo() {
-            const q = (input.value || "").trim();
-            if (!q) return;
-            if (selectedIndex >= 0 && suggestions[selectedIndex]) {
-              goToCommune(suggestions[selectedIndex]);
-              return;
-            }
-            if (suggestions.length === 1) {
-              goToCommune(suggestions[0]);
-              return;
-            }
-            if (suggestions.length > 0) {
-              goToCommune(suggestions[0]);
-              return;
-            }
-            if (q.length >= 2) {
-              fetch(API_BASE + "/api/communes?q=" + encodeURIComponent(q))
-                .then(function (r) { return r.json(); })
-                .then(function (data) {
-                  const arr = Array.isArray(data) ? data : [];
-                  if (arr.length === 1) goToCommune(arr[0]);
-                  else if (arr.length > 1) showSuggestions(arr);
-                })
-                .catch(function () {});
-            }
-          }
-
-          input.addEventListener("input", function () {
-            clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(function () { fetchSuggestions(input.value); }, 200);
-          });
-
-          input.addEventListener("keydown", function (e) {
-            if (e.key === "Escape") {
-              hideSuggestions();
-              input.blur();
-              return;
-            }
-            if (e.key === "Enter") {
-              e.preventDefault();
-              tryGo();
-              return;
-            }
-            if (e.key === "ArrowDown") {
-              e.preventDefault();
-              if (suggestions.length === 0) return;
-              selectedIndex = (selectedIndex + 1) % suggestions.length;
-              listEl.querySelectorAll("li").forEach(function (el, i) {
-                el.setAttribute("aria-selected", i === selectedIndex);
-              });
-              var opt = document.getElementById("commune-opt-" + selectedIndex);
-              if (opt) opt.scrollIntoView({ block: "nearest" });
-              return;
-            }
-            if (e.key === "ArrowUp") {
-              e.preventDefault();
-              if (suggestions.length === 0) return;
-              selectedIndex = selectedIndex <= 0 ? suggestions.length - 1 : selectedIndex - 1;
-              listEl.querySelectorAll("li").forEach(function (el, i) {
-                el.setAttribute("aria-selected", i === selectedIndex);
-              });
-              var opt = document.getElementById("commune-opt-" + selectedIndex);
-              if (opt) opt.scrollIntoView({ block: "nearest" });
-            }
-          });
-
-          input.addEventListener("focus", function () {
-            if (suggestions.length > 0) showSuggestions(suggestions);
-          });
-
-          btn.addEventListener("click", function () {
-            tryGo();
-          });
-
-          document.addEventListener("click", function (e) {
-            if (input.contains(e.target) || listEl.contains(e.target) || btn.contains(e.target)) return;
-            hideSuggestions();
-          });
         }
 
         async function loadCommuneFiche() {
@@ -1098,6 +962,32 @@
             }
           } catch (e) {
             console.error("Erreur chargement fiche commune", e);
+          }
+        }
+
+        function initCommuneSearch() {
+          initCommuneAutocomplete({
+            inputId: "commune-search",
+            suggestionsId: "commune-suggestions",
+            minChars: 2,
+            onSelect: function (item) {
+              goToCommune(item);
+            }
+          });
+          const btn = document.getElementById("btn-afficher-commune");
+          const input = document.getElementById("commune-search");
+          if (btn && input) {
+            btn.addEventListener("click", function () {
+              const q = (input.value || "").trim();
+              if (q.length < 2) return;
+              fetch(API_BASE + "/api/communes?q=" + encodeURIComponent(q))
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                  const arr = Array.isArray(data) ? data : [];
+                  if (arr.length >= 1) goToCommune(arr[0]);
+                })
+                .catch(function () {});
+            });
           }
         }
 
