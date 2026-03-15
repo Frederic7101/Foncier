@@ -424,6 +424,84 @@ def _int(v: Any) -> int:
         return 0
 
 
+def _build_renta_lignes(
+    ventes_lignes: List[dict],
+    loc_lignes: List[dict],
+    parc_data: Optional[dict],
+    loyer_ref: Optional[float],
+    taux_tfb: Optional[float],
+    taux_teom: Optional[float],
+    use_median: bool = True,
+) -> List[dict]:
+    """Calcule les lignes de rentabilité (brute, HC, nette) par type de bien. Utilisé par fiche-logement et comparaison_scores."""
+    if not ventes_lignes or not loc_lignes:
+        return []
+    nb_maisons_agreg = (parc_data.get("nb_maisons") or 0) if parc_data else 0
+    nb_apparts_agreg = (parc_data.get("nb_apparts") or 0) if parc_data else 0
+    total_log = nb_maisons_agreg + nb_apparts_agreg or 1
+    surface_moy_agreg = parc_data.get("surface_moy") if parc_data else None
+    tf_mediane = None
+    if surface_moy_agreg is not None and loyer_ref is not None and taux_tfb is not None:
+        tf_mediane = surface_moy_agreg * 3 * loyer_ref * (taux_tfb / 100.0)
+
+    prix_m2_key = "prix_m2_mediane" if use_median else "prix_m2_moyenne"
+    prix_total_key = "prix_median" if use_median else "prix_moyen"
+    surface_key = "surface_mediane" if use_median else "surface_moyenne"
+    loyer_key = "loyer_med_m2"
+    ventes_by_type = {r["type"]: r for r in ventes_lignes}
+    loc_by_type = {r["type"]: r for r in loc_lignes}
+    charges_pre = {}
+    for type_label in ["Maisons", "Appartements"]:
+        v = ventes_by_type.get(type_label, {})
+        l = loc_by_type.get(type_label, {})
+        surf = _float(v.get(surface_key))
+        loyer_m2 = _float(l.get(loyer_key))
+        if type_label == "Maisons":
+            if taux_teom is not None and surf is not None and surf > 0 and loyer_ref is not None:
+                charges_pre[type_label] = (taux_teom / 100.0) * surf * 3 * loyer_ref
+            else:
+                charges_pre[type_label] = None
+        else:
+            charges_pre[type_label] = (0.10 * loyer_m2 * surf * 12) if (loyer_m2 is not None and surf is not None and surf > 0) else None
+    if charges_pre.get("Maisons") is not None and charges_pre.get("Appartements") is not None and total_log > 0:
+        charges_pre["Maisons/Appart."] = (nb_maisons_agreg * charges_pre["Maisons"] + nb_apparts_agreg * charges_pre["Appartements"]) / total_log
+    else:
+        charges_pre["Maisons/Appart."] = charges_pre.get("Maisons") if nb_apparts_agreg == 0 else (charges_pre.get("Appartements") if nb_maisons_agreg == 0 else None)
+
+    out = []
+    for type_label, _poids in [
+        ("Maisons/Appart.", total_log),
+        ("Maisons", nb_maisons_agreg),
+        ("Appartements", nb_apparts_agreg),
+    ]:
+        v = ventes_by_type.get(type_label, {})
+        l = loc_by_type.get(type_label, {})
+        prix_m2 = _float(v.get(prix_m2_key))
+        prix_total = _float(v.get(prix_total_key))
+        loyer_m2 = _float(l.get(loyer_key))
+        surface_mediane = _float(v.get("surface_mediane"))
+        charges = charges_pre.get(type_label)
+        if prix_m2 is None or prix_m2 <= 0:
+            out.append({"type_bien": type_label, "renta_brute": None, "renta_hc": None, "charges_mediane": None, "renta_nette": None})
+            continue
+        renta_brute = (loyer_m2 * 12 / prix_m2 * 100) if loyer_m2 is not None else None
+        denom = (prix_total * 1.10) if (prix_total is not None and prix_total > 0) else None
+        renta_hc = None
+        if loyer_m2 is not None and surface_mediane is not None and surface_mediane > 0 and denom:
+            renta_hc = (loyer_m2 * surface_mediane * 12 - (tf_mediane or 0)) / denom * 100
+        renta_nette = None
+        if loyer_m2 is not None and surface_mediane is not None and surface_mediane > 0 and denom and charges is not None:
+            renta_nette = (loyer_m2 * surface_mediane * 12 * 0.75 - 0.25 * charges - (tf_mediane or 0)) / denom * 100
+        out.append({
+            "type_bien": type_label,
+            "renta_brute": round(renta_brute, 2) if renta_brute is not None else None,
+            "renta_hc": round(renta_hc, 2) if renta_hc is not None else None,
+            "charges_mediane": round(charges, 2) if charges is not None else None,
+            "renta_nette": round(renta_nette, 2) if renta_nette is not None else None,
+        })
+    return out
+
+
 def _agg_rows(rows: List[dict], surface_cat: Optional[str], pieces_cat: Optional[str]) -> dict:
     """Agrège des lignes vf_communes : sommes et moyennes pondérées par nb_ventes."""
     if not rows:
@@ -720,9 +798,9 @@ def get_fiche_logement(
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
-        # 1) Résoudre code_insee depuis ref_communes
+        # 1) Résoudre code_insee depuis ref_communes (reg_nom, nom_standard pour comparaison_scores)
         cur.execute(
-            "SELECT code_insee FROM foncier.ref_communes "
+            "SELECT code_insee, reg_nom, nom_standard FROM foncier.ref_communes "
             "WHERE dep_code = %s AND " + _sql_norm_name_canonical("nom_standard_majuscule") + " = %s ORDER BY code_postal LIMIT 1",
             (code_dept, _normalize_name_canonical(commune)),
         )
@@ -959,80 +1037,8 @@ def get_fiche_logement(
                 f["taxe_fonciere_simulee"] = round(surface_moy_agreg * 3 * loyer_ref * (tfb / 100.0), 2) if tfb is not None else None
 
         # 6) Rentabilités (médianes et moyennes) par type
-        nb_maisons_agreg = (parc_data.get("nb_maisons") or 0) if parc_data else 0
-        nb_apparts_agreg = (parc_data.get("nb_apparts") or 0) if parc_data else 0
-        total_log = nb_maisons_agreg + nb_apparts_agreg or 1
-        tf_mediane = None
-        if surface_moy_agreg is not None and loyer_ref is not None and taux_tfb is not None:
-            tf_mediane = surface_moy_agreg * 3 * loyer_ref * (taux_tfb / 100.0)
-
-        def build_renta_lignes(ventes_lignes, loc_lignes, use_median=True):
-            prix_m2_key = "prix_m2_mediane" if use_median else "prix_m2_moyenne"
-            prix_total_key = "prix_median" if use_median else "prix_moyen"
-            surface_key = "surface_mediane" if use_median else "surface_moyenne"
-            loyer_key = "loyer_med_m2"
-            ventes_by_type = {r["type"]: r for r in (ventes_lignes or [])}
-            loc_by_type = {r["type"]: r for r in (loc_lignes or [])}
-            # Précalcul des charges par type pour Maisons (TEOM) et Appartements (10 % loyer), puis pondération pour Maisons/Appart.
-            charges_pre = {}
-            for type_label in ["Maisons", "Appartements"]:
-                v = ventes_by_type.get(type_label, {})
-                l = loc_by_type.get(type_label, {})
-                surf = _float(v.get(surface_key))
-                loyer_m2 = _float(l.get(loyer_key))
-                if type_label == "Maisons":
-                    # Charges Maisons = TEOM (dernière année) × surface × 3 × loypredm2 (valeur locative cadastrale)
-                    if taux_teom is not None and surf is not None and surf > 0 and loyer_ref is not None:
-                        charges_pre[type_label] = (taux_teom / 100.0) * surf * 3 * loyer_ref
-                    else:
-                        charges_pre[type_label] = None
-                else:
-                    # Appartements : 10 % × loyer_m2 × surface × 12
-                    charges_pre[type_label] = (0.10 * loyer_m2 * surf * 12) if (loyer_m2 is not None and surf is not None and surf > 0) else None
-            # Charges pondérées pour Maisons/Appart.
-            if charges_pre.get("Maisons") is not None and charges_pre.get("Appartements") is not None and total_log > 0:
-                charges_pre["Maisons/Appart."] = (nb_maisons_agreg * charges_pre["Maisons"] + nb_apparts_agreg * charges_pre["Appartements"]) / total_log
-            else:
-                charges_pre["Maisons/Appart."] = charges_pre.get("Maisons") if nb_apparts_agreg == 0 else (charges_pre.get("Appartements") if nb_maisons_agreg == 0 else None)
-
-            out = []
-            for type_label, poids in [
-                ("Maisons/Appart.", total_log),
-                ("Maisons", nb_maisons_agreg),
-                ("Appartements", nb_apparts_agreg),
-            ]:
-                v = ventes_by_type.get(type_label, {})
-                l = loc_by_type.get(type_label, {})
-                prix_m2 = _float(v.get(prix_m2_key))
-                prix_total = _float(v.get(prix_total_key))
-                loyer_m2 = _float(l.get(loyer_key))
-                surface_mediane = _float(v.get("surface_mediane"))
-                charges = charges_pre.get(type_label)
-                if prix_m2 is None or prix_m2 <= 0:
-                    out.append({"type_bien": type_label, "renta_brute": None, "renta_hc": None, "charges_mediane": None, "renta_nette": None})
-                    continue
-                renta_brute = (loyer_m2 * 12 / prix_m2 * 100) if loyer_m2 is not None else None
-                # Dénominateur : prix_médian × 1,10 (ou prix_moyen pour les moyennes)
-                denom = (prix_total * 1.10) if (prix_total is not None and prix_total > 0) else None
-                # Rentabilité HC = (loyer_m2 × surface_mediane × 12 − Taxe foncière) / (prix_median × 1,10) × 100
-                renta_hc = None
-                if loyer_m2 is not None and surface_mediane is not None and surface_mediane > 0 and denom:
-                    renta_hc = (loyer_m2 * surface_mediane * 12 - (tf_mediane or 0)) / denom * 100
-                # Rentabilité nette = (loyer_m2 × surface_mediane × 12 × 75 % − 25 % × Charges − TF) / (prix_median × 1,10) × 100
-                renta_nette = None
-                if loyer_m2 is not None and surface_mediane is not None and surface_mediane > 0 and denom and charges is not None:
-                    renta_nette = (loyer_m2 * surface_mediane * 12 * 0.75 - 0.25 * charges - (tf_mediane or 0)) / denom * 100
-                out.append({
-                    "type_bien": type_label,
-                    "renta_brute": round(renta_brute, 2) if renta_brute is not None else None,
-                    "renta_hc": round(renta_hc, 2) if renta_hc is not None else None,
-                    "charges_mediane": round(charges, 2) if charges is not None else None,
-                    "renta_nette": round(renta_nette, 2) if renta_nette is not None else None,
-                })
-            return out
-
-        renta_med = build_renta_lignes(ventes_lignes, loc_lignes, use_median=True) if ventes_lignes and loc_lignes else []
-        renta_moy = build_renta_lignes(ventes_lignes, loc_lignes, use_median=False) if ventes_lignes and loc_lignes else []
+        renta_med = _build_renta_lignes(ventes_lignes, loc_lignes, parc_data, loyer_ref, taux_tfb, taux_teom, use_median=True) if ventes_lignes and loc_lignes else []
+        renta_moy = _build_renta_lignes(ventes_lignes, loc_lignes, parc_data, loyer_ref, taux_tfb, taux_teom, use_median=False) if ventes_lignes and loc_lignes else []
 
         cur.close()
         return {
@@ -1049,6 +1055,117 @@ def get_fiche_logement(
     finally:
         if conn is not None:
             conn.close()
+
+
+@app.get("/api/comparaison_scores")
+def get_comparaison_scores(
+    code_dept: Optional[List[str]] = Query(None, description="Code département (répété pour chaque commune)"),
+    code_postal: Optional[List[str]] = Query(None, description="Code postal (répété pour chaque commune)"),
+    commune: Optional[List[str]] = Query(None, description="Nom commune (répété pour chaque commune)"),
+    score_principal: str = Query("renta_nette", description="Score principal: renta_brute, renta_nette"),
+    n_max: int = Query(100, ge=1, le=500, description="Nombre max de communes à retourner (optionnel)"),
+    scores_secondaires: Optional[List[str]] = Query(None, description="Scores secondaires (taux_tfb, taux_teom, etc.)"),
+):
+    """
+    Retourne le classement des communes **de la liste fournie** selon le score principal.
+    La liste est fournie par paramètres répétés : code_dept, code_postal, commune (même ordre pour chaque commune).
+    Données calculées à la volée (rentabilité brute/nette comme sur la fiche commune, fiscalité).
+    """
+    if score_principal not in ("renta_brute", "renta_nette"):
+        score_principal = "renta_nette"
+    # Construire la liste (code_dept, code_postal, commune) à partir des listes envoyées
+    depts = [str(x or "").strip() for x in (code_dept or [])]
+    postals = [str(x or "").strip() for x in (code_postal or [])]
+    noms = [str(x or "").strip() for x in (commune or [])]
+    n = max(len(depts), len(postals), len(noms))
+    print("[comparaison_scores] entrée: len(code_dept)=%s, len(code_postal)=%s, len(commune)=%s, n=%s" % (len(depts), len(postals), len(noms), n))
+    # Aligner les trois listes (au cas où l'une est plus courte)
+    while len(depts) < n:
+        depts.append("")
+    while len(postals) < n:
+        postals.append("")
+    while len(noms) < n:
+        noms.append("")
+    communes = [(depts[i], postals[i], noms[i]) for i in range(n) if depts[i] and postals[i] and noms[i]]
+    print("[comparaison_scores] communes construites: %s" % (communes,))
+    if not communes:
+        raise HTTPException(status_code=400, detail="Au moins une commune est requise (code_dept, code_postal, commune pour chaque).")
+
+    rows = []
+    for c_dept, c_postal, c_commune in communes:
+        print("[comparaison_scores] traitement: dept=%s cp=%s commune=%s" % (c_dept, c_postal, c_commune))
+        try:
+            # Appel direct : passer tous les paramètres pour éviter que les défauts Query(...) soient utilisés (sinon type_local/annee_* deviennent Query et cassent la requête / int())
+            print("[comparaison_scores] -> get_stats(niveau=commune, code_dept=%r, code_postal=%r, commune=%r, annee_min=None, annee_max=None)" % (c_dept, c_postal, c_commune))
+            stats = get_stats(
+                niveau="commune",
+                region_id=None,
+                code_dept=c_dept,
+                code_postal=c_postal,
+                commune=c_commune,
+                type_local=None,
+                surface_cat=None,
+                pieces_cat=None,
+                annee_min=None,
+                annee_max=None,
+            )
+            print("[comparaison_scores] -> get_fiche_logement(code_dept=%r, code_postal=%r, commune=%r)" % (c_dept, c_postal, c_commune))
+            fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
+        except Exception as e:
+            print("[comparaison_scores] erreur pour %s (%s %s): %s" % (c_commune, c_dept, c_postal, e))
+            continue
+        g = (stats.get("global") or {})
+        loypredm2 = stats.get("loypredm2")  # loyer prévisionnel €/m²/mois (loyers_communes, via ref_communes)
+        prix_m2_moy = g.get("prix_m2_moyenne")  # prix au m² moyen (vf_communes agrégé)
+        # Rentabilité brute = (loyer annuel au m² / prix au m²) × 100  (même formule que fiche_commune)
+        renta_brute = None
+        if loypredm2 is not None and prix_m2_moy is not None and prix_m2_moy > 0:
+            try:
+                renta_brute = round((float(loypredm2) * 12 / float(prix_m2_moy)) * 100, 2)
+            except (TypeError, ValueError):
+                pass
+        # Rentabilité nette = 1ère ligne "Maisons/Appart." de fiche-logement (après charges, TF, etc.)
+        renta_nette = None
+        renta_brute_maisons = renta_nette_maisons = renta_brute_appts = renta_nette_appts = None
+        if fiche.get("rentabilite_mediane") and fiche["rentabilite_mediane"].get("lignes"):
+            lignes = fiche["rentabilite_mediane"]["lignes"]
+            if len(lignes) > 0:
+                renta_nette = lignes[0].get("renta_nette")
+            if len(lignes) > 1:
+                renta_brute_maisons = lignes[1].get("renta_brute")
+                renta_nette_maisons = lignes[1].get("renta_nette")
+            if len(lignes) > 2:
+                renta_brute_appts = lignes[2].get("renta_brute")
+                renta_nette_appts = lignes[2].get("renta_nette")
+        taux_tfb = None
+        taux_teom = None
+        if fiche.get("fiscalite") and len(fiche["fiscalite"]) > 0:
+            taux_tfb = fiche["fiscalite"][0].get("taux_tfb")
+            taux_teom = fiche["fiscalite"][0].get("taux_teom")
+        region = stats.get("reg_nom") or ""
+        nom_commune = stats.get("nom_standard") or c_commune
+        out = {
+            "code_dept": c_dept,
+            "code_postal": c_postal,
+            "commune": nom_commune,
+            "region": region,
+            "renta_brute": renta_brute,
+            "renta_nette": renta_nette,
+            "renta_brute_maisons": round(renta_brute_maisons, 2) if renta_brute_maisons is not None else None,
+            "renta_nette_maisons": round(renta_nette_maisons, 2) if renta_nette_maisons is not None else None,
+            "renta_brute_appts": round(renta_brute_appts, 2) if renta_brute_appts is not None else None,
+            "renta_nette_appts": round(renta_nette_appts, 2) if renta_nette_appts is not None else None,
+            "taux_tfb": float(taux_tfb) if taux_tfb is not None else None,
+            "taux_teom": float(taux_teom) if taux_teom is not None else None,
+        }
+        rows.append(out)
+        print("[comparaison_scores] ok: %s -> renta_brute=%s renta_nette=%s" % (nom_commune, renta_brute, renta_nette))
+    # Tri par score principal décroissant (nulls en dernier)
+    rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
+    if n_max and len(rows) > n_max:
+        rows = rows[:n_max]
+    print("[comparaison_scores] sortie: %s ligne(s) retournée(s)" % len(rows))
+    return {"rows": rows}
 
 
 @app.get("/api/ventes", response_model=List[Vente])

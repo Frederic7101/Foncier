@@ -115,7 +115,11 @@
       .comparaison-selected-list .btn-vider { margin-left: 0.5rem; font-size: 0.8rem; color: #6b7280; background: none; border: none; cursor: pointer; text-decoration: underline; }
       .comparaison-selected-list .btn-vider:hover { color: #111; }
 
-      .comparaison-table-wrap { background: #fff; border-radius: 0.75rem; padding: 0; margin-top: 1rem; box-shadow: 0 8px 20px rgba(15,23,42,0.08); overflow-x: auto; }
+      .comparaison-tables-wrap { margin-top: 1rem; }
+      .comparaison-table-block { margin-bottom: 2rem; }
+      .comparaison-table-block:last-child { margin-bottom: 0; }
+      .comparaison-table-title { font-size: 1rem; color: #374151; font-weight: 600; margin: 0 0 0.5rem; padding: 0; }
+      .comparaison-table-wrap { background: #fff; border-radius: 0.75rem; padding: 0; margin-top: 0.5rem; box-shadow: 0 8px 20px rgba(15,23,42,0.08); overflow-x: auto; }
       .comparaison-table {
         width: 100%;
         border-collapse: collapse;
@@ -130,10 +134,15 @@
       .comparaison-table tbody tr:last-child td { border-bottom: none; }
       .comparaison-table .commune-link { color: #2563eb; text-decoration: none; font-weight: 500; }
       .comparaison-table .commune-link:hover { text-decoration: underline; }
+      .comparaison-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+      .comparaison-table th.sortable:hover { background: #e2e8f0; }
+      .comparaison-table th.sortable .sort-icon { font-size: 0.7em; margin-left: 0.2rem; opacity: 0.7; }
       #comparaison-empty, #comparaison-loading, #comparaison-error { padding: 1.5rem; text-align: center; color: #6b7280; font-size: 0.9rem; }
       #comparaison-error { color: #dc2626; }
-      #comparaison-loading { display: none; }
-      #comparaison-loading.visible { display: block; }
+      #comparaison-loading { display: none; align-items: center; justify-content: center; gap: 0.5rem; }
+      #comparaison-loading.visible { display: flex; }
+      #comparaison-loading .sablier-icon { display: inline-block; font-size: 1.5rem; animation: sablier-tourne 1.2s linear infinite; }
+      @keyframes sablier-tourne { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
@@ -153,7 +162,7 @@
       <main>
         <section class="comparaison-controls">
           <h2>Périmètre géographique</h2>
-          <p class="help">Choisissez un périmètre (région / département) ou ajoutez directement des communes via la recherche.</p>
+          <p class="help">Ajoutez des communes à la liste via la recherche rapide ou le sélecteur (région/département/commune), puis cliquez sur Comparer.</p>
           <div class="comparaison-filters">
             <div class="field">
               <label for="comparaison-region">Région</label>
@@ -183,13 +192,13 @@
           </div>
 
           <div class="comparaison-scores-block">
-            <h3>Scores</h3>
+            <h3>Indicateurs</h3>
             <div class="comparaison-scores-row">
               <div class="field">
-                <label for="comparaison-score-principal">Score principal</label>
-                <select id="comparaison-score-principal">
-                  <option value="renta_brute">Rentabilité brute simulée</option>
-                  <option value="renta_nette">Rentabilité nette simulée</option>
+                <label for="comparaison-categorie">Catégorie d'indicateurs</label>
+                <select id="comparaison-categorie">
+                  <option value="rentabilite">Rentabilité</option>
+                  <option value="taxes">Taxes</option>
                 </select>
               </div>
               <div class="field">
@@ -202,13 +211,15 @@
                 <button type="button" class="stats-reset-btn" id="comparaison-reset-btn">Réinitialiser</button>
               </div>
             </div>
-            <div class="comparaison-scores-row">
-              <span style="font-size: 0.85rem; color: #6b7280;">Scores secondaires (affichage dans le tableau) :</span>
-              <div class="score-secondary">
-                <label><input type="checkbox" id="score-sec-renta-brute" value="renta_brute" /> Rentabilité brute</label>
-                <label><input type="checkbox" id="score-sec-renta-nette" value="renta_nette" /> Rentabilité nette</label>
-                <label><input type="checkbox" id="score-sec-tfb" value="taux_tfb" /> Taux TF</label>
-                <label><input type="checkbox" id="score-sec-teom" value="taux_teom" /> Taux TEOM</label>
+            <div class="comparaison-scores-row" id="comparaison-indicators-row">
+              <span style="font-size: 0.85rem; color: #6b7280;">Indicateurs (colonnes du tableau) :</span>
+              <div class="score-secondary" id="indicators-rentabilite">
+                <label><input type="checkbox" id="ind-renta-brute" value="renta_brute" checked /> Renta. brute</label>
+                <label><input type="checkbox" id="ind-renta-nette" value="renta_nette" checked /> Renta. nette</label>
+              </div>
+              <div class="score-secondary" id="indicators-taxes" style="display: none;">
+                <label><input type="checkbox" id="ind-taux-tfb" value="taux_tfb" checked /> Taux TF</label>
+                <label><input type="checkbox" id="ind-taux-teom" value="taux_teom" checked /> Taux TEOM</label>
               </div>
             </div>
           </div>
@@ -220,23 +231,37 @@
           </div>
         </section>
 
-        <div class="comparaison-table-wrap">
-          <div id="comparaison-empty">Choisissez un périmètre (au minimum un département), un score principal et cliquez sur Comparer.</div>
-          <div id="comparaison-loading" aria-hidden="true">Chargement…</div>
+        <div class="comparaison-tables-wrap">
+          <div id="comparaison-empty">Ajoutez au moins une commune à la liste ci‑dessus (recherche ou sélecteur), choisissez les indicateurs et cliquez sur Comparer.</div>
+          <div id="comparaison-loading" aria-hidden="true"><span class="sablier-icon" aria-hidden="true">⏳</span> Chargement…</div>
           <div id="comparaison-error" role="alert" hidden></div>
-          <table class="comparaison-table" id="comparaison-table" aria-hidden="true">
-            <thead id="comparaison-thead">
-              <tr>
-                <th class="col-num">Rang</th>
-                <th>Région</th>
-                <th class="col-num">Code dépt</th>
-                <th class="col-num">Code postal</th>
-                <th>Commune</th>
-                <th class="col-num" id="th-score-principal">Score</th>
-              </tr>
-            </thead>
-            <tbody id="comparaison-tbody"></tbody>
-          </table>
+          <div class="comparaison-table-block" id="comparaison-block-all" aria-hidden="true">
+            <h3 class="comparaison-table-title">Indicateurs pour les maisons &amp; appartements</h3>
+            <div class="comparaison-table-wrap">
+              <table class="comparaison-table" id="comparaison-table-all">
+                <thead id="comparaison-thead-all"><tr><th class="col-num">Rang</th><th>Région</th><th class="col-num">Code dépt</th><th class="col-num">Code postal</th><th>Commune</th></tr></thead>
+                <tbody id="comparaison-tbody-all"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="comparaison-table-block" id="comparaison-block-maisons" aria-hidden="true">
+            <h3 class="comparaison-table-title">Indicateurs pour les maisons</h3>
+            <div class="comparaison-table-wrap">
+              <table class="comparaison-table" id="comparaison-table-maisons">
+                <thead id="comparaison-thead-maisons"><tr><th class="col-num">Rang</th><th>Région</th><th class="col-num">Code dépt</th><th class="col-num">Code postal</th><th>Commune</th></tr></thead>
+                <tbody id="comparaison-tbody-maisons"></tbody>
+              </table>
+            </div>
+          </div>
+          <div class="comparaison-table-block" id="comparaison-block-appts" aria-hidden="true">
+            <h3 class="comparaison-table-title">Indicateurs pour les appartements</h3>
+            <div class="comparaison-table-wrap">
+              <table class="comparaison-table" id="comparaison-table-appts">
+                <thead id="comparaison-thead-appts"><tr><th class="col-num">Rang</th><th>Région</th><th class="col-num">Code dépt</th><th class="col-num">Code postal</th><th>Commune</th></tr></thead>
+                <tbody id="comparaison-tbody-appts"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </main>
     </div>
@@ -264,8 +289,99 @@
         }
 
         function getScoreLabel(key) {
-          const labels = { renta_brute: "Renta. brute", renta_nette: "Renta. nette", taux_tfb: "Taux TF", taux_teom: "Taux TEOM" };
+          var labels = { renta_brute: "Renta. brute", renta_nette: "Renta. nette", renta_brute_maisons: "Renta. brute", renta_nette_maisons: "Renta. nette", renta_brute_appts: "Renta. brute", renta_nette_appts: "Renta. nette", taux_tfb: "Taux TF", taux_teom: "Taux TEOM" };
           return labels[key] || key;
+        }
+
+        var CATEGORY_INDICATORS = { rentabilite: ["renta_brute", "renta_nette"], taxes: ["taux_tfb", "taux_teom"] };
+        var CATEGORY_LABELS = { rentabilite: "Rentabilité", taxes: "Taxes" };
+        var TABLE_BLOCKS = [
+          { id: "all", keyMap: { renta_brute: "renta_brute", renta_nette: "renta_nette", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
+          { id: "maisons", keyMap: { renta_brute: "renta_brute_maisons", renta_nette: "renta_nette_maisons", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
+          { id: "appts", keyMap: { renta_brute: "renta_brute_appts", renta_nette: "renta_nette_appts", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } }
+        ];
+        var lastComparaisonRows = [];
+        var lastTableConfigs = [];
+        var sortByTable = { all: { key: null, desc: true }, maisons: { key: null, desc: true }, appts: { key: null, desc: true } };
+
+        function getIndicatorCheckboxIds(category) {
+          if (category === "rentabilite") return ["ind-renta-brute", "ind-renta-nette"];
+          if (category === "taxes") return ["ind-taux-tfb", "ind-taux-teom"];
+          return [];
+        }
+
+        function updateIndicatorVisibility() {
+          var cat = document.getElementById("comparaison-categorie").value;
+          document.getElementById("indicators-rentabilite").style.display = cat === "rentabilite" ? "" : "none";
+          document.getElementById("indicators-taxes").style.display = cat === "taxes" ? "" : "none";
+        }
+
+        function getSelectedIndicators() {
+          var cat = document.getElementById("comparaison-categorie").value;
+          var ids = getIndicatorCheckboxIds(cat);
+          var order = CATEGORY_INDICATORS[cat] || [];
+          var out = [];
+          order.forEach(function (key) {
+            var id = key === "renta_brute" ? "ind-renta-brute" : key === "renta_nette" ? "ind-renta-nette" : key === "taux_tfb" ? "ind-taux-tfb" : "ind-taux-teom";
+            var cb = document.getElementById(id);
+            if (cb && cb.checked) out.push({ key: key, label: getScoreLabel(key) });
+          });
+          return out;
+        }
+
+        function sortRows(rows, key, desc) {
+          var r = rows.slice();
+          r.sort(function (a, b) {
+            var va = a[key];
+            var vb = b[key];
+            var na = va == null || va === "" ? -Infinity : Number(va);
+            var nb = vb == null || vb === "" ? -Infinity : Number(vb);
+            if (na !== nb) return desc ? (nb - na) : (na - nb);
+            return 0;
+          });
+          return r;
+        }
+
+        function renderTableBody(tbodyEl, rows, indicators, sortKey, sortDesc) {
+          var sorted = (sortKey && rows.length) ? sortRows(rows, sortKey, sortDesc) : rows;
+          tbodyEl.innerHTML = sorted.map(function (row, idx) {
+            var rank = idx + 1;
+            var commune = row.commune || row.nom_commune || "—";
+            var codeDeptR = row.code_dept || "—";
+            var codePostalR = row.code_postal || row.code_postal_principal || "—";
+            var region = row.region || row.reg_nom || "—";
+            var link = (row.code_dept && row.code_postal && row.commune)
+              ? "fiche_commune.html?code_dept=" + encodeURIComponent(row.code_dept) + "&code_postal=" + encodeURIComponent(row.code_postal) + "&commune=" + encodeURIComponent(row.commune)
+              : "#";
+            var cellCommune = link !== "#" ? "<a class=\"commune-link\" href=\"" + escapeHtml(link) + "\">" + escapeHtml(commune) + "</a>" : escapeHtml(commune);
+            var cells = indicators.map(function (ind) {
+              var v = row[ind.key];
+              var s = v != null ? formatPct(v) : "—";
+              return "<td class=\"col-num\">" + s + "</td>";
+            });
+            return "<tr><td class=\"col-num\">" + rank + "</td><td>" + escapeHtml(region) + "</td><td class=\"col-num\">" + escapeHtml(codeDeptR) + "</td><td class=\"col-num\">" + escapeHtml(codePostalR) + "</td><td>" + cellCommune + "</td>" + cells.join("") + "</tr>";
+          }).join("");
+        }
+
+        function bindSortHandlers(blockId, theadEl, tbodyEl, rows, indicators) {
+          var ths = theadEl.querySelectorAll("th.sortable");
+          ths.forEach(function (th) {
+            var key = th.getAttribute("data-sort");
+            if (!key) return;
+            th.onclick = function () {
+              var st = sortByTable[blockId];
+              if (st.key === key) st.desc = !st.desc; else { st.key = key; st.desc = true; }
+              theadEl.querySelectorAll("th.sortable .sort-icon").forEach(function (span) {
+                span.textContent = "";
+              });
+              var activeTh = theadEl.querySelector('th.sortable[data-sort="' + key + '"]');
+              if (activeTh) {
+                var icon = activeTh.querySelector(".sort-icon");
+                if (icon) icon.textContent = st.desc ? " ▼" : " ▲";
+              }
+              renderTableBody(tbodyEl, rows, indicators, st.key, st.desc);
+            };
+          });
         }
 
         function fillRegions() {
@@ -360,6 +476,7 @@
 
         document.getElementById("comparaison-region").addEventListener("change", fillDepartments);
         document.getElementById("comparaison-dept").addEventListener("change", fillCommunes);
+        document.getElementById("comparaison-categorie").addEventListener("change", updateIndicatorVisibility);
 
         // Ajout d'une commune à la liste sélectionnée (utilisé par autocomplete + select)
         function addSelectedCommuneItem(item) {
@@ -431,58 +548,44 @@
         })();
 
         function runComparaison() {
-          const regionId = document.getElementById("comparaison-region").value;
-          const codeDept = document.getElementById("comparaison-dept").value;
-          const communeOpt = document.getElementById("comparaison-commune").value;
-          const scorePrincipal = document.getElementById("comparaison-score-principal").value;
-          const nMax = parseInt(document.getElementById("comparaison-n-max").value, 10) || 20;
-          const secRentaBrute = document.getElementById("score-sec-renta-brute").checked;
-          const secRentaNette = document.getElementById("score-sec-renta-nette").checked;
-          const secTfb = document.getElementById("score-sec-tfb").checked;
-          const secTeom = document.getElementById("score-sec-teom").checked;
-          const scoresSecondaires = [];
-          if (secRentaBrute) scoresSecondaires.push("renta_brute");
-          if (secRentaNette) scoresSecondaires.push("renta_nette");
-          if (secTfb) scoresSecondaires.push("taux_tfb");
-          if (secTeom) scoresSecondaires.push("taux_teom");
+          var cat = document.getElementById("comparaison-categorie").value;
+          var indicators = getSelectedIndicators();
+          var nMax = parseInt(document.getElementById("comparaison-n-max").value, 10) || 20;
+          var scorePrincipal = indicators.length ? indicators[0].key : (CATEGORY_INDICATORS[cat] || [])[0] || "renta_brute";
+          var scoresSecondaires = indicators.map(function (i) { return i.key; });
+          if (scoresSecondaires.length === 0) scoresSecondaires = CATEGORY_INDICATORS[cat] ? CATEGORY_INDICATORS[cat].slice(0, 1) : ["renta_brute"];
 
-          const emptyEl = document.getElementById("comparaison-empty");
-          const loadingEl = document.getElementById("comparaison-loading");
-          const errorEl = document.getElementById("comparaison-error");
-          const tableEl = document.getElementById("comparaison-table");
-          const theadEl = document.getElementById("comparaison-thead");
-          const tbodyEl = document.getElementById("comparaison-tbody");
+          var emptyEl = document.getElementById("comparaison-empty");
+          var loadingEl = document.getElementById("comparaison-loading");
+          var errorEl = document.getElementById("comparaison-error");
 
-          if (!codeDept && selectedCommunes.length === 0) {
-            errorEl.textContent = "Veuillez choisir au moins un département ou ajouter des communes.";
+          if (selectedCommunes.length === 0) {
+            errorEl.textContent = "Ajoutez au moins une commune à la liste (recherche rapide ou sélecteur) puis cliquez sur Comparer.";
             errorEl.hidden = false;
             emptyEl.style.display = "none";
-            tableEl.setAttribute("aria-hidden", "true");
+            TABLE_BLOCKS.forEach(function (block) {
+              var blockEl = document.getElementById("comparaison-block-" + block.id);
+              if (blockEl) blockEl.setAttribute("aria-hidden", "true");
+            });
             return;
           }
           errorEl.hidden = true;
           emptyEl.style.display = "none";
           loadingEl.classList.add("visible");
-          tableEl.setAttribute("aria-hidden", "true");
+          TABLE_BLOCKS.forEach(function (block) {
+            var blockEl = document.getElementById("comparaison-block-" + block.id);
+            if (blockEl) blockEl.setAttribute("aria-hidden", "true");
+          });
 
-          const params = new URLSearchParams();
-          if (regionId) params.set("region_id", regionId);
-          if (codeDept) params.set("code_dept", codeDept);
-          if (communeOpt) {
-            try {
-              const c = JSON.parse(communeOpt);
-              if (c.commune) params.set("commune", c.commune);
-              if (c.code_postal) params.set("code_postal", c.code_postal);
-            } catch (e) {}
-          }
+          var params = new URLSearchParams();
           params.set("score_principal", scorePrincipal);
           params.set("n_max", String(nMax));
           scoresSecondaires.forEach(function (s) { params.append("scores_secondaires", s); });
-          if (selectedCommunes.length > 0) {
-            selectedCommunes.forEach(function (c) {
-              params.append("code_insee", c.code_insee || "");
-            });
-          }
+          selectedCommunes.forEach(function (c) {
+            params.append("code_dept", c.code_dept || "");
+            params.append("code_postal", c.code_postal || "");
+            params.append("commune", c.commune || "");
+          });
 
           fetch(API_BASE + "/api/comparaison_scores?" + params.toString())
             .then(function (r) {
@@ -491,32 +594,47 @@
             })
             .then(function (data) {
               loadingEl.classList.remove("visible");
-              const rows = data.rows || data.lignes || data.communes || [];
-              const scorePrincipalLabel = getScoreLabel(scorePrincipal);
-              theadEl.innerHTML = "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th class=\"col-num\">Code postal</th><th>Commune</th><th class=\"col-num\">" + escapeHtml(scorePrincipalLabel) + "</th>" +
-                scoresSecondaires.map(function (s) { return "<th class=\"col-num\">" + escapeHtml(getScoreLabel(s)) + "</th>"; }).join("") + "</tr>";
-              tbodyEl.innerHTML = rows.map(function (row, idx) {
-                const rank = idx + 1;
-                const commune = row.commune || row.nom_commune || "—";
-                const codeDeptR = row.code_dept || "—";
-                const codePostalR = row.code_postal || row.code_postal_principal || "—";
-                const region = row.region || row.reg_nom || "—";
-                const scoreVal = row[scorePrincipal] != null ? formatPct(row[scorePrincipal]) : "—";
-                const link = (row.code_dept && row.code_postal && row.commune)
-                  ? "fiche_commune.html?code_dept=" + encodeURIComponent(row.code_dept) + "&code_postal=" + encodeURIComponent(row.code_postal) + "&commune=" + encodeURIComponent(row.commune)
-                  : "#";
-                const cellCommune = link !== "#" ? "<a class=\"commune-link\" href=\"" + escapeHtml(link) + "\">" + escapeHtml(commune) + "</a>" : escapeHtml(commune);
-                const secCells = scoresSecondaires.map(function (s) {
-                  const v = row[s];
-                  return "<td class=\"col-num\">" + (v != null ? (s.indexOf("taux") === 0 ? formatPct(v) : formatPct(v)) : "—") + "</td>";
-                }).join("");
-                return "<tr><td class=\"col-num\">" + rank + "</td><td>" + escapeHtml(region) + "</td><td class=\"col-num\">" + escapeHtml(codeDeptR) + "</td><td class=\"col-num\">" + escapeHtml(codePostalR) + "</td><td>" + cellCommune + "</td><td class=\"col-num\">" + scoreVal + "</td>" + secCells + "</tr>";
-              }).join("");
+              var rows = data.rows || data.lignes || data.communes || [];
+              var displayIndicators = indicators.length ? indicators : [{ key: scorePrincipal, label: CATEGORY_LABELS[cat] || getScoreLabel(scorePrincipal) }];
+              lastComparaisonRows = rows;
+
+              TABLE_BLOCKS.forEach(function (block) {
+                var tableIndicators = [];
+                displayIndicators.forEach(function (ind) {
+                  var tableKey = block.keyMap[ind.key];
+                  if (tableKey != null) tableIndicators.push({ key: tableKey, label: getScoreLabel(tableKey) });
+                });
+                if (tableIndicators.length === 0 && displayIndicators.length > 0) {
+                  var k = displayIndicators[0].key;
+                  tableIndicators = [{ key: block.keyMap[k] != null ? block.keyMap[k] : k, label: getScoreLabel(block.keyMap[k] || k) }];
+                }
+                var theadElBloc = document.getElementById("comparaison-thead-" + block.id);
+                var tbodyElBloc = document.getElementById("comparaison-tbody-" + block.id);
+                var blockEl = document.getElementById("comparaison-block-" + block.id);
+                sortByTable[block.id] = { key: tableIndicators[0].key, desc: true };
+                var st = sortByTable[block.id];
+                var theadRow = '<tr><th class="col-num">Rang</th><th>Région</th><th class="col-num">Code dépt</th><th class="col-num">Code postal</th><th>Commune</th>';
+                tableIndicators.forEach(function (ind, i) {
+                  var label = escapeHtml(ind.label);
+                  var dir = i === 0 ? " ▼" : "";
+                  theadRow += '<th class="col-num sortable" data-sort="' + escapeHtml(ind.key) + '" data-label="' + label.replace(/"/g, "&quot;") + '">' + label + '<span class="sort-icon">' + dir + '</span></th>';
+                });
+                theadRow += "</tr>";
+                theadElBloc.innerHTML = theadRow;
+                renderTableBody(tbodyElBloc, rows, tableIndicators, st.key, st.desc);
+                bindSortHandlers(block.id, theadElBloc, tbodyElBloc, rows, tableIndicators);
+                if (blockEl) blockEl.removeAttribute("aria-hidden");
+              });
+
               if (rows.length === 0) {
-                emptyEl.textContent = "Aucune commune trouvée pour ce périmètre.";
+                emptyEl.textContent = "Aucune donnée retournée pour les communes sélectionnées.";
                 emptyEl.style.display = "block";
+                TABLE_BLOCKS.forEach(function (block) {
+                  var blockEl = document.getElementById("comparaison-block-" + block.id);
+                  if (blockEl) blockEl.setAttribute("aria-hidden", "true");
+                });
               } else {
-                tableEl.removeAttribute("aria-hidden");
+                emptyEl.style.display = "none";
               }
             })
             .catch(function (err) {
@@ -524,7 +642,10 @@
               errorEl.textContent = err.message || "Erreur lors du chargement.";
               errorEl.hidden = false;
               emptyEl.style.display = "none";
-              tableEl.setAttribute("aria-hidden", "true");
+              TABLE_BLOCKS.forEach(function (block) {
+                var blockEl = document.getElementById("comparaison-block-" + block.id);
+                if (blockEl) blockEl.setAttribute("aria-hidden", "true");
+              });
             });
         }
 
@@ -547,22 +668,26 @@
           if (deptSelect) deptSelect.value = "";
           fillCommunes();
           if (searchInput) searchInput.value = "";
-          document.getElementById("score-sec-renta-brute").checked = false;
-          document.getElementById("score-sec-renta-nette").checked = false;
-          document.getElementById("score-sec-tfb").checked = false;
-          document.getElementById("score-sec-teom").checked = false;
-          document.getElementById("comparaison-score-principal").value = "renta_brute";
+          document.getElementById("ind-renta-brute").checked = true;
+          document.getElementById("ind-renta-nette").checked = true;
+          document.getElementById("ind-taux-tfb").checked = true;
+          document.getElementById("ind-taux-teom").checked = true;
+          document.getElementById("comparaison-categorie").value = "rentabilite";
+          updateIndicatorVisibility();
           document.getElementById("comparaison-n-max").value = "20";
           var emptyEl = document.getElementById("comparaison-empty");
           var tableEl = document.getElementById("comparaison-table");
           var errorEl = document.getElementById("comparaison-error");
           var loadingEl = document.getElementById("comparaison-loading");
           if (emptyEl) { emptyEl.style.display = "block"; }
-          if (tableEl) { tableEl.setAttribute("aria-hidden", "true"); }
+          TABLE_BLOCKS.forEach(function (block) {
+            var blockEl = document.getElementById("comparaison-block-" + block.id);
+            var tbodyEl = document.getElementById("comparaison-tbody-" + block.id);
+            if (blockEl) blockEl.setAttribute("aria-hidden", "true");
+            if (tbodyEl) tbodyEl.innerHTML = "";
+          });
           if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
           if (loadingEl) { loadingEl.classList.remove("visible"); }
-          var tbodyEl = document.getElementById("comparaison-tbody");
-          if (tbodyEl) { tbodyEl.innerHTML = ""; }
         });
 
         function initNavFromUrl() {
@@ -577,12 +702,14 @@
 
         if (document.readyState === "loading") {
           document.addEventListener("DOMContentLoaded", function () {
+            updateIndicatorVisibility();
             loadGeo().then(function () {
               initFromUrlParams();
               initNavFromUrl();
             });
           });
         } else {
+          updateIndicatorVisibility();
           loadGeo().then(function () {
             initFromUrlParams();
             initNavFromUrl();
