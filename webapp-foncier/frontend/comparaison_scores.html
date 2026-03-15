@@ -62,6 +62,14 @@
       }
       .comparaison-controls h2 { margin: 0 0 0.75rem; font-size: 1rem; color: #374151; font-weight: 600; }
       .comparaison-controls .help { font-size: 0.8rem; color: #6b7280; margin-bottom: 0.75rem; }
+      .comparaison-mode-row { margin-bottom: 0.75rem; display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem; }
+      .comparaison-mode-label { font-size: 0.9rem; color: #4b5563; font-weight: 500; }
+      .comparaison-mode-opt { font-weight: normal; cursor: pointer; display: inline-flex; align-items: center; gap: 0.35rem; }
+      .comparaison-filters-wrap { margin-bottom: 0.5rem; }
+      .comparaison-checkboxes { max-height: 140px; overflow-y: auto; display: flex; flex-wrap: wrap; gap: 0.35rem 1rem; margin-bottom: 0.35rem; padding: 0.35rem 0; }
+      .comparaison-checkboxes label { font-weight: normal; white-space: nowrap; }
+      .comparaison-check-all { font-size: 0.85rem; color: #2563eb; margin-top: 0.25rem; display: inline-block; }
+      .comparaison-multi-row .field-label { display: block; font-size: 0.85rem; color: #4b5563; margin-bottom: 0.25rem; }
       .comparaison-filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: flex-end; }
       .comparaison-filters .field { margin: 0; }
       .comparaison-filters label { display: block; font-size: 0.85rem; color: #4b5563; margin-bottom: 0.25rem; }
@@ -139,10 +147,13 @@
       .comparaison-table th.sortable .sort-icon { font-size: 0.7em; margin-left: 0.2rem; opacity: 0.7; }
       #comparaison-empty, #comparaison-loading, #comparaison-error { padding: 1.5rem; text-align: center; color: #6b7280; font-size: 0.9rem; }
       #comparaison-error { color: #dc2626; }
-      #comparaison-loading { display: none; align-items: center; justify-content: center; gap: 0.5rem; }
+      #comparaison-loading { display: none; align-items: center; justify-content: center; gap: 0.75rem; padding: 1.5rem; color: #6b7280; }
       #comparaison-loading.visible { display: flex; }
-      #comparaison-loading .sablier-icon { display: inline-block; font-size: 1.5rem; animation: sablier-tourne 1.2s linear infinite; }
-      @keyframes sablier-tourne { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+      #comparaison-loading .comparaison-spinner {
+        width: 1.5rem; height: 1.5rem; border: 3px solid #e5e7eb; border-top-color: #2563eb; border-radius: 50%;
+        animation: comparaison-spin 0.8s linear infinite;
+      }
+      @keyframes comparaison-spin { to { transform: rotate(360deg); } }
     </style>
   </head>
   <body>
@@ -162,31 +173,62 @@
       <main>
         <section class="comparaison-controls">
           <h2>Périmètre géographique</h2>
-          <p class="help">Ajoutez des communes à la liste via la recherche rapide ou le sélecteur (région/département/commune), puis cliquez sur Comparer.</p>
-          <div class="comparaison-filters">
-            <div class="field">
-              <label for="comparaison-region">Région</label>
-              <select id="comparaison-region">
-                <option value="">— Choisir une région —</option>
-              </select>
+          <p class="help">Choisissez le type de comparaison (communes, départements ou régions), puis sélectionnez les éléments à comparer et cliquez sur Comparer.</p>
+          <div class="comparaison-mode-row">
+            <span class="comparaison-mode-label">Comparer par</span>
+            <label class="comparaison-mode-opt"><input type="radio" name="comparaison-mode" value="communes" checked /> Communes</label>
+            <label class="comparaison-mode-opt"><input type="radio" name="comparaison-mode" value="departements" /> Départements</label>
+            <label class="comparaison-mode-opt"><input type="radio" name="comparaison-mode" value="regions" /> Régions</label>
+          </div>
+          <div id="comparaison-mode-communes" class="comparaison-filters-wrap">
+            <div class="comparaison-filters">
+              <div class="field">
+                <label for="comparaison-region">Région</label>
+                <select id="comparaison-region">
+                  <option value="">— Choisir une région —</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="comparaison-dept">Département</label>
+                <select id="comparaison-dept">
+                  <option value="">— Choisir un département —</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="comparaison-commune">Commune</label>
+                <select id="comparaison-commune">
+                  <option value="">— Toutes les communes du département —</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="comparaison-search">Recherche rapide (nom ou CP)</label>
+                <div class="search-input-wrap">
+                  <input id="comparaison-search" type="text" placeholder="Nom ou code postal" autocomplete="off" aria-autocomplete="list" />
+                  <ul id="comparaison-suggestions" class="comparaison-suggestions" role="listbox" aria-expanded="false" hidden></ul>
+                </div>
+              </div>
             </div>
-            <div class="field">
-              <label for="comparaison-dept">Département</label>
-              <select id="comparaison-dept">
-                <option value="">— Choisir un département —</option>
-              </select>
+          </div>
+          <div id="comparaison-mode-departements" class="comparaison-filters-wrap" style="display: none;">
+            <div class="comparaison-filters comparaison-multi-row">
+              <div class="field">
+                <span class="field-label">Région(s)</span>
+                <div id="comparaison-regions-checkboxes" class="comparaison-checkboxes"></div>
+                <label class="comparaison-check-all"><input type="checkbox" id="comparaison-all-regions" /> Toutes les régions</label>
+              </div>
+              <div class="field">
+                <span class="field-label">Département(s)</span>
+                <div id="comparaison-depts-checkboxes" class="comparaison-checkboxes"></div>
+                <label class="comparaison-check-all"><input type="checkbox" id="comparaison-all-depts" /> Toutes les départements</label>
+              </div>
             </div>
-            <div class="field">
-              <label for="comparaison-commune">Commune</label>
-              <select id="comparaison-commune">
-                <option value="">— Toutes les communes du département —</option>
-              </select>
-            </div>
-            <div class="field">
-              <label for="comparaison-search">Recherche rapide (nom ou CP)</label>
-              <div class="search-input-wrap">
-                <input id="comparaison-search" type="text" placeholder="Nom ou code postal" autocomplete="off" aria-autocomplete="list" />
-                <ul id="comparaison-suggestions" class="comparaison-suggestions" role="listbox" aria-expanded="false" hidden></ul>
+          </div>
+          <div id="comparaison-mode-regions" class="comparaison-filters-wrap" style="display: none;">
+            <div class="comparaison-filters comparaison-multi-row">
+              <div class="field">
+                <span class="field-label">Région(s)</span>
+                <div id="comparaison-regions-checkboxes-regions" class="comparaison-checkboxes"></div>
+                <label class="comparaison-check-all"><input type="checkbox" id="comparaison-all-regions-regions" /> Toutes les régions</label>
               </div>
             </div>
           </div>
@@ -202,8 +244,8 @@
                 </select>
               </div>
               <div class="field">
-                <label for="comparaison-n-max">Nombre max de communes</label>
-                <input id="comparaison-n-max" type="number" min="1" max="500" value="20" aria-label="Nombre max de communes" />
+                <label for="comparaison-n-max" id="comparaison-n-max-label">Nb max de Communes</label>
+                <input id="comparaison-n-max" type="number" min="1" max="500" value="20" aria-label="Nb max de Communes" />
               </div>
               <div class="field">
                 <label>&nbsp;</label>
@@ -225,7 +267,7 @@
           </div>
 
           <div class="comparaison-selected-list" id="comparaison-selected-block" aria-hidden="true">
-            <h3>Communes sélectionnées</h3>
+            <h3 id="comparaison-selected-title">Communes sélectionnées</h3>
             <ul id="comparaison-selected-ul"></ul>
             <button type="button" class="btn-vider" id="comparaison-vider-liste">Vider la liste</button>
           </div>
@@ -233,7 +275,7 @@
 
         <div class="comparaison-tables-wrap">
           <div id="comparaison-empty">Ajoutez au moins une commune à la liste ci‑dessus (recherche ou sélecteur), choisissez les indicateurs et cliquez sur Comparer.</div>
-          <div id="comparaison-loading" aria-hidden="true"><span class="sablier-icon" aria-hidden="true">⏳</span> Chargement…</div>
+          <div id="comparaison-loading" aria-hidden="true"><span class="comparaison-spinner" aria-hidden="true"></span> Chargement…</div>
           <div id="comparaison-error" role="alert" hidden></div>
           <div class="comparaison-table-block" id="comparaison-block-all" aria-hidden="true">
             <h3 class="comparaison-table-title">Indicateurs pour les maisons &amp; appartements</h3>
@@ -273,7 +315,8 @@
 
         const geo = { regions: [], departements: [], deptNomByCode: {} };
         let communesList = [];
-        const selectedCommunes = []; // { code_dept, code_postal, commune, code_insee? }
+        const selectedCommunes = []; // { code_dept, code_postal, commune }
+        var lastComparaisonMode = "communes"; // communes | departements | regions
 
         function escapeHtml(s) {
           if (s == null) return "";
@@ -342,23 +385,41 @@
           return r;
         }
 
-        function renderTableBody(tbodyEl, rows, indicators, sortKey, sortDesc) {
+        function getDisplayModeFromRows(rows) {
+          if (!rows.length) return "communes";
+          var r = rows[0];
+          if (r.mode === "departement") return "departements";
+          if (r.mode === "region") return "regions";
+          return "communes";
+        }
+
+        function renderTableBody(tbodyEl, rows, indicators, sortKey, sortDesc, displayMode) {
+          displayMode = displayMode || (rows.length ? getDisplayModeFromRows(rows) : "communes");
           var sorted = (sortKey && rows.length) ? sortRows(rows, sortKey, sortDesc) : rows;
           tbodyEl.innerHTML = sorted.map(function (row, idx) {
             var rank = idx + 1;
-            var commune = row.commune || row.nom_commune || "—";
-            var codeDeptR = row.code_dept || "—";
-            var codePostalR = row.code_postal || row.code_postal_principal || "—";
             var region = row.region || row.reg_nom || "—";
-            var link = (row.code_dept && row.code_postal && row.commune)
-              ? "fiche_commune.html?code_dept=" + encodeURIComponent(row.code_dept) + "&code_postal=" + encodeURIComponent(row.code_postal) + "&commune=" + encodeURIComponent(row.commune)
-              : "#";
-            var cellCommune = link !== "#" ? "<a class=\"commune-link\" href=\"" + escapeHtml(link) + "\">" + escapeHtml(commune) + "</a>" : escapeHtml(commune);
             var cells = indicators.map(function (ind) {
               var v = row[ind.key];
               var s = v != null ? formatPct(v) : "—";
               return "<td class=\"col-num\">" + s + "</td>";
             });
+            if (displayMode === "departements") {
+              var codeDeptR = row.code_dept || "—";
+              var depNom = row.dep_nom || codeDeptR;
+              return "<tr><td class=\"col-num\">" + rank + "</td><td>" + escapeHtml(region) + "</td><td class=\"col-num\">" + escapeHtml(codeDeptR) + "</td><td>" + escapeHtml(depNom) + "</td>" + cells.join("") + "</tr>";
+            }
+            if (displayMode === "regions") {
+              var codeReg = row.code_region || "—";
+              return "<tr><td class=\"col-num\">" + rank + "</td><td class=\"col-num\">" + escapeHtml(codeReg) + "</td><td>" + escapeHtml(region) + "</td>" + cells.join("") + "</tr>";
+            }
+            var commune = row.commune || row.nom_commune || "—";
+            var codeDeptR = row.code_dept || "—";
+            var codePostalR = row.code_postal || row.code_postal_principal || "—";
+            var link = (row.code_dept && row.code_postal && row.commune)
+              ? "fiche_commune.html?code_dept=" + encodeURIComponent(row.code_dept) + "&code_postal=" + encodeURIComponent(row.code_postal) + "&commune=" + encodeURIComponent(row.commune)
+              : "#";
+            var cellCommune = link !== "#" ? "<a class=\"commune-link\" href=\"" + escapeHtml(link) + "\">" + escapeHtml(commune) + "</a>" : escapeHtml(commune);
             return "<tr><td class=\"col-num\">" + rank + "</td><td>" + escapeHtml(region) + "</td><td class=\"col-num\">" + escapeHtml(codeDeptR) + "</td><td class=\"col-num\">" + escapeHtml(codePostalR) + "</td><td>" + cellCommune + "</td>" + cells.join("") + "</tr>";
           }).join("");
         }
@@ -382,6 +443,138 @@
               renderTableBody(tbodyEl, rows, indicators, st.key, st.desc);
             };
           });
+        }
+
+        function getComparaisonMode() {
+          var r = document.querySelector('input[name="comparaison-mode"]:checked');
+          return (r && r.value) || "communes";
+        }
+
+        function getNiveauLabel() {
+          var mode = getComparaisonMode();
+          return mode === "communes" ? "Communes" : mode === "departements" ? "Départements" : "Régions";
+        }
+
+        function switchModeUI() {
+          var mode = getComparaisonMode();
+          lastComparaisonMode = mode;
+          document.getElementById("comparaison-mode-communes").style.display = mode === "communes" ? "" : "none";
+          document.getElementById("comparaison-mode-departements").style.display = mode === "departements" ? "" : "none";
+          document.getElementById("comparaison-mode-regions").style.display = mode === "regions" ? "" : "none";
+          var titleEl = document.getElementById("comparaison-selected-title");
+          if (titleEl) {
+            if (mode === "communes") titleEl.textContent = "Communes sélectionnées";
+            else if (mode === "departements") titleEl.textContent = "Départements sélectionnés";
+            else titleEl.textContent = "Régions sélectionnées";
+          }
+          var nMaxLabel = document.getElementById("comparaison-n-max-label");
+          var nMaxInput = document.getElementById("comparaison-n-max");
+          var niveauText = "Nb max de " + getNiveauLabel();
+          if (nMaxLabel) nMaxLabel.textContent = niveauText;
+          if (nMaxInput) nMaxInput.setAttribute("aria-label", niveauText);
+          updateSelectedListForMode();
+        }
+
+        function fillRegionsCheckboxes(containerId) {
+          var container = document.getElementById(containerId);
+          if (!container) return;
+          container.innerHTML = (geo.regions || []).map(function (r) {
+            return "<label><input type=\"checkbox\" class=\"comparaison-region-cb\" value=\"" + escapeHtml(r.id) + "\" data-nom=\"" + escapeHtml(r.nom) + "\" /> " + escapeHtml(r.nom) + "</label>";
+          }).join("");
+        }
+
+        function fillDeptsCheckboxes() {
+          var container = document.getElementById("comparaison-depts-checkboxes");
+          if (!container) return;
+          var regionCbs = document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb:checked");
+          var selectedRegionIds = Array.from(regionCbs).map(function (cb) { return cb.value; });
+          var allDepts = geo.departements || [];
+          var deptsToShow = selectedRegionIds.length === 0
+            ? allDepts
+            : allDepts.filter(function (d) {
+                var code = typeof d === "object" ? d.code : d;
+                var reg = (geo.regions || []).find(function (r) { return (r.departements || []).indexOf(code) !== -1; });
+                return reg && selectedRegionIds.indexOf(reg.id) !== -1;
+              });
+          container.innerHTML = deptsToShow.map(function (d) {
+            var code = typeof d === "object" ? d.code : d;
+            var nom = typeof d === "object" ? d.nom : (geo.deptNomByCode[code] || code);
+            return "<label><input type=\"checkbox\" class=\"comparaison-dept-cb\" value=\"" + escapeHtml(code) + "\" data-nom=\"" + escapeHtml(nom) + "\" /> " + escapeHtml(code) + " " + escapeHtml(nom) + "</label>";
+          }).join("");
+        }
+
+        function getSelectedRegionIds() {
+          var allCb = document.getElementById("comparaison-all-regions");
+          if (allCb && allCb.checked) return (geo.regions || []).map(function (r) { return r.id; });
+          var cbs = document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb:checked");
+          return Array.from(cbs).map(function (cb) { return cb.value; });
+        }
+
+        function getSelectedRegionIdsForRegionsMode() {
+          var allCb = document.getElementById("comparaison-all-regions-regions");
+          if (allCb && allCb.checked) return (geo.regions || []).map(function (r) { return r.id; });
+          var cbs = document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb:checked");
+          return Array.from(cbs).map(function (cb) { return cb.value; });
+        }
+
+        function getSelectedDeptCodes() {
+          var allCb = document.getElementById("comparaison-all-depts");
+          if (allCb && allCb.checked) {
+            var regionIds = getSelectedRegionIds();
+            if (regionIds.length === 0) return (geo.departements || []).map(function (d) { return typeof d === "object" ? d.code : d; });
+            var codes = [];
+            (geo.regions || []).forEach(function (r) {
+              if (regionIds.indexOf(r.id) !== -1 && r.departements) codes.push.apply(codes, r.departements);
+            });
+            return codes.filter(function (c, i, a) { return a.indexOf(c) === i; });
+          }
+          var cbs = document.querySelectorAll(".comparaison-dept-cb:checked");
+          return Array.from(cbs).map(function (cb) { return cb.value; });
+        }
+
+        function updateSelectedListForMode() {
+          var block = document.getElementById("comparaison-selected-block");
+          var ul = document.getElementById("comparaison-selected-ul");
+          if (!block || !ul) return;
+          var mode = getComparaisonMode();
+          if (mode === "communes") {
+            if (selectedCommunes.length === 0) {
+              block.setAttribute("aria-hidden", "true");
+              ul.innerHTML = "";
+              return;
+            }
+            block.removeAttribute("aria-hidden");
+            ul.innerHTML = selectedCommunes.map(function (c, i) {
+              var label = escapeHtml(c.commune) + " (" + escapeHtml(c.code_postal) + ")";
+              return "<li>" + label + " <button type=\"button\" data-i=\"" + i + "\" aria-label=\"Retirer\">×</button></li>";
+            }).join("");
+            ul.querySelectorAll("button").forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                var i = parseInt(btn.getAttribute("data-i"), 10);
+                selectedCommunes.splice(i, 1);
+                updateSelectedListForMode();
+              });
+            });
+            return;
+          }
+          if (mode === "departements") {
+            var depts = getSelectedDeptCodes();
+            var names = depts.map(function (code) { return code + " " + (geo.deptNomByCode[code] || ""); });
+            if (names.length === 0) { block.setAttribute("aria-hidden", "true"); ul.innerHTML = ""; return; }
+            block.removeAttribute("aria-hidden");
+            ul.innerHTML = names.map(function (n) { return "<li>" + escapeHtml(n.trim()) + "</li>"; }).join("");
+            return;
+          }
+          if (mode === "regions") {
+            var ids = getSelectedRegionIdsForRegionsMode();
+            var names = ids.map(function (id) {
+              var r = (geo.regions || []).find(function (x) { return x.id === id; });
+              return r ? r.nom : id;
+            });
+            if (names.length === 0) { block.setAttribute("aria-hidden", "true"); ul.innerHTML = ""; return; }
+            block.removeAttribute("aria-hidden");
+            ul.innerHTML = names.map(function (n) { return "<li>" + escapeHtml(n) + "</li>"; }).join("");
+          }
         }
 
         function fillRegions() {
@@ -452,6 +645,9 @@
               geo.deptNomByCode = Object.fromEntries((geo.departements || []).map(function (d) { return [d.code, d.nom]; }));
               fillRegions();
               fillDepartments();
+              fillRegionsCheckboxes("comparaison-regions-checkboxes");
+              fillRegionsCheckboxes("comparaison-regions-checkboxes-regions");
+              fillDeptsCheckboxes();
             })
             .catch(function () {});
         }
@@ -477,6 +673,24 @@
         document.getElementById("comparaison-region").addEventListener("change", fillDepartments);
         document.getElementById("comparaison-dept").addEventListener("change", fillCommunes);
         document.getElementById("comparaison-categorie").addEventListener("change", updateIndicatorVisibility);
+        [].forEach.call(document.querySelectorAll('input[name="comparaison-mode"]'), function (radio) {
+          radio.addEventListener("change", switchModeUI);
+        });
+        (function bindMultiSelectListeners() {
+          var allRegions = document.getElementById("comparaison-all-regions");
+          var allRegionsRegions = document.getElementById("comparaison-all-regions-regions");
+          var allDepts = document.getElementById("comparaison-all-depts");
+          if (allRegions) allRegions.addEventListener("change", function () { fillDeptsCheckboxes(); updateSelectedListForMode(); });
+          if (allRegionsRegions) allRegionsRegions.addEventListener("change", updateSelectedListForMode);
+          if (allDepts) allDepts.addEventListener("change", updateSelectedListForMode);
+          document.getElementById("comparaison-mode-departements").addEventListener("change", function (e) {
+            if (e.target.classList.contains("comparaison-region-cb")) { fillDeptsCheckboxes(); updateSelectedListForMode(); }
+            if (e.target.classList.contains("comparaison-dept-cb")) updateSelectedListForMode();
+          });
+          document.getElementById("comparaison-mode-regions").addEventListener("change", function (e) {
+            if (e.target.classList.contains("comparaison-region-cb")) updateSelectedListForMode();
+          });
+        })();
 
         // Ajout d'une commune à la liste sélectionnée (utilisé par autocomplete + select)
         function addSelectedCommuneItem(item) {
@@ -499,31 +713,25 @@
         })();
 
         function renderSelectedList() {
-          const block = document.getElementById("comparaison-selected-block");
-          const ul = document.getElementById("comparaison-selected-ul");
-          if (!block || !ul) return;
-          if (selectedCommunes.length === 0) {
-            block.setAttribute("aria-hidden", "true");
-            ul.innerHTML = "";
-            return;
-          }
-          block.removeAttribute("aria-hidden");
-          ul.innerHTML = selectedCommunes.map(function (c, i) {
-            const label = escapeHtml(c.commune) + " (" + escapeHtml(c.code_postal) + ")";
-            return "<li>" + label + " <button type=\"button\" data-i=\"" + i + "\" aria-label=\"Retirer\">×</button></li>";
-          }).join("");
-          ul.querySelectorAll("button").forEach(function (btn) {
-            btn.addEventListener("click", function () {
-              const i = parseInt(btn.getAttribute("data-i"), 10);
-              selectedCommunes.splice(i, 1);
-              renderSelectedList();
-            });
-          });
+          updateSelectedListForMode();
         }
 
         document.getElementById("comparaison-vider-liste").addEventListener("click", function () {
+          var mode = getComparaisonMode();
           selectedCommunes.length = 0;
-          renderSelectedList();
+          if (mode === "departements") {
+            document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb, .comparaison-dept-cb").forEach(function (cb) { cb.checked = false; });
+            var allR = document.getElementById("comparaison-all-regions");
+            var allD = document.getElementById("comparaison-all-depts");
+            if (allR) allR.checked = false;
+            if (allD) allD.checked = false;
+            fillDeptsCheckboxes();
+          } else if (mode === "regions") {
+            document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb").forEach(function (cb) { cb.checked = false; });
+            var allR2 = document.getElementById("comparaison-all-regions-regions");
+            if (allR2) allR2.checked = false;
+          }
+          updateSelectedListForMode();
         });
 
         // Sélection via le select de communes
@@ -548,6 +756,7 @@
         })();
 
         function runComparaison() {
+          var mode = getComparaisonMode();
           var cat = document.getElementById("comparaison-categorie").value;
           var indicators = getSelectedIndicators();
           var nMax = parseInt(document.getElementById("comparaison-n-max").value, 10) || 20;
@@ -559,8 +768,28 @@
           var loadingEl = document.getElementById("comparaison-loading");
           var errorEl = document.getElementById("comparaison-error");
 
-          if (selectedCommunes.length === 0) {
+          if (mode === "communes" && selectedCommunes.length === 0) {
             errorEl.textContent = "Ajoutez au moins une commune à la liste (recherche rapide ou sélecteur) puis cliquez sur Comparer.";
+            errorEl.hidden = false;
+            emptyEl.style.display = "none";
+            TABLE_BLOCKS.forEach(function (block) {
+              var blockEl = document.getElementById("comparaison-block-" + block.id);
+              if (blockEl) blockEl.setAttribute("aria-hidden", "true");
+            });
+            return;
+          }
+          if (mode === "departements" && getSelectedDeptCodes().length === 0) {
+            errorEl.textContent = "Sélectionnez au moins un département (ou cochez « Toutes les départements ») puis cliquez sur Comparer.";
+            errorEl.hidden = false;
+            emptyEl.style.display = "none";
+            TABLE_BLOCKS.forEach(function (block) {
+              var blockEl = document.getElementById("comparaison-block-" + block.id);
+              if (blockEl) blockEl.setAttribute("aria-hidden", "true");
+            });
+            return;
+          }
+          if (mode === "regions" && getSelectedRegionIdsForRegionsMode().length === 0) {
+            errorEl.textContent = "Sélectionnez au moins une région (ou cochez « Toutes les régions ») puis cliquez sur Comparer.";
             errorEl.hidden = false;
             emptyEl.style.display = "none";
             TABLE_BLOCKS.forEach(function (block) {
@@ -578,14 +807,21 @@
           });
 
           var params = new URLSearchParams();
+          params.set("mode", mode);
           params.set("score_principal", scorePrincipal);
           params.set("n_max", String(nMax));
           scoresSecondaires.forEach(function (s) { params.append("scores_secondaires", s); });
-          selectedCommunes.forEach(function (c) {
-            params.append("code_dept", c.code_dept || "");
-            params.append("code_postal", c.code_postal || "");
-            params.append("commune", c.commune || "");
-          });
+          if (mode === "communes") {
+            selectedCommunes.forEach(function (c) {
+              params.append("code_dept", c.code_dept || "");
+              params.append("code_postal", c.code_postal || "");
+              params.append("commune", c.commune || "");
+            });
+          } else if (mode === "departements") {
+            getSelectedDeptCodes().forEach(function (code) { params.append("code_dept", code); });
+          } else {
+            getSelectedRegionIdsForRegionsMode().forEach(function (id) { params.append("code_region", id); });
+          }
 
           fetch(API_BASE + "/api/comparaison_scores?" + params.toString())
             .then(function (r) {
@@ -597,6 +833,12 @@
               var rows = data.rows || data.lignes || data.communes || [];
               var displayIndicators = indicators.length ? indicators : [{ key: scorePrincipal, label: CATEGORY_LABELS[cat] || getScoreLabel(scorePrincipal) }];
               lastComparaisonRows = rows;
+              var displayMode = getDisplayModeFromRows(rows);
+              var theadPrefix = displayMode === "departements"
+                ? "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th>Département</th>"
+                : displayMode === "regions"
+                ? "<tr><th class=\"col-num\">Rang</th><th class=\"col-num\">Code région</th><th>Région</th>"
+                : "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th class=\"col-num\">Code postal</th><th>Commune</th>";
 
               TABLE_BLOCKS.forEach(function (block) {
                 var tableIndicators = [];
@@ -613,7 +855,7 @@
                 var blockEl = document.getElementById("comparaison-block-" + block.id);
                 sortByTable[block.id] = { key: tableIndicators[0].key, desc: true };
                 var st = sortByTable[block.id];
-                var theadRow = '<tr><th class="col-num">Rang</th><th>Région</th><th class="col-num">Code dépt</th><th class="col-num">Code postal</th><th>Commune</th>';
+                var theadRow = theadPrefix;
                 tableIndicators.forEach(function (ind, i) {
                   var label = escapeHtml(ind.label);
                   var dir = i === 0 ? " ▼" : "";
@@ -621,7 +863,7 @@
                 });
                 theadRow += "</tr>";
                 theadElBloc.innerHTML = theadRow;
-                renderTableBody(tbodyElBloc, rows, tableIndicators, st.key, st.desc);
+                renderTableBody(tbodyElBloc, rows, tableIndicators, st.key, st.desc, displayMode);
                 bindSortHandlers(block.id, theadElBloc, tbodyElBloc, rows, tableIndicators);
                 if (blockEl) blockEl.removeAttribute("aria-hidden");
               });
@@ -652,42 +894,7 @@
         document.getElementById("comparaison-btn").addEventListener("click", runComparaison);
 
         document.getElementById("comparaison-reset-btn").addEventListener("click", function () {
-          selectedCommunes.length = 0;
-          renderSelectedList();
-          var baseUrl = window.location.origin + window.location.pathname;
-          window.history.replaceState({}, document.title, baseUrl);
-          if (typeof window.updateNavLinksFromCommune === "function") {
-            window.updateNavLinksFromCommune();
-          }
-          var regionSelect = document.getElementById("comparaison-region");
-          var deptSelect = document.getElementById("comparaison-dept");
-          var communeSelect = document.getElementById("comparaison-commune");
-          var searchInput = document.getElementById("comparaison-search");
-          if (regionSelect) regionSelect.value = "";
-          fillDepartments();
-          if (deptSelect) deptSelect.value = "";
-          fillCommunes();
-          if (searchInput) searchInput.value = "";
-          document.getElementById("ind-renta-brute").checked = true;
-          document.getElementById("ind-renta-nette").checked = true;
-          document.getElementById("ind-taux-tfb").checked = true;
-          document.getElementById("ind-taux-teom").checked = true;
-          document.getElementById("comparaison-categorie").value = "rentabilite";
-          updateIndicatorVisibility();
-          document.getElementById("comparaison-n-max").value = "20";
-          var emptyEl = document.getElementById("comparaison-empty");
-          var tableEl = document.getElementById("comparaison-table");
-          var errorEl = document.getElementById("comparaison-error");
-          var loadingEl = document.getElementById("comparaison-loading");
-          if (emptyEl) { emptyEl.style.display = "block"; }
-          TABLE_BLOCKS.forEach(function (block) {
-            var blockEl = document.getElementById("comparaison-block-" + block.id);
-            var tbodyEl = document.getElementById("comparaison-tbody-" + block.id);
-            if (blockEl) blockEl.setAttribute("aria-hidden", "true");
-            if (tbodyEl) tbodyEl.innerHTML = "";
-          });
-          if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
-          if (loadingEl) { loadingEl.classList.remove("visible"); }
+          window.location.reload();
         });
 
         function initNavFromUrl() {
@@ -703,16 +910,20 @@
         if (document.readyState === "loading") {
           document.addEventListener("DOMContentLoaded", function () {
             updateIndicatorVisibility();
+            switchModeUI();
             loadGeo().then(function () {
               initFromUrlParams();
               initNavFromUrl();
+              switchModeUI();
             });
           });
         } else {
           updateIndicatorVisibility();
+          switchModeUI();
           loadGeo().then(function () {
             initFromUrlParams();
             initNavFromUrl();
+            switchModeUI();
           });
         }
       })();

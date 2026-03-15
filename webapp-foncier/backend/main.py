@@ -1057,29 +1057,275 @@ def get_fiche_logement(
             conn.close()
 
 
+def _compute_one_commune_indicators(stats: dict, fiche: dict, c_dept: str, c_postal: str, c_commune: str) -> dict:
+    """À partir de get_stats et get_fiche_logement, produit un dict avec renta_brute, renta_nette, *_maisons, *_appts, taux_tfb, taux_teom, region, commune."""
+    g = (stats.get("global") or {})
+    loypredm2 = stats.get("loypredm2")
+    prix_m2_moy = g.get("prix_m2_moyenne")
+    renta_brute = None
+    if loypredm2 is not None and prix_m2_moy is not None and prix_m2_moy > 0:
+        try:
+            renta_brute = round((float(loypredm2) * 12 / float(prix_m2_moy)) * 100, 2)
+        except (TypeError, ValueError):
+            pass
+    renta_nette = None
+    renta_brute_maisons = renta_nette_maisons = renta_brute_appts = renta_nette_appts = None
+    if fiche.get("rentabilite_mediane") and fiche["rentabilite_mediane"].get("lignes"):
+        lignes = fiche["rentabilite_mediane"]["lignes"]
+        if len(lignes) > 0:
+            renta_nette = lignes[0].get("renta_nette")
+        if len(lignes) > 1:
+            renta_brute_maisons = lignes[1].get("renta_brute")
+            renta_nette_maisons = lignes[1].get("renta_nette")
+        if len(lignes) > 2:
+            renta_brute_appts = lignes[2].get("renta_brute")
+            renta_nette_appts = lignes[2].get("renta_nette")
+    taux_tfb = taux_teom = None
+    if fiche.get("fiscalite") and len(fiche["fiscalite"]) > 0:
+        taux_tfb = fiche["fiscalite"][0].get("taux_tfb")
+        taux_teom = fiche["fiscalite"][0].get("taux_teom")
+    region = stats.get("reg_nom") or ""
+    nom_commune = stats.get("nom_standard") or c_commune
+    return {
+        "code_dept": c_dept,
+        "code_postal": c_postal,
+        "commune": nom_commune,
+        "region": region,
+        "renta_brute": renta_brute,
+        "renta_nette": renta_nette,
+        "renta_brute_maisons": round(renta_brute_maisons, 2) if renta_brute_maisons is not None else None,
+        "renta_nette_maisons": round(renta_nette_maisons, 2) if renta_nette_maisons is not None else None,
+        "renta_brute_appts": round(renta_brute_appts, 2) if renta_brute_appts is not None else None,
+        "renta_nette_appts": round(renta_nette_appts, 2) if renta_nette_appts is not None else None,
+        "taux_tfb": float(taux_tfb) if taux_tfb is not None else None,
+        "taux_teom": float(taux_teom) if taux_teom is not None else None,
+    }
+
+
+def _get_communes_for_aggregation(cur, code_depts: Optional[List[str]] = None, code_regions: Optional[List[str]] = None) -> List[dict]:
+    """
+    Retourne une liste de communes (code_dept, code_postal, commune, population, dep_nom, reg_nom, code_region)
+    pour les départements ou régions donnés. Une commune n'apparaît qu'une fois (dédoublonnage par code_insee si présent).
+    """
+    if not code_depts and not code_regions:
+        return []
+    try:
+        if code_regions:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (COALESCE(c.code_insee, c.dep_code || '-' || c.nom_standard))
+                  c.dep_code AS code_dept, c.code_postal, c.nom_standard AS commune,
+                  GREATEST(COALESCE(c.population, 0)::numeric, 1) AS population,
+                  d.nom_dept AS dep_nom, r.nom_region AS reg_nom, d.code_region
+                FROM foncier.ref_communes c
+                JOIN foncier.ref_departements d ON d.code_dept = c.dep_code
+                LEFT JOIN foncier.ref_regions r ON r.code_region = d.code_region
+                WHERE d.code_region = ANY(%s)
+                ORDER BY COALESCE(c.code_insee, c.dep_code || '-' || c.nom_standard), c.code_postal
+                """,
+                (code_regions,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT DISTINCT ON (COALESCE(c.code_insee, c.dep_code || '-' || c.nom_standard))
+                  c.dep_code AS code_dept, c.code_postal, c.nom_standard AS commune,
+                  GREATEST(COALESCE(c.population, 0)::numeric, 1) AS population,
+                  d.nom_dept AS dep_nom, r.nom_region AS reg_nom, d.code_region
+                FROM foncier.ref_communes c
+                LEFT JOIN foncier.ref_departements d ON d.code_dept = c.dep_code
+                LEFT JOIN foncier.ref_regions r ON r.code_region = d.code_region
+                WHERE c.dep_code = ANY(%s)
+                ORDER BY COALESCE(c.code_insee, c.dep_code || '-' || c.nom_standard), c.code_postal
+                """,
+                (code_depts,),
+            )
+        rows = cur.fetchall()
+        return [dict(r) for r in rows]
+    except psycopg2.Error:
+        return []
+
+
+def _aggregate_indicators_weighted(commune_rows: List[dict], weight_key: str = "population") -> dict:
+    """Agrège les indicateurs numériques en moyenne pondérée par weight_key (ex. population)."""
+    if not commune_rows:
+        return {}
+    total_w = 0
+    sums = {}
+    numeric_keys = [
+        "renta_brute", "renta_nette", "renta_brute_maisons", "renta_nette_maisons",
+        "renta_brute_appts", "renta_nette_appts", "taux_tfb", "taux_teom",
+    ]
+    for k in numeric_keys:
+        sums[k] = 0.0
+    first = commune_rows[0]
+    out = {
+        "region": first.get("region") or "",
+        "dep_nom": first.get("dep_nom") or "",
+        "code_region": first.get("code_region"),
+    }
+    for row in commune_rows:
+        w = float(row.get(weight_key) or 1)
+        if w <= 0:
+            w = 1
+        total_w += w
+        for k in numeric_keys:
+            v = row.get(k)
+            if v is not None:
+                try:
+                    sums[k] += float(v) * w
+                except (TypeError, ValueError):
+                    pass
+    if total_w <= 0:
+        total_w = 1
+    for k in numeric_keys:
+        if sums[k] != 0:
+            out[k] = round(sums[k] / total_w, 2)
+        else:
+            out[k] = None
+    return out
+
+
 @app.get("/api/comparaison_scores")
 def get_comparaison_scores(
-    code_dept: Optional[List[str]] = Query(None, description="Code département (répété pour chaque commune)"),
+    mode: str = Query("communes", description="Mode: communes, departements, regions"),
+    code_dept: Optional[List[str]] = Query(None, description="Code département (répété pour chaque commune ou liste de depts)"),
     code_postal: Optional[List[str]] = Query(None, description="Code postal (répété pour chaque commune)"),
     commune: Optional[List[str]] = Query(None, description="Nom commune (répété pour chaque commune)"),
+    code_region: Optional[List[str]] = Query(None, description="Code région (pour mode=regions, répété)"),
     score_principal: str = Query("renta_nette", description="Score principal: renta_brute, renta_nette"),
-    n_max: int = Query(100, ge=1, le=500, description="Nombre max de communes à retourner (optionnel)"),
+    n_max: int = Query(100, ge=1, le=500, description="Nombre max de lignes à retourner (optionnel)"),
     scores_secondaires: Optional[List[str]] = Query(None, description="Scores secondaires (taux_tfb, taux_teom, etc.)"),
 ):
     """
-    Retourne le classement des communes **de la liste fournie** selon le score principal.
-    La liste est fournie par paramètres répétés : code_dept, code_postal, commune (même ordre pour chaque commune).
-    Données calculées à la volée (rentabilité brute/nette comme sur la fiche commune, fiscalité).
+    Retourne le classement selon le score principal.
+    - mode=communes : liste (code_dept, code_postal, commune) par paramètres répétés.
+    - mode=departements : liste code_dept ; agrégation pondérée par population des communes du département.
+    - mode=regions : liste code_region ; agrégation pondérée par population des communes de la région.
     """
     if score_principal not in ("renta_brute", "renta_nette"):
         score_principal = "renta_nette"
-    # Construire la liste (code_dept, code_postal, commune) à partir des listes envoyées
+    mode = (mode or "communes").strip().lower()
+    if mode not in ("communes", "departements", "regions"):
+        mode = "communes"
+
+    if mode == "departements":
+        code_depts = [str(x or "").strip() for x in (code_dept or []) if str(x or "").strip()]
+        if not code_depts:
+            raise HTTPException(status_code=400, detail="En mode départements, au moins un code département est requis.")
+        conn = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            communes_ref = _get_communes_for_aggregation(cur, code_depts=code_depts, code_regions=None)
+            cur.close()
+        finally:
+            if conn:
+                conn.close()
+        rows = []
+        for code_d in code_depts:
+            subset = [c for c in communes_ref if (c.get("code_dept") or "").strip() == code_d]
+            if not subset:
+                rows.append({
+                    "mode": "departement",
+                    "code_dept": code_d,
+                    "dep_nom": code_d,
+                    "region": "",
+                    "renta_brute": None, "renta_nette": None,
+                    "renta_brute_maisons": None, "renta_nette_maisons": None,
+                    "renta_brute_appts": None, "renta_nette_appts": None,
+                    "taux_tfb": None, "taux_teom": None,
+                })
+                continue
+            commune_indicators = []
+            for c in subset:
+                c_dept = str(c.get("code_dept") or "")
+                c_postal = str(c.get("code_postal") or "")
+                c_commune = str(c.get("commune") or "")
+                try:
+                    stats = get_stats(
+                        niveau="commune", region_id=None, code_dept=c_dept, code_postal=c_postal, commune=c_commune,
+                        type_local=None, surface_cat=None, pieces_cat=None, annee_min=None, annee_max=None,
+                    )
+                    fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
+                except Exception:
+                    continue
+                row = _compute_one_commune_indicators(stats, fiche, c_dept, c_postal, c_commune)
+                row["population"] = int(float(c.get("population") or 1))
+                row["dep_nom"] = c.get("dep_nom") or code_d
+                row["code_region"] = c.get("code_region")
+                commune_indicators.append(row)
+            agg = _aggregate_indicators_weighted(commune_indicators, "population")
+            agg["mode"] = "departement"
+            agg["code_dept"] = code_d
+            agg["dep_nom"] = agg.get("dep_nom") or code_d
+            agg["region"] = agg.get("region") or ""
+            rows.append(agg)
+        rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
+        if n_max and len(rows) > n_max:
+            rows = rows[:n_max]
+        return {"rows": rows}
+
+    if mode == "regions":
+        code_regions = [str(x or "").strip() for x in (code_region or []) if str(x or "").strip()]
+        if not code_regions:
+            raise HTTPException(status_code=400, detail="En mode régions, au moins un code région est requis.")
+        conn = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            communes_ref = _get_communes_for_aggregation(cur, code_depts=None, code_regions=code_regions)
+            cur.close()
+        finally:
+            if conn:
+                conn.close()
+        rows = []
+        for code_r in code_regions:
+            subset = [c for c in communes_ref if (c.get("code_region") or "").strip() == code_r]
+            if not subset:
+                rows.append({
+                    "mode": "region",
+                    "code_region": code_r,
+                    "region": code_r,
+                    "renta_brute": None, "renta_nette": None,
+                    "renta_brute_maisons": None, "renta_nette_maisons": None,
+                    "renta_brute_appts": None, "renta_nette_appts": None,
+                    "taux_tfb": None, "taux_teom": None,
+                })
+                continue
+            commune_indicators = []
+            for c in subset:
+                c_dept = str(c.get("code_dept") or "")
+                c_postal = str(c.get("code_postal") or "")
+                c_commune = str(c.get("commune") or "")
+                try:
+                    stats = get_stats(
+                        niveau="commune", region_id=None, code_dept=c_dept, code_postal=c_postal, commune=c_commune,
+                        type_local=None, surface_cat=None, pieces_cat=None, annee_min=None, annee_max=None,
+                    )
+                    fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
+                except Exception:
+                    continue
+                row = _compute_one_commune_indicators(stats, fiche, c_dept, c_postal, c_commune)
+                row["population"] = int(float(c.get("population") or 1))
+                row["code_region"] = c.get("code_region")
+                row["reg_nom"] = c.get("reg_nom")
+                commune_indicators.append(row)
+            agg = _aggregate_indicators_weighted(commune_indicators, "population")
+            agg["mode"] = "region"
+            agg["code_region"] = code_r
+            agg["region"] = next((c.get("reg_nom") for c in subset if c.get("reg_nom")), code_r)
+            rows.append(agg)
+        rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
+        if n_max and len(rows) > n_max:
+            rows = rows[:n_max]
+        return {"rows": rows}
+
+    # mode=communes
     depts = [str(x or "").strip() for x in (code_dept or [])]
     postals = [str(x or "").strip() for x in (code_postal or [])]
     noms = [str(x or "").strip() for x in (commune or [])]
     n = max(len(depts), len(postals), len(noms))
-    print("[comparaison_scores] entrée: len(code_dept)=%s, len(code_postal)=%s, len(commune)=%s, n=%s" % (len(depts), len(postals), len(noms), n))
-    # Aligner les trois listes (au cas où l'une est plus courte)
     while len(depts) < n:
         depts.append("")
     while len(postals) < n:
@@ -1087,7 +1333,6 @@ def get_comparaison_scores(
     while len(noms) < n:
         noms.append("")
     communes = [(depts[i], postals[i], noms[i]) for i in range(n) if depts[i] and postals[i] and noms[i]]
-    print("[comparaison_scores] communes construites: %s" % (communes,))
     if not communes:
         raise HTTPException(status_code=400, detail="Au moins une commune est requise (code_dept, code_postal, commune pour chaque).")
 
@@ -1095,8 +1340,6 @@ def get_comparaison_scores(
     for c_dept, c_postal, c_commune in communes:
         print("[comparaison_scores] traitement: dept=%s cp=%s commune=%s" % (c_dept, c_postal, c_commune))
         try:
-            # Appel direct : passer tous les paramètres pour éviter que les défauts Query(...) soient utilisés (sinon type_local/annee_* deviennent Query et cassent la requête / int())
-            print("[comparaison_scores] -> get_stats(niveau=commune, code_dept=%r, code_postal=%r, commune=%r, annee_min=None, annee_max=None)" % (c_dept, c_postal, c_commune))
             stats = get_stats(
                 niveau="commune",
                 region_id=None,
@@ -1109,57 +1352,12 @@ def get_comparaison_scores(
                 annee_min=None,
                 annee_max=None,
             )
-            print("[comparaison_scores] -> get_fiche_logement(code_dept=%r, code_postal=%r, commune=%r)" % (c_dept, c_postal, c_commune))
             fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
         except Exception as e:
             print("[comparaison_scores] erreur pour %s (%s %s): %s" % (c_commune, c_dept, c_postal, e))
             continue
-        g = (stats.get("global") or {})
-        loypredm2 = stats.get("loypredm2")  # loyer prévisionnel €/m²/mois (loyers_communes, via ref_communes)
-        prix_m2_moy = g.get("prix_m2_moyenne")  # prix au m² moyen (vf_communes agrégé)
-        # Rentabilité brute = (loyer annuel au m² / prix au m²) × 100  (même formule que fiche_commune)
-        renta_brute = None
-        if loypredm2 is not None and prix_m2_moy is not None and prix_m2_moy > 0:
-            try:
-                renta_brute = round((float(loypredm2) * 12 / float(prix_m2_moy)) * 100, 2)
-            except (TypeError, ValueError):
-                pass
-        # Rentabilité nette = 1ère ligne "Maisons/Appart." de fiche-logement (après charges, TF, etc.)
-        renta_nette = None
-        renta_brute_maisons = renta_nette_maisons = renta_brute_appts = renta_nette_appts = None
-        if fiche.get("rentabilite_mediane") and fiche["rentabilite_mediane"].get("lignes"):
-            lignes = fiche["rentabilite_mediane"]["lignes"]
-            if len(lignes) > 0:
-                renta_nette = lignes[0].get("renta_nette")
-            if len(lignes) > 1:
-                renta_brute_maisons = lignes[1].get("renta_brute")
-                renta_nette_maisons = lignes[1].get("renta_nette")
-            if len(lignes) > 2:
-                renta_brute_appts = lignes[2].get("renta_brute")
-                renta_nette_appts = lignes[2].get("renta_nette")
-        taux_tfb = None
-        taux_teom = None
-        if fiche.get("fiscalite") and len(fiche["fiscalite"]) > 0:
-            taux_tfb = fiche["fiscalite"][0].get("taux_tfb")
-            taux_teom = fiche["fiscalite"][0].get("taux_teom")
-        region = stats.get("reg_nom") or ""
-        nom_commune = stats.get("nom_standard") or c_commune
-        out = {
-            "code_dept": c_dept,
-            "code_postal": c_postal,
-            "commune": nom_commune,
-            "region": region,
-            "renta_brute": renta_brute,
-            "renta_nette": renta_nette,
-            "renta_brute_maisons": round(renta_brute_maisons, 2) if renta_brute_maisons is not None else None,
-            "renta_nette_maisons": round(renta_nette_maisons, 2) if renta_nette_maisons is not None else None,
-            "renta_brute_appts": round(renta_brute_appts, 2) if renta_brute_appts is not None else None,
-            "renta_nette_appts": round(renta_nette_appts, 2) if renta_nette_appts is not None else None,
-            "taux_tfb": float(taux_tfb) if taux_tfb is not None else None,
-            "taux_teom": float(taux_teom) if taux_teom is not None else None,
-        }
+        out = _compute_one_commune_indicators(stats, fiche, c_dept, c_postal, c_commune)
         rows.append(out)
-        print("[comparaison_scores] ok: %s -> renta_brute=%s renta_nette=%s" % (nom_commune, renta_brute, renta_nette))
     # Tri par score principal décroissant (nulls en dernier)
     rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
     if n_max and len(rows) > n_max:
