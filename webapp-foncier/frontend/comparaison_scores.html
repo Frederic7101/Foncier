@@ -6,8 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>" />
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
     <script src="communes_autocomplete.js"></script>
     <script src="nav_links.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
     <style>
       /* Page Comparaison scores — alignée fiche_commune / stats_ventes */
       #app-comparaison {
@@ -167,6 +169,73 @@
         width: 1.5rem; height: 1.5rem; border: 3px solid #e5e7eb; border-top-color: #2563eb; border-radius: 50%;
         animation: comparaison-spin 0.8s linear infinite;
       }
+      .comparaison-map-wrap {
+        margin-top: 1rem;
+        background: #fff;
+        border-radius: 0.75rem;
+        padding: 0.75rem 0.75rem 0.9rem;
+        box-shadow: 0 8px 20px rgba(15,23,42,0.08);
+      }
+      .comparaison-map-title {
+        margin: 0 0 0.5rem;
+        font-size: 0.95rem;
+        color: #374151;
+        font-weight: 600;
+      }
+      #comparaison-score-map-single {
+        width: 100%;
+        height: 520px;
+        border-radius: 0.5rem;
+        border: 1px solid #e5e7eb;
+        background: #f8fafc;
+      }
+      #comparaison-communes-maps-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 0.75rem;
+      }
+      #comparaison-communes-maps-grid[hidden] { display: none; }
+      .comparaison-commune-map-card {
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        padding: 0.5rem;
+        background: #f8fafc;
+      }
+      .comparaison-commune-map-card h4 {
+        margin: 0 0 0.35rem;
+        font-size: 0.85rem;
+        color: #374151;
+      }
+      .comparaison-commune-map {
+        width: 100%;
+        height: 320px;
+        border-radius: 0.4rem;
+        border: 1px solid #d1d5db;
+        background: #eef2ff;
+      }
+      #comparaison-map-status {
+        margin-top: 0.5rem;
+        font-size: 0.85rem;
+        color: #6b7280;
+      }
+      #comparaison-map-legend {
+        margin-top: 0.6rem;
+      }
+      #comparaison-map-legend[hidden] { display: none; }
+      .comparaison-map-legend-bar {
+        width: 100%;
+        height: 14px;
+        border-radius: 999px;
+        border: 1px solid #d1d5db;
+        background: linear-gradient(90deg, #eff6ff 0%, #bfdbfe 25%, #60a5fa 50%, #2563eb 75%, #1e3a8a 100%);
+      }
+      .comparaison-map-legend-labels {
+        margin-top: 0.35rem;
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.8rem;
+        color: #4b5563;
+      }
       @keyframes comparaison-spin { to { transform: rotate(360deg); } }
     </style>
   </head>
@@ -320,6 +389,20 @@
             </div>
           </div>
         </div>
+
+        <section class="comparaison-map-wrap" id="comparaison-map-wrap" aria-hidden="true">
+          <h3 class="comparaison-map-title">Carte de France — score sélectionné</h3>
+          <div id="comparaison-score-map-single"></div>
+          <div id="comparaison-communes-maps-grid" hidden></div>
+          <div id="comparaison-map-status"></div>
+          <div id="comparaison-map-legend" hidden>
+            <div class="comparaison-map-legend-bar"></div>
+            <div class="comparaison-map-legend-labels">
+              <span id="comparaison-map-legend-min">Min</span>
+              <span id="comparaison-map-legend-max">Max</span>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
@@ -338,6 +421,15 @@
           const div = document.createElement("div");
           div.textContent = s;
           return div.innerHTML;
+        }
+
+        function normalizeNameCanonical(s) {
+          return String(s || "")
+            .normalize("NFD")
+            .replace(/[\u0300-\u036f]/g, "")
+            .replace(/[^A-Za-z0-9]+/g, " ")
+            .trim()
+            .toUpperCase();
         }
 
         function formatPct(value) {
@@ -361,6 +453,19 @@
         var lastComparaisonRows = [];
         var lastTableConfigs = [];
         var sortByTable = { all: { key: null, desc: true }, maisons: { key: null, desc: true }, appts: { key: null, desc: true } };
+        var mapViz = {
+          map: null,
+          layer: null,
+          mode: null,
+          communeMaps: [],
+          geoCache: { departements: null, regions: null, communesAll: null }
+        };
+        var communeMapSeq = 0;
+        var GEOJSON_URLS = {
+          departements: "data/carto/departements-version-simplifiee.geojson",
+          regions: "data/carto/regions-version-simplifiee.geojson",
+          communes: "data/carto/communes-version-simplifiee.geojson"
+        };
 
         function getIndicatorCheckboxIds(category) {
           if (category === "rentabilite") return ["ind-renta-brute", "ind-renta-nette"];
@@ -495,6 +600,389 @@
           lastComparaisonRows = [];
           lastTableConfigs = [];
           sortByTable = { all: { key: null, desc: true }, maisons: { key: null, desc: true }, appts: { key: null, desc: true } };
+          clearComparaisonMap();
+        }
+
+        function formatLegendValue(value) {
+          var v = Number(value);
+          if (!Number.isFinite(v)) return "—";
+          return v.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " %";
+        }
+
+        function createIgnBaseLayer() {
+          // Fond IGN détaillé (PLAN IGN v2) via WMTS Géoplateforme.
+          return L.tileLayer(
+            "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png",
+            {
+              maxZoom: 19,
+              tileSize: 256,
+              crossOrigin: true,
+              attribution: '&copy; <a href="https://www.ign.fr/" target="_blank" rel="noopener noreferrer">IGN</a>'
+            }
+          );
+        }
+
+        function createOsmFallbackLayer() {
+          return L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>'
+          });
+        }
+
+        function attachPreferredBaseLayer(map) {
+          if (!map || typeof L === "undefined") return;
+          var ignLayer = createIgnBaseLayer();
+          var switched = false;
+          function switchToFallback() {
+            if (switched) return;
+            switched = true;
+            try { map.removeLayer(ignLayer); } catch (e) {}
+            createOsmFallbackLayer().addTo(map);
+          }
+          ignLayer.on("tileerror", switchToFallback);
+          ignLayer.addTo(map);
+        }
+
+        function ensureComparaisonMap() {
+          if (mapViz.map || typeof L === "undefined") return mapViz.map;
+          var mapEl = document.getElementById("comparaison-score-map-single");
+          if (!mapEl) return null;
+          mapViz.map = L.map("comparaison-score-map-single", { zoomControl: true, scrollWheelZoom: false, minZoom: 4, maxZoom: 11 });
+          attachPreferredBaseLayer(mapViz.map);
+          mapViz.map.setView([46.7, 2.5], 5);
+          return mapViz.map;
+        }
+
+        function clearCommuneMaps() {
+          if (Array.isArray(mapViz.communeMaps)) {
+            mapViz.communeMaps.forEach(function (entry) {
+              if (entry && entry.map && typeof entry.map.remove === "function") {
+                entry.map.remove();
+              }
+            });
+          }
+          mapViz.communeMaps = [];
+          var grid = document.getElementById("comparaison-communes-maps-grid");
+          if (grid) {
+            grid.innerHTML = "";
+            grid.hidden = true;
+          }
+        }
+
+        function clearComparaisonMap() {
+          var mapWrap = document.getElementById("comparaison-map-wrap");
+          var legend = document.getElementById("comparaison-map-legend");
+          var status = document.getElementById("comparaison-map-status");
+          var singleMap = document.getElementById("comparaison-score-map-single");
+          if (mapWrap) mapWrap.setAttribute("aria-hidden", "true");
+          if (legend) legend.hidden = true;
+          if (status) status.textContent = "";
+          if (singleMap) singleMap.style.display = "none";
+          if (mapViz.layer && mapViz.map) {
+            mapViz.map.removeLayer(mapViz.layer);
+            mapViz.layer = null;
+          }
+          clearCommuneMaps();
+          mapViz.mode = null;
+        }
+
+        function deptCodeFromInsee(inseeCode) {
+          var c = String(inseeCode || "").trim().toUpperCase();
+          if (!c) return "";
+          if (c.startsWith("97") || c.startsWith("98")) return c.slice(0, 3);
+          return c.slice(0, 2);
+        }
+
+        function ensureCommunesGeoJsonAll() {
+          if (mapViz.geoCache.communesAll) return Promise.resolve(mapViz.geoCache.communesAll);
+          return fetch(GEOJSON_URLS.communes).then(function (r) {
+            if (!r.ok) throw new Error("Chargement du fond communal impossible (" + r.status + ").");
+            return r.json();
+          }).then(function (gj) {
+            mapViz.geoCache.communesAll = gj;
+            return gj;
+          });
+        }
+
+        function buildDeptGeoJsonFromAllCommunes(allGeoJson, codeDept) {
+          var code = String(codeDept || "").trim().toUpperCase();
+          if (!allGeoJson || !Array.isArray(allGeoJson.features)) {
+            return { type: "FeatureCollection", features: [] };
+          }
+          var features = allGeoJson.features.filter(function (f) {
+            var props = (f && f.properties) || {};
+            return deptCodeFromInsee(props.code || "") === code;
+          });
+          return { type: "FeatureCollection", features: features };
+        }
+
+        function getFeatureCode(props, mode) {
+          var keys = mode === "regions"
+            ? ["code", "code_region", "codeRegion", "region_code", "insee_reg"]
+            : ["code", "code_dept", "codeDepartement", "insee_dep", "dep_code"];
+          for (var i = 0; i < keys.length; i += 1) {
+            var v = props ? props[keys[i]] : null;
+            if (v != null && String(v).trim() !== "") return String(v).trim();
+          }
+          return "";
+        }
+
+        function getFeatureName(props, mode) {
+          var keys = mode === "regions"
+            ? ["nom", "name", "nom_region", "region_name"]
+            : ["nom", "name", "nom_dept", "departement_name"];
+          for (var i = 0; i < keys.length; i += 1) {
+            var v = props ? props[keys[i]] : null;
+            if (v != null && String(v).trim() !== "") return String(v).trim();
+          }
+          return "";
+        }
+
+        function scoreColor(value, min, max) {
+          var v = Number(value);
+          if (!Number.isFinite(v)) return "#e5e7eb";
+          if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return "#2563eb";
+          var t = Math.max(0, Math.min(1, (v - min) / (max - min)));
+          if (t < 0.2) return "#eff6ff";
+          if (t < 0.4) return "#bfdbfe";
+          if (t < 0.6) return "#60a5fa";
+          if (t < 0.8) return "#2563eb";
+          return "#1e3a8a";
+        }
+
+        function ensureGeoJson(mode) {
+          if (mode !== "regions" && mode !== "departements") return Promise.resolve(null);
+          if (mapViz.geoCache[mode]) return Promise.resolve(mapViz.geoCache[mode]);
+          return fetch(GEOJSON_URLS[mode]).then(function (r) {
+            if (!r.ok) throw new Error("Chargement du fond de carte impossible (" + r.status + ").");
+            return r.json();
+          }).then(function (gj) {
+            mapViz.geoCache[mode] = gj;
+            return gj;
+          });
+        }
+
+        function renderStandardChoropleth(rows, displayMode, scoreKey, min, max) {
+          var status = document.getElementById("comparaison-map-status");
+          var singleMap = document.getElementById("comparaison-score-map-single");
+          var grid = document.getElementById("comparaison-communes-maps-grid");
+          if (singleMap) singleMap.style.display = "";
+          if (grid) grid.hidden = true;
+          clearCommuneMaps();
+          var mapMode = displayMode;
+          ensureGeoJson(mapMode)
+            .then(function (geojson) {
+              var map = ensureComparaisonMap();
+              if (!map || !geojson) throw new Error("Librairie cartographique indisponible.");
+              if (mapViz.layer) {
+                map.removeLayer(mapViz.layer);
+                mapViz.layer = null;
+              }
+              var valueByCode = {};
+              rows.forEach(function (r) {
+                var code = mapMode === "regions" ? (r.code_region || "") : (r.code_dept || "");
+                var val = Number(r[scoreKey]);
+                if (!code || !Number.isFinite(val)) return;
+                valueByCode[String(code).trim()] = val;
+              });
+              mapViz.layer = L.geoJSON(geojson, {
+                style: function (feature) {
+                  var code = getFeatureCode((feature && feature.properties) || {}, mapMode);
+                  var value = valueByCode[code];
+                  var active = Number.isFinite(value);
+                  return {
+                    color: active ? "#334155" : "#cbd5e1",
+                    weight: active ? 1.1 : 0.7,
+                    fillColor: scoreColor(value, min, max),
+                    fillOpacity: active ? 0.43 : 0.11
+                  };
+                },
+                onEachFeature: function (feature, layer) {
+                  var props = (feature && feature.properties) || {};
+                  var code = getFeatureCode(props, mapMode);
+                  var name = getFeatureName(props, mapMode) || code || "Zone";
+                  var value = valueByCode[code];
+                  var content = "<strong>" + escapeHtml(name) + "</strong>";
+                  if (code) content += " (" + escapeHtml(code) + ")";
+                  content += "<br/>" + escapeHtml(getScoreLabel(scoreKey)) + " : " + (Number.isFinite(value) ? escapeHtml(formatLegendValue(value)) : "—");
+                  layer.bindTooltip(content, { sticky: true });
+                }
+              }).addTo(map);
+              mapViz.mode = mapMode;
+              setTimeout(function () {
+                if (map && typeof map.invalidateSize === "function") map.invalidateSize();
+              }, 0);
+              try {
+                map.fitBounds(mapViz.layer.getBounds(), { padding: [12, 12] });
+              } catch (e) {
+                map.setView([46.7, 2.5], 5);
+              }
+              if (status) status.textContent = "Carte par " + (displayMode === "regions" ? "région" : "département") + " selon l'indicateur principal.";
+            })
+            .catch(function (err) {
+              if (status) status.textContent = (err && err.message) ? err.message : "Impossible de charger la carte.";
+            });
+        }
+
+        function renderCommuneDeptMaps(rows, scoreKey, min, max) {
+          var status = document.getElementById("comparaison-map-status");
+          var singleMap = document.getElementById("comparaison-score-map-single");
+          var grid = document.getElementById("comparaison-communes-maps-grid");
+          if (!grid) return;
+          if (singleMap) singleMap.style.display = "none";
+          if (mapViz.layer && mapViz.map) {
+            mapViz.map.removeLayer(mapViz.layer);
+            mapViz.layer = null;
+          }
+          clearCommuneMaps();
+          grid.hidden = false;
+
+          var byDept = {};
+          rows.forEach(function (r) {
+            var deptCode = String(r.code_dept || "").trim().toUpperCase();
+            var communeName = normalizeNameCanonical(r.commune || r.nom_commune || "");
+            var score = Number(r[scoreKey]);
+            if (!deptCode || !communeName || !Number.isFinite(score)) return;
+            if (!byDept[deptCode]) byDept[deptCode] = [];
+            byDept[deptCode].push({ communeNorm: communeName, communeRaw: (r.commune || r.nom_commune || ""), score: score });
+          });
+          var deptEntries = Object.keys(byDept).map(function (code) {
+            return { code: code, rows: byDept[code] };
+          });
+          deptEntries.sort(function (a, b) {
+            if (b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
+            return a.code.localeCompare(b.code);
+          });
+          var limited = deptEntries.slice(0, 4);
+          if (!limited.length) {
+            if (status) status.textContent = "Aucune commune exploitable pour la cartographie.";
+            return;
+          }
+
+          var renderPromises = limited.map(function (deptEntry) {
+            communeMapSeq += 1;
+            var mapId = "comparaison-commune-map-" + communeMapSeq;
+            var deptLabel = deptEntry.code + " " + (geo.deptNomByCode[deptEntry.code] || "");
+            var card = document.createElement("div");
+            card.className = "comparaison-commune-map-card";
+            card.innerHTML = "<h4>" + escapeHtml(deptLabel.trim()) + "</h4><div id=\"" + escapeHtml(mapId) + "\" class=\"comparaison-commune-map\"></div>";
+            grid.appendChild(card);
+
+            var valuesByCommune = {};
+            deptEntry.rows.forEach(function (x) {
+              if (!valuesByCommune[x.communeNorm]) valuesByCommune[x.communeNorm] = { total: 0, count: 0, name: x.communeRaw };
+              valuesByCommune[x.communeNorm].total += x.score;
+              valuesByCommune[x.communeNorm].count += 1;
+            });
+
+            return ensureCommunesGeoJsonAll().then(function (allGeoJson) {
+              var geojson = buildDeptGeoJsonFromAllCommunes(allGeoJson, deptEntry.code);
+              if (!geojson.features || !geojson.features.length) {
+                throw new Error("Aucun fond communal local trouvé pour le département " + deptEntry.code + ".");
+              }
+              if (typeof L === "undefined") throw new Error("Librairie cartographique indisponible.");
+              var selectedNames = Object.keys(valuesByCommune);
+              var selectedBounds = L.latLngBounds([]);
+              var hasSelectedBounds = false;
+              geojson.features.forEach(function (feature) {
+                var props = (feature && feature.properties) || {};
+                var n = normalizeNameCanonical(props.nom || props.name || "");
+                if (!valuesByCommune[n]) return;
+                try {
+                  var b = L.geoJSON(feature).getBounds();
+                  if (b && b.isValid && b.isValid()) {
+                    selectedBounds.extend(b);
+                    hasSelectedBounds = true;
+                  }
+                } catch (e) {}
+              });
+              var map = L.map(mapId, { zoomControl: true, scrollWheelZoom: false, minZoom: 7, maxZoom: 17 });
+              attachPreferredBaseLayer(map);
+              var layer = L.geoJSON(geojson, {
+                style: function (feature) {
+                  var props = (feature && feature.properties) || {};
+                  var n = normalizeNameCanonical(props.nom || props.name || "");
+                  var found = valuesByCommune[n];
+                  var score = found ? (found.total / Math.max(1, found.count)) : null;
+                  var active = Number.isFinite(score);
+                  return {
+                    color: active ? "#0f172a" : "#cbd5e1",
+                    weight: active ? 1.0 : 0.5,
+                    fillColor: scoreColor(score, min, max),
+                    fillOpacity: active ? 0.44 : 0.08
+                  };
+                },
+                onEachFeature: function (feature, layerEl) {
+                  var props = (feature && feature.properties) || {};
+                  var nom = props.nom || props.name || "Commune";
+                  var n = normalizeNameCanonical(nom);
+                  var found = valuesByCommune[n];
+                  var score = found ? (found.total / Math.max(1, found.count)) : null;
+                  var txt = "<strong>" + escapeHtml(nom) + "</strong><br/>" + escapeHtml(getScoreLabel(scoreKey)) + " : " + (Number.isFinite(score) ? escapeHtml(formatLegendValue(score)) : "hors sélection");
+                  layerEl.bindTooltip(txt, { sticky: true });
+                }
+              }).addTo(map);
+              mapViz.communeMaps.push({ map: map, layer: layer, mapId: mapId, deptCode: deptEntry.code });
+              setTimeout(function () {
+                if (map && typeof map.invalidateSize === "function") map.invalidateSize();
+              }, 0);
+              try {
+                if (hasSelectedBounds) {
+                  var isSingleCommune = selectedNames.length === 1;
+                  map.fitBounds(selectedBounds, { padding: [10, 10], maxZoom: isSingleCommune ? 17 : 15 });
+                } else {
+                  map.fitBounds(layer.getBounds(), { padding: [10, 10], maxZoom: 12 });
+                }
+              } catch (e) {
+                map.setView([46.7, 2.5], 8);
+              }
+            });
+          });
+
+          Promise.all(renderPromises)
+            .then(function () {
+              var msg = "Mode communes : zoom automatique sur les communes sélectionnées (max 4 départements).";
+              if (deptEntries.length > 4) msg += " Affichage limité aux 4 départements les plus représentés.";
+              if (status) status.textContent = msg;
+              mapViz.mode = "communes";
+            })
+            .catch(function (err) {
+              if (status) status.textContent = (err && err.message) ? err.message : "Impossible de charger les cartes communales.";
+            });
+        }
+
+        function renderComparaisonMap(rows, displayMode, scoreKey) {
+          var mapWrap = document.getElementById("comparaison-map-wrap");
+          var status = document.getElementById("comparaison-map-status");
+          var legend = document.getElementById("comparaison-map-legend");
+          var minEl = document.getElementById("comparaison-map-legend-min");
+          var maxEl = document.getElementById("comparaison-map-legend-max");
+          if (!mapWrap || !status || !legend || !minEl || !maxEl) return;
+
+          if (!Array.isArray(rows) || rows.length === 0) {
+            clearComparaisonMap();
+            return;
+          }
+          mapWrap.removeAttribute("aria-hidden");
+          if (status) status.textContent = "Chargement de la carte…";
+          var values = rows.map(function (r) { return Number(r[scoreKey]); }).filter(function (v) { return Number.isFinite(v); });
+          if (!values.length) {
+            legend.hidden = true;
+            status.textContent = "Aucune valeur exploitable pour afficher une échelle de score.";
+            clearCommuneMaps();
+            if (mapViz.layer && mapViz.map) { mapViz.map.removeLayer(mapViz.layer); mapViz.layer = null; }
+            return;
+          }
+          var min = Math.min.apply(null, values);
+          var max = Math.max.apply(null, values);
+          minEl.textContent = "Min : " + formatLegendValue(min);
+          maxEl.textContent = "Max : " + formatLegendValue(max);
+          legend.hidden = false;
+          if (displayMode === "communes") {
+            renderCommuneDeptMaps(rows, scoreKey, min, max);
+          } else {
+            renderStandardChoropleth(rows, displayMode, scoreKey, min, max);
+          }
         }
 
         function switchModeUI() {
@@ -1058,8 +1546,10 @@
                   var blockEl = document.getElementById("comparaison-block-" + block.id);
                   if (blockEl) blockEl.setAttribute("aria-hidden", "true");
                 });
+                clearComparaisonMap();
               } else {
                 emptyEl.style.display = "none";
+                renderComparaisonMap(rows, displayMode, scorePrincipal);
               }
             })
             .catch(function (err) {
@@ -1071,6 +1561,7 @@
                 var blockEl = document.getElementById("comparaison-block-" + block.id);
                 if (blockEl) blockEl.setAttribute("aria-hidden", "true");
               });
+              clearComparaisonMap();
             });
         }
 
