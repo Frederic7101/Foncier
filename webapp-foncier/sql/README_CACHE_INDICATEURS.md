@@ -3,7 +3,9 @@
 ## Tables
 
 - **foncier.fiche_logement_cache** : cache des réponses complètes de l’API `GET /api/fiche-logement` (une entrée par `code_insee`). Réduit le temps de réponse des fiches commune.
-- **foncier.indicateurs_communes** : indicateurs précalculés par commune (rentabilité, fiscalité) pour la page comparaison des scores. Permet d’afficher la comparaison sans recalculer pour chaque commune.
+- **foncier.indicateurs_communes** : indicateurs précalculés par commune (rentabilité, fiscalité) pour la page comparaison des scores.
+- **foncier.indicateurs_depts** : indicateurs agrégés par département pour accélérer `mode=departements`.
+- **foncier.indicateurs_regions** : indicateurs agrégés par région pour accélérer `mode=regions`.
 
 ## Création des tables
 
@@ -12,6 +14,8 @@ Exécuter dans l’ordre (PostgreSQL, schéma `foncier`) :
 ```bash
 psql -f create_fiche_logement_cache.sql
 psql -f create_indicateurs_communes.sql
+psql -f create_indicateurs_depts.sql
+psql -f create_indicateurs_regions.sql
 ```
 
 Ou depuis un client SQL :
@@ -19,6 +23,8 @@ Ou depuis un client SQL :
 ```sql
 \i create_fiche_logement_cache.sql
 \i create_indicateurs_communes.sql
+\i create_indicateurs_depts.sql
+\i create_indicateurs_regions.sql
 ```
 
 ## Remplissage
@@ -35,6 +41,18 @@ Exemple :
 ```cmd
 curl -X POST "http://localhost:8000/api/refresh-indicateurs"
 curl -X POST "http://localhost:8000/api/refresh-indicateurs?limit=500&workers=8"
+```
+
+- **Rafraîchissement des agrégats départements/régions** : `POST /api/refresh-indicateurs-agreges`
+  - Ciblé : `code_dept_list`, `code_region_list`
+  - Complet : `refresh_all=true`
+  - Recalcul forcé : `force=true` (supprime les lignes ciblées avant recalcul)
+
+```cmd
+curl -X POST "http://localhost:8000/api/refresh-indicateurs-agreges?code_dept_list=01&code_dept_list=16"
+curl -X POST "http://localhost:8000/api/refresh-indicateurs-agreges?code_region_list=84&code_region_list=75"
+curl -X POST "http://localhost:8000/api/refresh-indicateurs-agreges?refresh_all=true"
+curl -X POST "http://localhost:8000/api/refresh-indicateurs-agreges?refresh_all=true&force=true"
 ```
 
 ## Prérequis

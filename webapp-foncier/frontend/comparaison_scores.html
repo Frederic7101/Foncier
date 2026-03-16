@@ -219,7 +219,7 @@
               <div class="field">
                 <span class="field-label">Département(s)</span>
                 <div id="comparaison-depts-checkboxes" class="comparaison-checkboxes"></div>
-                <label class="comparaison-check-all"><input type="checkbox" id="comparaison-all-depts" /> Toutes les départements</label>
+                <label class="comparaison-check-all"><input type="checkbox" id="comparaison-all-depts" /> Tous les départements</label>
               </div>
             </div>
           </div>
@@ -455,6 +455,33 @@
           return mode === "communes" ? "Communes" : mode === "departements" ? "Départements" : "Régions";
         }
 
+        function resetComparaisonResultsOnModeChange(mode) {
+          var emptyEl = document.getElementById("comparaison-empty");
+          var loadingEl = document.getElementById("comparaison-loading");
+          var errorEl = document.getElementById("comparaison-error");
+          if (loadingEl) loadingEl.classList.remove("visible");
+          if (errorEl) { errorEl.hidden = true; errorEl.textContent = ""; }
+          if (emptyEl) {
+            if (mode === "communes") {
+              emptyEl.textContent = "Ajoutez au moins une commune à la liste ci‑dessus (recherche ou sélecteur), choisissez les indicateurs et cliquez sur Comparer.";
+            } else if (mode === "departements") {
+              emptyEl.textContent = "Sélectionnez un ou plusieurs départements puis cliquez sur Comparer.";
+            } else {
+              emptyEl.textContent = "Sélectionnez une ou plusieurs régions puis cliquez sur Comparer.";
+            }
+            emptyEl.style.display = "block";
+          }
+          TABLE_BLOCKS.forEach(function (block) {
+            var blockEl = document.getElementById("comparaison-block-" + block.id);
+            var tbodyEl = document.getElementById("comparaison-tbody-" + block.id);
+            if (tbodyEl) tbodyEl.innerHTML = "";
+            if (blockEl) blockEl.setAttribute("aria-hidden", "true");
+          });
+          lastComparaisonRows = [];
+          lastTableConfigs = [];
+          sortByTable = { all: { key: null, desc: true }, maisons: { key: null, desc: true }, appts: { key: null, desc: true } };
+        }
+
         function switchModeUI() {
           var mode = getComparaisonMode();
           lastComparaisonMode = mode;
@@ -472,6 +499,7 @@
           var niveauText = "Nb max de " + getNiveauLabel();
           if (nMaxLabel) nMaxLabel.textContent = niveauText;
           if (nMaxInput) nMaxInput.setAttribute("aria-label", niveauText);
+          resetComparaisonResultsOnModeChange(mode);
           updateSelectedListForMode();
         }
 
@@ -483,9 +511,13 @@
           }).join("");
         }
 
-        function fillDeptsCheckboxes() {
+        function fillDeptsCheckboxes(preserveSelection) {
           var container = document.getElementById("comparaison-depts-checkboxes");
           if (!container) return;
+          if (preserveSelection == null) preserveSelection = true;
+          var prevSelected = new Set(
+            Array.from(container.querySelectorAll(".comparaison-dept-cb:checked")).map(function (cb) { return cb.value; })
+          );
           var regionCbs = document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb:checked");
           var selectedRegionIds = Array.from(regionCbs).map(function (cb) { return cb.value; });
           var allDepts = geo.departements || [];
@@ -499,8 +531,69 @@
           container.innerHTML = deptsToShow.map(function (d) {
             var code = typeof d === "object" ? d.code : d;
             var nom = typeof d === "object" ? d.nom : (geo.deptNomByCode[code] || code);
-            return "<label><input type=\"checkbox\" class=\"comparaison-dept-cb\" value=\"" + escapeHtml(code) + "\" data-nom=\"" + escapeHtml(nom) + "\" /> " + escapeHtml(code) + " " + escapeHtml(nom) + "</label>";
+            var checked = preserveSelection && prevSelected.has(code) ? " checked" : "";
+            return "<label><input type=\"checkbox\" class=\"comparaison-dept-cb\" value=\"" + escapeHtml(code) + "\" data-nom=\"" + escapeHtml(nom) + "\"" + checked + " /> " + escapeHtml(code) + " " + escapeHtml(nom) + "</label>";
           }).join("");
+          syncDeptAllCheckboxState();
+        }
+
+        function getDeptModeRegionCbs() {
+          return Array.from(document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb"));
+        }
+
+        function getRegionsModeRegionCbs() {
+          return Array.from(document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb"));
+        }
+
+        function getDeptCbs() {
+          return Array.from(document.querySelectorAll("#comparaison-depts-checkboxes .comparaison-dept-cb"));
+        }
+
+        function setDeptModeAllRegions(checked) {
+          getDeptModeRegionCbs().forEach(function (cb) { cb.checked = !!checked; });
+          var all = document.getElementById("comparaison-all-regions");
+          if (all) all.checked = !!checked;
+        }
+
+        function setRegionsModeAllRegions(checked) {
+          getRegionsModeRegionCbs().forEach(function (cb) { cb.checked = !!checked; });
+          var all = document.getElementById("comparaison-all-regions-regions");
+          if (all) all.checked = !!checked;
+        }
+
+        function setAllDepts(checked) {
+          getDeptCbs().forEach(function (cb) { cb.checked = !!checked; });
+          var all = document.getElementById("comparaison-all-depts");
+          if (all) all.checked = !!checked;
+        }
+
+        function syncDeptRegionsAllCheckboxState() {
+          var cbs = getDeptModeRegionCbs();
+          var all = document.getElementById("comparaison-all-regions");
+          if (!all) return;
+          all.checked = cbs.length > 0 && cbs.every(function (cb) { return cb.checked; });
+        }
+
+        function syncRegionsAllCheckboxState() {
+          var cbs = getRegionsModeRegionCbs();
+          var all = document.getElementById("comparaison-all-regions-regions");
+          if (!all) return;
+          all.checked = cbs.length > 0 && cbs.every(function (cb) { return cb.checked; });
+        }
+
+        function syncDeptAllCheckboxState() {
+          var cbs = getDeptCbs();
+          var all = document.getElementById("comparaison-all-depts");
+          if (!all) return;
+          all.checked = cbs.length > 0 && cbs.every(function (cb) { return cb.checked; });
+        }
+
+        function initDepartementsModeSelectionState() {
+          // Initialisation demandée : toutes les régions cochées, tous les départements décochés.
+          setDeptModeAllRegions(true);
+          fillDeptsCheckboxes(false);
+          var allDepts = document.getElementById("comparaison-all-depts");
+          if (allDepts) allDepts.checked = false;
         }
 
         function getSelectedRegionIds() {
@@ -562,7 +655,26 @@
             var names = depts.map(function (code) { return code + " " + (geo.deptNomByCode[code] || ""); });
             if (names.length === 0) { block.setAttribute("aria-hidden", "true"); ul.innerHTML = ""; return; }
             block.removeAttribute("aria-hidden");
-            ul.innerHTML = names.map(function (n) { return "<li>" + escapeHtml(n.trim()) + "</li>"; }).join("");
+            ul.innerHTML = depts.map(function (code) {
+              var label = (code + " " + (geo.deptNomByCode[code] || "")).trim();
+              return "<li>" + escapeHtml(label) + " <button type=\"button\" data-dept=\"" + escapeHtml(code) + "\" aria-label=\"Retirer\">×</button></li>";
+            }).join("");
+            ul.querySelectorAll("button[data-dept]").forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                var code = btn.getAttribute("data-dept");
+                // Si "tous les départements" est actif, on le désactive et on coche explicitement tous sauf celui retiré.
+                var allDepts = document.getElementById("comparaison-all-depts");
+                if (allDepts && allDepts.checked) {
+                  allDepts.checked = false;
+                  setAllDepts(true);
+                }
+                var cb = Array.from(document.querySelectorAll("#comparaison-depts-checkboxes .comparaison-dept-cb"))
+                  .find(function (x) { return x.value === code; });
+                if (cb) cb.checked = false;
+                syncDeptAllCheckboxState();
+                updateSelectedListForMode();
+              });
+            });
             return;
           }
           if (mode === "regions") {
@@ -573,7 +685,26 @@
             });
             if (names.length === 0) { block.setAttribute("aria-hidden", "true"); ul.innerHTML = ""; return; }
             block.removeAttribute("aria-hidden");
-            ul.innerHTML = names.map(function (n) { return "<li>" + escapeHtml(n) + "</li>"; }).join("");
+            ul.innerHTML = ids.map(function (id) {
+              var r = (geo.regions || []).find(function (x) { return x.id === id; });
+              var label = r ? r.nom : id;
+              return "<li>" + escapeHtml(label) + " <button type=\"button\" data-region=\"" + escapeHtml(id) + "\" aria-label=\"Retirer\">×</button></li>";
+            }).join("");
+            ul.querySelectorAll("button[data-region]").forEach(function (btn) {
+              btn.addEventListener("click", function () {
+                var id = btn.getAttribute("data-region");
+                var allRegions = document.getElementById("comparaison-all-regions-regions");
+                if (allRegions && allRegions.checked) {
+                  allRegions.checked = false;
+                  setRegionsModeAllRegions(true);
+                }
+                var cb = Array.from(document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb"))
+                  .find(function (x) { return x.value === id; });
+                if (cb) cb.checked = false;
+                syncRegionsAllCheckboxState();
+                updateSelectedListForMode();
+              });
+            });
           }
         }
 
@@ -647,7 +778,8 @@
               fillDepartments();
               fillRegionsCheckboxes("comparaison-regions-checkboxes");
               fillRegionsCheckboxes("comparaison-regions-checkboxes-regions");
-              fillDeptsCheckboxes();
+              initDepartementsModeSelectionState();
+              syncRegionsAllCheckboxState();
             })
             .catch(function () {});
         }
@@ -680,15 +812,40 @@
           var allRegions = document.getElementById("comparaison-all-regions");
           var allRegionsRegions = document.getElementById("comparaison-all-regions-regions");
           var allDepts = document.getElementById("comparaison-all-depts");
-          if (allRegions) allRegions.addEventListener("change", function () { fillDeptsCheckboxes(); updateSelectedListForMode(); });
-          if (allRegionsRegions) allRegionsRegions.addEventListener("change", updateSelectedListForMode);
-          if (allDepts) allDepts.addEventListener("change", updateSelectedListForMode);
+          if (allRegions) allRegions.addEventListener("change", function () {
+            if (allRegions.checked) {
+              setDeptModeAllRegions(true);
+              fillDeptsCheckboxes(false);
+            } else {
+              setDeptModeAllRegions(false);
+              fillDeptsCheckboxes(false);
+            }
+            updateSelectedListForMode();
+          });
+          if (allRegionsRegions) allRegionsRegions.addEventListener("change", function () {
+            setRegionsModeAllRegions(!!allRegionsRegions.checked);
+            updateSelectedListForMode();
+          });
+          if (allDepts) allDepts.addEventListener("change", function () {
+            setAllDepts(!!allDepts.checked);
+            updateSelectedListForMode();
+          });
           document.getElementById("comparaison-mode-departements").addEventListener("change", function (e) {
-            if (e.target.classList.contains("comparaison-region-cb")) { fillDeptsCheckboxes(); updateSelectedListForMode(); }
-            if (e.target.classList.contains("comparaison-dept-cb")) updateSelectedListForMode();
+            if (e.target.classList.contains("comparaison-region-cb")) {
+              syncDeptRegionsAllCheckboxState();
+              fillDeptsCheckboxes(false);
+              updateSelectedListForMode();
+            }
+            if (e.target.classList.contains("comparaison-dept-cb")) {
+              syncDeptAllCheckboxState();
+              updateSelectedListForMode();
+            }
           });
           document.getElementById("comparaison-mode-regions").addEventListener("change", function (e) {
-            if (e.target.classList.contains("comparaison-region-cb")) updateSelectedListForMode();
+            if (e.target.classList.contains("comparaison-region-cb")) {
+              syncRegionsAllCheckboxState();
+              updateSelectedListForMode();
+            }
           });
         })();
 
@@ -723,9 +880,10 @@
             document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb, .comparaison-dept-cb").forEach(function (cb) { cb.checked = false; });
             var allR = document.getElementById("comparaison-all-regions");
             var allD = document.getElementById("comparaison-all-depts");
-            if (allR) allR.checked = false;
+            if (allR) allR.checked = true;
             if (allD) allD.checked = false;
-            fillDeptsCheckboxes();
+            setDeptModeAllRegions(true);
+            fillDeptsCheckboxes(false);
           } else if (mode === "regions") {
             document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb").forEach(function (cb) { cb.checked = false; });
             var allR2 = document.getElementById("comparaison-all-regions-regions");
@@ -767,6 +925,12 @@
           var emptyEl = document.getElementById("comparaison-empty");
           var loadingEl = document.getElementById("comparaison-loading");
           var errorEl = document.getElementById("comparaison-error");
+          var tablesWrapEl = document.querySelector(".comparaison-tables-wrap");
+
+          function scrollToTables() {
+            if (!tablesWrapEl) return;
+            tablesWrapEl.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
 
           if (mode === "communes" && selectedCommunes.length === 0) {
             errorEl.textContent = "Ajoutez au moins une commune à la liste (recherche rapide ou sélecteur) puis cliquez sur Comparer.";
@@ -776,6 +940,7 @@
               var blockEl = document.getElementById("comparaison-block-" + block.id);
               if (blockEl) blockEl.setAttribute("aria-hidden", "true");
             });
+            scrollToTables();
             return;
           }
           if (mode === "departements" && getSelectedDeptCodes().length === 0) {
@@ -786,6 +951,7 @@
               var blockEl = document.getElementById("comparaison-block-" + block.id);
               if (blockEl) blockEl.setAttribute("aria-hidden", "true");
             });
+            scrollToTables();
             return;
           }
           if (mode === "regions" && getSelectedRegionIdsForRegionsMode().length === 0) {
@@ -796,6 +962,7 @@
               var blockEl = document.getElementById("comparaison-block-" + block.id);
               if (blockEl) blockEl.setAttribute("aria-hidden", "true");
             });
+            scrollToTables();
             return;
           }
           errorEl.hidden = true;
@@ -805,6 +972,7 @@
             var blockEl = document.getElementById("comparaison-block-" + block.id);
             if (blockEl) blockEl.setAttribute("aria-hidden", "true");
           });
+          scrollToTables();
 
           var params = new URLSearchParams();
           params.set("mode", mode);

@@ -1455,6 +1455,162 @@ def _upsert_indicateurs_communes(conn, cur, row: dict, commit: bool = True) -> N
         pass
 
 
+def _read_indicateurs_depts(cur, code_dept_list: List[str]) -> dict:
+    """Retourne un dict code_dept -> ligne agrégée pour comparaison_scores."""
+    if not code_dept_list:
+        return {}
+    try:
+        placeholders = ",".join(["%s"] * len(code_dept_list))
+        cur.execute(
+            "SELECT code_dept, dep_nom, reg_nom, code_region, population, "
+            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, taux_tfb, taux_teom "
+            "FROM foncier.indicateurs_depts WHERE code_dept IN (" + placeholders + ")",
+            code_dept_list,
+        )
+        rows = cur.fetchall()
+        out = {}
+        for r in rows:
+            code_d = r.get("code_dept")
+            if not code_d:
+                continue
+            out[str(code_d)] = {
+                "mode": "departement",
+                "code_dept": str(code_d),
+                "dep_nom": r.get("dep_nom") or str(code_d),
+                "region": r.get("reg_nom") or "",
+                "code_region": r.get("code_region"),
+                "population": int(r["population"]) if r.get("population") is not None else None,
+                "renta_brute": float(r["renta_brute"]) if r.get("renta_brute") is not None else None,
+                "renta_nette": float(r["renta_nette"]) if r.get("renta_nette") is not None else None,
+                "renta_brute_maisons": float(r["renta_brute_maisons"]) if r.get("renta_brute_maisons") is not None else None,
+                "renta_nette_maisons": float(r["renta_nette_maisons"]) if r.get("renta_nette_maisons") is not None else None,
+                "renta_brute_appts": float(r["renta_brute_appts"]) if r.get("renta_brute_appts") is not None else None,
+                "renta_nette_appts": float(r["renta_nette_appts"]) if r.get("renta_nette_appts") is not None else None,
+                "taux_tfb": float(r["taux_tfb"]) if r.get("taux_tfb") is not None else None,
+                "taux_teom": float(r["taux_teom"]) if r.get("taux_teom") is not None else None,
+            }
+        return out
+    except psycopg2.Error:
+        return {}
+
+
+def _upsert_indicateurs_depts(conn, cur, row: dict, commit: bool = True) -> None:
+    """Insère ou met à jour une ligne dans indicateurs_depts."""
+    try:
+        cur.execute(
+            """
+            INSERT INTO foncier.indicateurs_depts (
+                code_dept, dep_nom, reg_nom, code_region, population,
+                renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts,
+                taux_tfb, taux_teom, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
+            ON CONFLICT (code_dept) DO UPDATE SET
+                dep_nom = EXCLUDED.dep_nom, reg_nom = EXCLUDED.reg_nom, code_region = EXCLUDED.code_region,
+                population = EXCLUDED.population, renta_brute = EXCLUDED.renta_brute, renta_nette = EXCLUDED.renta_nette,
+                renta_brute_maisons = EXCLUDED.renta_brute_maisons, renta_nette_maisons = EXCLUDED.renta_nette_maisons,
+                renta_brute_appts = EXCLUDED.renta_brute_appts, renta_nette_appts = EXCLUDED.renta_nette_appts,
+                taux_tfb = EXCLUDED.taux_tfb, taux_teom = EXCLUDED.taux_teom, updated_at = clock_timestamp()
+            """,
+            (
+                row.get("code_dept"),
+                row.get("dep_nom"),
+                row.get("region"),
+                row.get("code_region"),
+                row.get("population"),
+                row.get("renta_brute"),
+                row.get("renta_nette"),
+                row.get("renta_brute_maisons"),
+                row.get("renta_nette_maisons"),
+                row.get("renta_brute_appts"),
+                row.get("renta_nette_appts"),
+                row.get("taux_tfb"),
+                row.get("taux_teom"),
+            ),
+        )
+        if commit:
+            conn.commit()
+    except (psycopg2.Error, TypeError, KeyError):
+        if commit:
+            conn.rollback()
+        pass
+
+
+def _read_indicateurs_regions(cur, code_region_list: List[str]) -> dict:
+    """Retourne un dict code_region -> ligne agrégée pour comparaison_scores."""
+    if not code_region_list:
+        return {}
+    try:
+        placeholders = ",".join(["%s"] * len(code_region_list))
+        cur.execute(
+            "SELECT code_region, reg_nom, population, "
+            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, taux_tfb, taux_teom "
+            "FROM foncier.indicateurs_regions WHERE code_region IN (" + placeholders + ")",
+            code_region_list,
+        )
+        rows = cur.fetchall()
+        out = {}
+        for r in rows:
+            code_r = r.get("code_region")
+            if not code_r:
+                continue
+            out[str(code_r)] = {
+                "mode": "region",
+                "code_region": str(code_r),
+                "region": r.get("reg_nom") or str(code_r),
+                "population": int(r["population"]) if r.get("population") is not None else None,
+                "renta_brute": float(r["renta_brute"]) if r.get("renta_brute") is not None else None,
+                "renta_nette": float(r["renta_nette"]) if r.get("renta_nette") is not None else None,
+                "renta_brute_maisons": float(r["renta_brute_maisons"]) if r.get("renta_brute_maisons") is not None else None,
+                "renta_nette_maisons": float(r["renta_nette_maisons"]) if r.get("renta_nette_maisons") is not None else None,
+                "renta_brute_appts": float(r["renta_brute_appts"]) if r.get("renta_brute_appts") is not None else None,
+                "renta_nette_appts": float(r["renta_nette_appts"]) if r.get("renta_nette_appts") is not None else None,
+                "taux_tfb": float(r["taux_tfb"]) if r.get("taux_tfb") is not None else None,
+                "taux_teom": float(r["taux_teom"]) if r.get("taux_teom") is not None else None,
+            }
+        return out
+    except psycopg2.Error:
+        return {}
+
+
+def _upsert_indicateurs_regions(conn, cur, row: dict, commit: bool = True) -> None:
+    """Insère ou met à jour une ligne dans indicateurs_regions."""
+    try:
+        cur.execute(
+            """
+            INSERT INTO foncier.indicateurs_regions (
+                code_region, reg_nom, population,
+                renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts,
+                taux_tfb, taux_teom, updated_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
+            ON CONFLICT (code_region) DO UPDATE SET
+                reg_nom = EXCLUDED.reg_nom, population = EXCLUDED.population,
+                renta_brute = EXCLUDED.renta_brute, renta_nette = EXCLUDED.renta_nette,
+                renta_brute_maisons = EXCLUDED.renta_brute_maisons, renta_nette_maisons = EXCLUDED.renta_nette_maisons,
+                renta_brute_appts = EXCLUDED.renta_brute_appts, renta_nette_appts = EXCLUDED.renta_nette_appts,
+                taux_tfb = EXCLUDED.taux_tfb, taux_teom = EXCLUDED.taux_teom, updated_at = clock_timestamp()
+            """,
+            (
+                row.get("code_region"),
+                row.get("region"),
+                row.get("population"),
+                row.get("renta_brute"),
+                row.get("renta_nette"),
+                row.get("renta_brute_maisons"),
+                row.get("renta_nette_maisons"),
+                row.get("renta_brute_appts"),
+                row.get("renta_nette_appts"),
+                row.get("taux_tfb"),
+                row.get("taux_teom"),
+            ),
+        )
+        if commit:
+            conn.commit()
+    except (psycopg2.Error, TypeError, KeyError):
+        if commit:
+            conn.rollback()
+        pass
+
+
 def _get_communes_for_aggregation(cur, code_depts: Optional[List[str]] = None, code_regions: Optional[List[str]] = None) -> List[dict]:
     """
     Retourne une liste de communes (code_dept, code_postal, commune, population, dep_nom, reg_nom, code_region)
@@ -1570,58 +1726,75 @@ def get_comparaison_scores(
         try:
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
-            communes_ref = _get_communes_for_aggregation(cur, code_depts=code_depts, code_regions=None)
-            code_insee_list = [str(c.get("code_insee")) for c in communes_ref if c.get("code_insee")]
-            indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
-            rows = []
-            for code_d in code_depts:
-                subset = [c for c in communes_ref if (c.get("code_dept") or "").strip() == code_d]
-                if not subset:
-                    rows.append({
-                        "mode": "departement",
-                        "code_dept": code_d,
-                        "dep_nom": code_d,
-                        "region": "",
-                        "renta_brute": None, "renta_nette": None,
-                        "renta_brute_maisons": None, "renta_nette_maisons": None,
-                        "renta_brute_appts": None, "renta_nette_appts": None,
-                        "taux_tfb": None, "taux_teom": None,
-                    })
-                    continue
-                commune_indicators = []
-                for c in subset:
-                    c_dept = str(c.get("code_dept") or "")
-                    c_postal = str(c.get("code_postal") or "")
-                    c_commune = str(c.get("commune") or "")
-                    code_insee = c.get("code_insee")
-                    pop = int(float(c.get("population") or 1))
-                    if code_insee and code_insee in indic_by_insee:
-                        row = dict(indic_by_insee[code_insee])
+            dept_rows_by_code = _read_indicateurs_depts(cur, code_depts)
+            missing_depts = [d for d in code_depts if d not in dept_rows_by_code]
+            if missing_depts:
+                communes_ref = _get_communes_for_aggregation(cur, code_depts=missing_depts, code_regions=None)
+                code_insee_list = [str(c.get("code_insee")) for c in communes_ref if c.get("code_insee")]
+                indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
+                for code_d in missing_depts:
+                    subset = [c for c in communes_ref if (c.get("code_dept") or "").strip() == code_d]
+                    if not subset:
+                        dept_rows_by_code[code_d] = {
+                            "mode": "departement",
+                            "code_dept": code_d,
+                            "dep_nom": code_d,
+                            "region": "",
+                            "renta_brute": None, "renta_nette": None,
+                            "renta_brute_maisons": None, "renta_nette_maisons": None,
+                            "renta_brute_appts": None, "renta_nette_appts": None,
+                            "taux_tfb": None, "taux_teom": None,
+                            "population": None,
+                        }
+                        continue
+                    commune_indicators = []
+                    for c in subset:
+                        c_dept = str(c.get("code_dept") or "")
+                        c_postal = str(c.get("code_postal") or "")
+                        c_commune = str(c.get("commune") or "")
+                        code_insee = c.get("code_insee")
+                        pop = int(float(c.get("population") or 1))
+                        if code_insee and code_insee in indic_by_insee:
+                            row = dict(indic_by_insee[code_insee])
+                            row["population"] = pop
+                            row["dep_nom"] = c.get("dep_nom") or code_d
+                            row["code_region"] = c.get("code_region")
+                            commune_indicators.append(row)
+                            continue
+                        try:
+                            fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
+                        except Exception:
+                            continue
+                        row = _indicators_from_fiche_payload(
+                            fiche, code_insee or "", c_dept, c_postal, c_commune,
+                            reg_nom=c.get("reg_nom"), dep_nom=c.get("dep_nom"), population=pop,
+                        )
                         row["population"] = pop
                         row["dep_nom"] = c.get("dep_nom") or code_d
                         row["code_region"] = c.get("code_region")
-                        commune_indicators.append(row)
-                        continue
-                    try:
-                        fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
-                    except Exception:
-                        continue
-                    row = _indicators_from_fiche_payload(
-                        fiche, code_insee or "", c_dept, c_postal, c_commune,
-                        reg_nom=c.get("reg_nom"), dep_nom=c.get("dep_nom"), population=pop,
-                    )
-                    row["population"] = pop
-                    row["dep_nom"] = c.get("dep_nom") or code_d
-                    row["code_region"] = c.get("code_region")
-                    if code_insee:
-                        _upsert_indicateurs_communes(conn, cur, row)
-                    commune_indicators.append({k: row.get(k) for k in ("region", "dep_nom", "code_region", "renta_brute", "renta_nette", "renta_brute_maisons", "renta_nette_maisons", "renta_brute_appts", "renta_nette_appts", "taux_tfb", "taux_teom", "population")})
-                agg = _aggregate_indicators_weighted(commune_indicators, "population")
-                agg["mode"] = "departement"
-                agg["code_dept"] = code_d
-                agg["dep_nom"] = agg.get("dep_nom") or code_d
-                agg["region"] = agg.get("region") or ""
-                rows.append(agg)
+                        if code_insee:
+                            _upsert_indicateurs_communes(conn, cur, row, commit=False)
+                        commune_indicators.append({k: row.get(k) for k in ("region", "dep_nom", "code_region", "renta_brute", "renta_nette", "renta_brute_maisons", "renta_nette_maisons", "renta_brute_appts", "renta_nette_appts", "taux_tfb", "taux_teom", "population")})
+                    agg = _aggregate_indicators_weighted(commune_indicators, "population")
+                    agg["mode"] = "departement"
+                    agg["code_dept"] = code_d
+                    agg["dep_nom"] = agg.get("dep_nom") or code_d
+                    agg["region"] = agg.get("region") or ""
+                    agg["population"] = int(sum(int(float(c.get("population") or 1)) for c in subset)) if subset else None
+                    dept_rows_by_code[code_d] = agg
+                    _upsert_indicateurs_depts(conn, cur, agg, commit=False)
+                conn.commit()
+            rows = [dept_rows_by_code.get(code_d, {
+                "mode": "departement",
+                "code_dept": code_d,
+                "dep_nom": code_d,
+                "region": "",
+                "renta_brute": None, "renta_nette": None,
+                "renta_brute_maisons": None, "renta_nette_maisons": None,
+                "renta_brute_appts": None, "renta_nette_appts": None,
+                "taux_tfb": None, "taux_teom": None,
+                "population": None,
+            }) for code_d in code_depts]
             cur.close()
             rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
             if n_max and len(rows) > n_max:
@@ -1639,56 +1812,72 @@ def get_comparaison_scores(
         try:
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
-            communes_ref = _get_communes_for_aggregation(cur, code_depts=None, code_regions=code_regions)
-            code_insee_list = [str(c.get("code_insee")) for c in communes_ref if c.get("code_insee")]
-            indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
-            rows = []
-            for code_r in code_regions:
-                subset = [c for c in communes_ref if (c.get("code_region") or "").strip() == code_r]
-                if not subset:
-                    rows.append({
-                        "mode": "region",
-                        "code_region": code_r,
-                        "region": code_r,
-                        "renta_brute": None, "renta_nette": None,
-                        "renta_brute_maisons": None, "renta_nette_maisons": None,
-                        "renta_brute_appts": None, "renta_nette_appts": None,
-                        "taux_tfb": None, "taux_teom": None,
-                    })
-                    continue
-                commune_indicators = []
-                for c in subset:
-                    c_dept = str(c.get("code_dept") or "")
-                    c_postal = str(c.get("code_postal") or "")
-                    c_commune = str(c.get("commune") or "")
-                    code_insee = c.get("code_insee")
-                    pop = int(float(c.get("population") or 1))
-                    if code_insee and code_insee in indic_by_insee:
-                        row = dict(indic_by_insee[code_insee])
+            region_rows_by_code = _read_indicateurs_regions(cur, code_regions)
+            missing_regions = [r for r in code_regions if r not in region_rows_by_code]
+            if missing_regions:
+                communes_ref = _get_communes_for_aggregation(cur, code_depts=None, code_regions=missing_regions)
+                code_insee_list = [str(c.get("code_insee")) for c in communes_ref if c.get("code_insee")]
+                indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
+                for code_r in missing_regions:
+                    subset = [c for c in communes_ref if (c.get("code_region") or "").strip() == code_r]
+                    if not subset:
+                        region_rows_by_code[code_r] = {
+                            "mode": "region",
+                            "code_region": code_r,
+                            "region": code_r,
+                            "renta_brute": None, "renta_nette": None,
+                            "renta_brute_maisons": None, "renta_nette_maisons": None,
+                            "renta_brute_appts": None, "renta_nette_appts": None,
+                            "taux_tfb": None, "taux_teom": None,
+                            "population": None,
+                        }
+                        continue
+                    commune_indicators = []
+                    for c in subset:
+                        c_dept = str(c.get("code_dept") or "")
+                        c_postal = str(c.get("code_postal") or "")
+                        c_commune = str(c.get("commune") or "")
+                        code_insee = c.get("code_insee")
+                        pop = int(float(c.get("population") or 1))
+                        if code_insee and code_insee in indic_by_insee:
+                            row = dict(indic_by_insee[code_insee])
+                            row["population"] = pop
+                            row["code_region"] = c.get("code_region")
+                            row["reg_nom"] = c.get("reg_nom")
+                            commune_indicators.append(row)
+                            continue
+                        try:
+                            fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
+                        except Exception:
+                            continue
+                        row = _indicators_from_fiche_payload(
+                            fiche, code_insee or "", c_dept, c_postal, c_commune,
+                            reg_nom=c.get("reg_nom"), dep_nom=c.get("dep_nom"), population=pop,
+                        )
                         row["population"] = pop
                         row["code_region"] = c.get("code_region")
                         row["reg_nom"] = c.get("reg_nom")
-                        commune_indicators.append(row)
-                        continue
-                    try:
-                        fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
-                    except Exception:
-                        continue
-                    row = _indicators_from_fiche_payload(
-                        fiche, code_insee or "", c_dept, c_postal, c_commune,
-                        reg_nom=c.get("reg_nom"), dep_nom=c.get("dep_nom"), population=pop,
-                    )
-                    row["population"] = pop
-                    row["code_region"] = c.get("code_region")
-                    row["reg_nom"] = c.get("reg_nom")
-                    if code_insee:
-                        _upsert_indicateurs_communes(conn, cur, row)
-                    commune_indicators.append({k: row.get(k) for k in ("region", "reg_nom", "code_region", "renta_brute", "renta_nette", "renta_brute_maisons", "renta_nette_maisons", "renta_brute_appts", "renta_nette_appts", "taux_tfb", "taux_teom", "population")})
-                agg = _aggregate_indicators_weighted(commune_indicators, "population")
-                agg["mode"] = "region"
-                agg["code_region"] = code_r
-                agg["region"] = next((c.get("reg_nom") for c in subset if c.get("reg_nom")), code_r)
-                rows.append(agg)
+                        if code_insee:
+                            _upsert_indicateurs_communes(conn, cur, row, commit=False)
+                        commune_indicators.append({k: row.get(k) for k in ("region", "reg_nom", "code_region", "renta_brute", "renta_nette", "renta_brute_maisons", "renta_nette_maisons", "renta_brute_appts", "renta_nette_appts", "taux_tfb", "taux_teom", "population")})
+                    agg = _aggregate_indicators_weighted(commune_indicators, "population")
+                    agg["mode"] = "region"
+                    agg["code_region"] = code_r
+                    agg["region"] = next((c.get("reg_nom") for c in subset if c.get("reg_nom")), code_r)
+                    agg["population"] = int(sum(int(float(c.get("population") or 1)) for c in subset)) if subset else None
+                    region_rows_by_code[code_r] = agg
+                    _upsert_indicateurs_regions(conn, cur, agg, commit=False)
+                conn.commit()
+            rows = [region_rows_by_code.get(code_r, {
+                "mode": "region",
+                "code_region": code_r,
+                "region": code_r,
+                "renta_brute": None, "renta_nette": None,
+                "renta_brute_maisons": None, "renta_nette_maisons": None,
+                "renta_brute_appts": None, "renta_nette_appts": None,
+                "taux_tfb": None, "taux_teom": None,
+                "population": None,
+            }) for code_r in code_regions]
             cur.close()
             rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
             if n_max and len(rows) > n_max:
@@ -1905,6 +2094,105 @@ def refresh_indicateurs(
             conn.commit()
         cur.close()
         return {"refreshed": done, "requested": len(to_process), "from_cache": from_cache}
+    except psycopg2.Error as e:
+        if conn:
+            conn.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if conn:
+            conn.close()
+
+
+@app.post("/api/refresh-indicateurs-agreges")
+def refresh_indicateurs_agreges(
+    code_dept_list: Optional[List[str]] = Query(None, description="Codes département à rafraîchir (optionnel)"),
+    code_region_list: Optional[List[str]] = Query(None, description="Codes région à rafraîchir (optionnel)"),
+    refresh_all: bool = Query(False, description="Si true, rafraîchit tous les départements et toutes les régions"),
+    force: bool = Query(False, description="Si true, supprime les lignes existantes ciblées avant recalcul"),
+):
+    """
+    Rafraîchit les agrégats `indicateurs_depts` et `indicateurs_regions`.
+    - Par défaut: upsert des lignes manquantes/obsolètes selon la logique de comparaison_scores.
+    - force=true: supprime d'abord les lignes ciblées puis recalcule entièrement ces cibles.
+    """
+    conn = None
+    try:
+        # Déterminer les cibles
+        target_depts = [str(x or "").strip() for x in (code_dept_list or []) if str(x or "").strip()]
+        target_regions = [str(x or "").strip() for x in (code_region_list or []) if str(x or "").strip()]
+        if refresh_all:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute("SELECT code_dept FROM foncier.ref_departements ORDER BY code_dept")
+            target_depts = [str(r.get("code_dept") or "").strip() for r in cur.fetchall() if str(r.get("code_dept") or "").strip()]
+            cur.execute("SELECT code_region FROM foncier.ref_regions ORDER BY code_region")
+            target_regions = [str(r.get("code_region") or "").strip() for r in cur.fetchall() if str(r.get("code_region") or "").strip()]
+            cur.close()
+            conn.close()
+            conn = None
+
+        if not target_depts and not target_regions:
+            raise HTTPException(
+                status_code=400,
+                detail="Fournir code_dept_list et/ou code_region_list, ou utiliser refresh_all=true.",
+            )
+
+        # Option force : supprimer les cibles avant recalcul
+        if force:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            if target_depts:
+                cur.execute(
+                    "DELETE FROM foncier.indicateurs_depts WHERE code_dept = ANY(%s)",
+                    (target_depts,),
+                )
+            if target_regions:
+                cur.execute(
+                    "DELETE FROM foncier.indicateurs_regions WHERE code_region = ANY(%s)",
+                    (target_regions,),
+                )
+            conn.commit()
+            cur.close()
+            conn.close()
+            conn = None
+
+        refreshed_depts = 0
+        refreshed_regions = 0
+
+        # Réutilise la logique d'upsert/fallback déjà centralisée dans comparaison_scores
+        if target_depts:
+            out_d = get_comparaison_scores(
+                mode="departements",
+                code_dept=target_depts,
+                code_postal=None,
+                commune=None,
+                code_region=None,
+                score_principal="renta_nette",
+                n_max=max(1, len(target_depts)),
+                scores_secondaires=None,
+            )
+            refreshed_depts = len(out_d.get("rows") or [])
+
+        if target_regions:
+            out_r = get_comparaison_scores(
+                mode="regions",
+                code_dept=None,
+                code_postal=None,
+                commune=None,
+                code_region=target_regions,
+                score_principal="renta_nette",
+                n_max=max(1, len(target_regions)),
+                scores_secondaires=None,
+            )
+            refreshed_regions = len(out_r.get("rows") or [])
+
+        return {
+            "departements_requested": len(target_depts),
+            "regions_requested": len(target_regions),
+            "departements_refreshed": refreshed_depts,
+            "regions_refreshed": refreshed_regions,
+            "force": force,
+        }
     except psycopg2.Error as e:
         if conn:
             conn.rollback()
