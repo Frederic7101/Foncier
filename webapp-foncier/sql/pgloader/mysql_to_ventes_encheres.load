@@ -1,0 +1,13 @@
+/* Migration MySQL foncier → PostgreSQL foncier (schéma foncier créé par pgLoader, à renommer ensuite en ventes_notaire).
+   Avec Docker : remplacer localhost par host.docker.internal pour accéder à MySQL/PostgreSQL sur la machine hôte.
+   Adapter les mots de passe ci-dessous. */
+
+LOAD DATABASE
+  FROM mysql://root:secret@host.docker.internal/licitor_annonces
+  INTO postgresql://postgres:P8ach7101@host.docker.internal/ventes_encheres
+  WITH include drop, create tables, create indexes, reset sequences,
+       workers = 4,
+       concurrency = 4
+  SET work_mem to '256MB',
+      maintenance_work_mem to '512MB'
+;

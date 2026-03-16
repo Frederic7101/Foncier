@@ -44,5 +44,7 @@ Thumbs.db
 .DS_Store
 
 *.jsonl
-# Résumés de session 
-Résumés de session*.md
+
+# Fichiers .md (non archivés dans git : notes, résumés de session, etc.)
+*.md
+!webapp-foncier/sql/**/*.md
