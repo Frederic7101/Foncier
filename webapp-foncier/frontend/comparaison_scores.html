@@ -612,12 +612,11 @@
         function createIgnBaseLayer() {
           // Fond IGN détaillé (PLAN IGN v2) via WMTS Géoplateforme.
           return L.tileLayer(
-            "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png",
+            (API_BASE || "") + "/api/ign-tiles/{z}/{x}/{y}.png",
             {
               maxZoom: 19,
               tileSize: 256,
-              crossOrigin: true,
-              attribution: '&copy; <a href="https://www.ign.fr/" target="_blank" rel="noopener noreferrer">IGN</a>'
+              attribution: '&copy; <a href="https://www.ign.fr/" target="_blank" rel="noopener noreferrer">IGN</a> (cache local)'
             }
           );
         }
@@ -853,7 +852,7 @@
             if (b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
             return a.code.localeCompare(b.code);
           });
-          var limited = deptEntries.slice(0, 4);
+          var limited = deptEntries.slice(0, 12);
           if (!limited.length) {
             if (status) status.textContent = "Aucune commune exploitable pour la cartographie.";
             return;
@@ -941,8 +940,8 @@
 
           Promise.all(renderPromises)
             .then(function () {
-              var msg = "Mode communes : zoom automatique sur les communes sélectionnées (max 4 départements).";
-              if (deptEntries.length > 4) msg += " Affichage limité aux 4 départements les plus représentés.";
+              var msg = "Mode communes : zoom automatique sur les communes sélectionnées (max 12 départements).";
+              if (deptEntries.length > 12) msg += " Affichage limité aux 12 départements les plus représentés.";
               if (status) status.textContent = msg;
               mapViz.mode = "communes";
             })
@@ -1416,6 +1415,21 @@
           });
         })();
 
+        function scrollToComparaisonResults() {
+          var mapWrapEl = document.getElementById("comparaison-map-wrap");
+          var tablesWrapEl = document.querySelector(".comparaison-tables-wrap");
+          var target = (mapWrapEl && !mapWrapEl.hasAttribute("aria-hidden")) ? mapWrapEl : tablesWrapEl;
+          if (!target) return;
+          target.scrollIntoView({ behavior: "smooth", block: "start" });
+        }
+
+        function scheduleScrollToComparaisonResults() {
+          // Plusieurs passes pour compenser les changements de hauteur asynchrones (cartes/GeoJSON).
+          setTimeout(scrollToComparaisonResults, 50);
+          setTimeout(scrollToComparaisonResults, 250);
+          setTimeout(scrollToComparaisonResults, 700);
+        }
+
         function runComparaison() {
           var mode = getComparaisonMode();
           var cat = document.getElementById("comparaison-categorie").value;
@@ -1428,12 +1442,6 @@
           var emptyEl = document.getElementById("comparaison-empty");
           var loadingEl = document.getElementById("comparaison-loading");
           var errorEl = document.getElementById("comparaison-error");
-          var tablesWrapEl = document.querySelector(".comparaison-tables-wrap");
-
-          function scrollToTables() {
-            if (!tablesWrapEl) return;
-            tablesWrapEl.scrollIntoView({ behavior: "smooth", block: "start" });
-          }
 
           if (mode === "communes" && selectedCommunes.length === 0) {
             errorEl.textContent = "Ajoutez au moins une commune à la liste (recherche rapide ou sélecteur) puis cliquez sur Comparer.";
@@ -1443,7 +1451,7 @@
               var blockEl = document.getElementById("comparaison-block-" + block.id);
               if (blockEl) blockEl.setAttribute("aria-hidden", "true");
             });
-            scrollToTables();
+            scrollToComparaisonResults();
             return;
           }
           if (mode === "departements" && getSelectedDeptCodes().length === 0) {
@@ -1454,7 +1462,7 @@
               var blockEl = document.getElementById("comparaison-block-" + block.id);
               if (blockEl) blockEl.setAttribute("aria-hidden", "true");
             });
-            scrollToTables();
+            scrollToComparaisonResults();
             return;
           }
           if (mode === "regions" && getSelectedRegionIdsForRegionsMode().length === 0) {
@@ -1465,7 +1473,7 @@
               var blockEl = document.getElementById("comparaison-block-" + block.id);
               if (blockEl) blockEl.setAttribute("aria-hidden", "true");
             });
-            scrollToTables();
+            scrollToComparaisonResults();
             return;
           }
           errorEl.hidden = true;
@@ -1475,7 +1483,7 @@
             var blockEl = document.getElementById("comparaison-block-" + block.id);
             if (blockEl) blockEl.setAttribute("aria-hidden", "true");
           });
-          scrollToTables();
+          scrollToComparaisonResults();
 
           var params = new URLSearchParams();
           params.set("mode", mode);
@@ -1551,6 +1559,7 @@
                 emptyEl.style.display = "none";
                 renderComparaisonMap(rows, displayMode, scorePrincipal);
               }
+              scheduleScrollToComparaisonResults();
             })
             .catch(function (err) {
               loadingEl.classList.remove("visible");
@@ -1562,6 +1571,7 @@
                 if (blockEl) blockEl.setAttribute("aria-hidden", "true");
               });
               clearComparaisonMap();
+              scheduleScrollToComparaisonResults();
             });
         }
 
@@ -1572,11 +1582,6 @@
           var emptyEl = document.getElementById("comparaison-empty");
           var loadingEl = document.getElementById("comparaison-loading");
           var errorEl = document.getElementById("comparaison-error");
-          var tablesWrapEl = document.querySelector(".comparaison-tables-wrap");
-          function scrollToTables() {
-            if (!tablesWrapEl) return;
-            tablesWrapEl.scrollIntoView({ behavior: "smooth", block: "start" });
-          }
 
           var params = new URLSearchParams();
           params.set("mode", mode);
@@ -1584,7 +1589,7 @@
             if (selectedCommunes.length === 0) {
               errorEl.textContent = "Ajoutez au moins une commune à la liste puis cliquez sur Forcer le recalcul.";
               errorEl.hidden = false;
-              scrollToTables();
+              scrollToComparaisonResults();
               return;
             }
             selectedCommunes.forEach(function (c) {
@@ -1597,7 +1602,7 @@
             if (!depts.length) {
               errorEl.textContent = "Sélectionnez au moins un département puis cliquez sur Forcer le recalcul.";
               errorEl.hidden = false;
-              scrollToTables();
+              scrollToComparaisonResults();
               return;
             }
             depts.forEach(function (d) { params.append("code_dept", d); });
@@ -1606,7 +1611,7 @@
             if (!regs.length) {
               errorEl.textContent = "Sélectionnez au moins une région puis cliquez sur Forcer le recalcul.";
               errorEl.hidden = false;
-              scrollToTables();
+              scrollToComparaisonResults();
               return;
             }
             regs.forEach(function (r) { params.append("code_region", r); });
@@ -1615,7 +1620,7 @@
           errorEl.hidden = true;
           emptyEl.style.display = "none";
           loadingEl.classList.add("visible");
-          scrollToTables();
+          scrollToComparaisonResults();
 
           fetch(API_BASE + "/api/force-recalcul-indicateurs?" + params.toString(), { method: "POST" })
             .then(function (r) {
@@ -1630,15 +1635,80 @@
               loadingEl.classList.remove("visible");
               errorEl.textContent = err.message || "Erreur lors du recalcul.";
               errorEl.hidden = false;
-              scrollToTables();
+              scheduleScrollToComparaisonResults();
             });
         }
 
         document.getElementById("comparaison-force-btn").addEventListener("click", forceRecalculForMode);
 
-        document.getElementById("comparaison-reset-btn").addEventListener("click", function () {
-          window.location.reload();
-        });
+        function resetComparaisonUI() {
+          // 1) Nettoyer l'URL (supprime les query params) sans rechargement.
+          try {
+            var cleanPath = window.location.pathname || "comparaison_scores.html";
+            window.history.replaceState({}, document.title, cleanPath);
+          } catch (e) {}
+
+          // 2) Réinitialiser les états métier / sélections.
+          selectedCommunes.length = 0;
+          communesList = [];
+
+          // Mode par défaut: communes.
+          var modeDefault = document.querySelector('input[name="comparaison-mode"][value="communes"]');
+          if (modeDefault) modeDefault.checked = true;
+          switchModeUI();
+
+          // Filtres de base.
+          var regionSel = document.getElementById("comparaison-region");
+          var deptSel = document.getElementById("comparaison-dept");
+          var communeSel = document.getElementById("comparaison-commune");
+          if (regionSel) regionSel.value = "";
+          fillDepartments(); // remet aussi le select commune à l'état initial
+          if (deptSel) deptSel.value = "";
+          fillCommunes();
+          if (communeSel) communeSel.value = "";
+
+          // Recherche rapide + suggestions.
+          var searchInput = document.getElementById("comparaison-search");
+          var suggestions = document.getElementById("comparaison-suggestions");
+          if (searchInput) searchInput.value = "";
+          if (suggestions) {
+            suggestions.innerHTML = "";
+            suggestions.hidden = true;
+            suggestions.setAttribute("aria-expanded", "false");
+          }
+
+          // Indicateurs / catégorie / n_max.
+          var catSel = document.getElementById("comparaison-categorie");
+          if (catSel) catSel.value = "rentabilite";
+          var nMaxInput = document.getElementById("comparaison-n-max");
+          if (nMaxInput) nMaxInput.value = "20";
+          ["ind-renta-brute", "ind-renta-nette", "ind-taux-tfb", "ind-taux-teom"].forEach(function (id) {
+            var cb = document.getElementById(id);
+            if (cb) cb.checked = true;
+          });
+          updateIndicatorVisibility();
+
+          // Mode départements : toutes les régions cochées, tous les départements décochés.
+          initDepartementsModeSelectionState();
+
+          // Mode régions : toutes décochées.
+          setRegionsModeAllRegions(false);
+          var allRegionsRegions = document.getElementById("comparaison-all-regions-regions");
+          if (allRegionsRegions) allRegionsRegions.checked = false;
+          document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb").forEach(function (cb) { cb.checked = false; });
+          syncRegionsAllCheckboxState();
+
+          // 3) Réinitialiser affichages résultats/cartes/messages.
+          resetComparaisonResultsOnModeChange("communes");
+          updateSelectedListForMode();
+          var err = document.getElementById("comparaison-error");
+          if (err) { err.hidden = true; err.textContent = ""; }
+
+          // 4) Recalculer les liens de navigation avec URL désormais vide.
+          initNavFromUrl();
+        }
+
+        document.getElementById("comparaison-reset-btn").addEventListener("click", resetComparaisonUI);
 
         function initNavFromUrl() {
           var sp = new URLSearchParams(window.location.search || "");

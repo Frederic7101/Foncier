@@ -3,6 +3,8 @@ import math
 import os
 import re
 import unicodedata
+import urllib.error
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import date, datetime
@@ -11,7 +13,7 @@ from typing import Optional, List, Any, Literal
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -21,6 +23,12 @@ load_dotenv()
 
 # Mode debug : logs [fiche], [indicators], [refresh-indicateurs], [stats] uniquement si DEBUG=1 (ou true/yes)
 DEBUG = os.environ.get("DEBUG", "").strip().lower() in ("1", "true", "yes")
+IGN_WMTS_URL = (
+    "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"
+    "&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM"
+    "&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png"
+)
+IGN_TILE_CACHE_DIR = Path(__file__).resolve().parent.parent / "frontend" / "data" / "carto" / "ign_tiles"
 
 
 def _debug_log(msg: str, *args: Any, **kwargs: Any) -> None:
@@ -258,6 +266,56 @@ def get_period():
     finally:
         if conn is not None:
             conn.close()
+
+
+@app.get("/api/ign-tiles/{z}/{x}/{y}.png")
+def get_ign_tile_cached(
+    z: int,
+    x: int,
+    y: int,
+    refresh: bool = Query(False, description="Forcer le rechargement IGN en ignorant le cache local"),
+):
+    """Retourne une tuile IGN via cache local disque.
+
+    - Lecture locale prioritaire: frontend/data/carto/ign_tiles/{z}/{x}/{y}.png
+    - Si absente: téléchargement depuis IGN, stockage local, puis renvoi.
+    """
+    if z < 0 or z > 19:
+        raise HTTPException(status_code=400, detail="z doit être entre 0 et 19.")
+    max_coord = (1 << z) - 1
+    if x < 0 or x > max_coord or y < 0 or y > max_coord:
+        raise HTTPException(status_code=400, detail="x/y hors bornes pour le niveau z.")
+
+    tile_path = IGN_TILE_CACHE_DIR / str(z) / str(x) / f"{y}.png"
+    try:
+        if tile_path.exists() and not refresh:
+            data = tile_path.read_bytes()
+            return Response(content=data, media_type="image/png", headers={"Cache-Control": "public, max-age=31536000"})
+    except OSError:
+        pass
+
+    url = IGN_WMTS_URL.format(z=z, x=x, y=y)
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "webapp-foncier/ign-cache"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            if getattr(resp, "status", 200) != 200:
+                raise HTTPException(status_code=502, detail=f"IGN a répondu {getattr(resp, 'status', 'inconnu')}")
+            data = resp.read()
+    except urllib.error.HTTPError as e:
+        raise HTTPException(status_code=502, detail=f"Erreur HTTP IGN: {e.code}")
+    except urllib.error.URLError as e:
+        raise HTTPException(status_code=502, detail=f"IGN indisponible: {e.reason}")
+
+    try:
+        tile_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = tile_path.with_suffix(".tmp")
+        tmp_path.write_bytes(data)
+        tmp_path.replace(tile_path)
+    except OSError:
+        # Même si l'écriture cache échoue, on renvoie la tuile téléchargée.
+        pass
+
+    return Response(content=data, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
 
 
 def _get_regions_and_depts(cur) -> tuple[list[dict], list[dict]]:
