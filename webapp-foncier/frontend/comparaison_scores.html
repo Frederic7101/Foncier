@@ -98,9 +98,23 @@
       .comparaison-scores-row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 0.5rem; }
       .comparaison-scores-row .score-secondary { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
       .comparaison-scores-row .score-secondary label { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: normal; white-space: nowrap; }
+      .comparaison-scores-row .actions-field {
+        flex: 1 1 auto;
+        display: flex;
+        align-items: center;
+        gap: 0.35rem;
+      }
+      .comparaison-scores-row .actions-field label { display: none; }
       .comparaison-btn { padding: 0.5rem 1.25rem; background: #2563eb; color: #fff; border: none; border-radius: 0.4rem; font-size: 0.95rem; font-weight: 600; cursor: pointer; }
       .comparaison-btn:hover { background: #1d4ed8; }
       .comparaison-btn:disabled { background: #9ca3af; cursor: not-allowed; }
+      .comparaison-btn.force-recalc {
+        background: #fff;
+        color: #111827;
+        border: 1px solid #d1d5db;
+        margin-left: auto;
+      }
+      .comparaison-btn.force-recalc:hover { background: #f9fafb; border-color: #9ca3af; }
       #app-comparaison .stats-reset-btn {
         margin-left: 0.5rem;
         padding: 0.5rem 1rem;
@@ -247,10 +261,11 @@
                 <label for="comparaison-n-max" id="comparaison-n-max-label">Nb max de Communes</label>
                 <input id="comparaison-n-max" type="number" min="1" max="500" value="20" aria-label="Nb max de Communes" />
               </div>
-              <div class="field">
+              <div class="field actions-field">
                 <label>&nbsp;</label>
                 <button type="button" class="comparaison-btn" id="comparaison-btn">Comparer</button>
                 <button type="button" class="stats-reset-btn" id="comparaison-reset-btn">Réinitialiser</button>
+                <button type="button" class="comparaison-btn force-recalc" id="comparaison-force-btn">Forcer le recalcul</button>
               </div>
             </div>
             <div class="comparaison-scores-row" id="comparaison-indicators-row">
@@ -1060,6 +1075,75 @@
         }
 
         document.getElementById("comparaison-btn").addEventListener("click", runComparaison);
+
+        function forceRecalculForMode() {
+          var mode = getComparaisonMode();
+          var emptyEl = document.getElementById("comparaison-empty");
+          var loadingEl = document.getElementById("comparaison-loading");
+          var errorEl = document.getElementById("comparaison-error");
+          var tablesWrapEl = document.querySelector(".comparaison-tables-wrap");
+          function scrollToTables() {
+            if (!tablesWrapEl) return;
+            tablesWrapEl.scrollIntoView({ behavior: "smooth", block: "start" });
+          }
+
+          var params = new URLSearchParams();
+          params.set("mode", mode);
+          if (mode === "communes") {
+            if (selectedCommunes.length === 0) {
+              errorEl.textContent = "Ajoutez au moins une commune à la liste puis cliquez sur Forcer le recalcul.";
+              errorEl.hidden = false;
+              scrollToTables();
+              return;
+            }
+            selectedCommunes.forEach(function (c) {
+              params.append("code_dept", c.code_dept || "");
+              params.append("code_postal", c.code_postal || "");
+              params.append("commune", c.commune || "");
+            });
+          } else if (mode === "departements") {
+            var depts = getSelectedDeptCodes();
+            if (!depts.length) {
+              errorEl.textContent = "Sélectionnez au moins un département puis cliquez sur Forcer le recalcul.";
+              errorEl.hidden = false;
+              scrollToTables();
+              return;
+            }
+            depts.forEach(function (d) { params.append("code_dept", d); });
+          } else {
+            var regs = getSelectedRegionIdsForRegionsMode();
+            if (!regs.length) {
+              errorEl.textContent = "Sélectionnez au moins une région puis cliquez sur Forcer le recalcul.";
+              errorEl.hidden = false;
+              scrollToTables();
+              return;
+            }
+            regs.forEach(function (r) { params.append("code_region", r); });
+          }
+
+          errorEl.hidden = true;
+          emptyEl.style.display = "none";
+          loadingEl.classList.add("visible");
+          scrollToTables();
+
+          fetch(API_BASE + "/api/force-recalcul-indicateurs?" + params.toString(), { method: "POST" })
+            .then(function (r) {
+              if (!r.ok) throw new Error("Erreur " + r.status + " lors du recalcul.");
+              return r.json();
+            })
+            .then(function () {
+              loadingEl.classList.remove("visible");
+              runComparaison();
+            })
+            .catch(function (err) {
+              loadingEl.classList.remove("visible");
+              errorEl.textContent = err.message || "Erreur lors du recalcul.";
+              errorEl.hidden = false;
+              scrollToTables();
+            });
+        }
+
+        document.getElementById("comparaison-force-btn").addEventListener("click", forceRecalculForMode);
 
         document.getElementById("comparaison-reset-btn").addEventListener("click", function () {
           window.location.reload();

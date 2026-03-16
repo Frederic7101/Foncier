@@ -1657,6 +1657,24 @@ def _get_communes_for_aggregation(cur, code_depts: Optional[List[str]] = None, c
 
 def _aggregate_indicators_weighted(commune_rows: List[dict], weight_key: str = "population") -> dict:
     """Agrège les indicateurs numériques en moyenne pondérée par weight_key (ex. population)."""
+    def _to_float_or_none(v):
+        if v is None:
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    def _is_valid_row(row: dict) -> bool:
+        rb = _to_float_or_none(row.get("renta_brute"))
+        rn = _to_float_or_none(row.get("renta_nette"))
+        if rb is None or rn is None:
+            return False
+        if rb > 100 or rn > 100:
+            return False
+        return True
+
+    commune_rows = [r for r in (commune_rows or []) if _is_valid_row(r)]
     if not commune_rows:
         return {}
     total_w = 0
@@ -1695,6 +1713,99 @@ def _aggregate_indicators_weighted(commune_rows: List[dict], weight_key: str = "
     return out
 
 
+def _to_float_or_none(v):
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_valid_rentability_row(row: dict) -> bool:
+    """Ligne affichable: renta_brute + renta_nette déterminées et <= 100%."""
+    rb = _to_float_or_none(row.get("renta_brute"))
+    rn = _to_float_or_none(row.get("renta_nette"))
+    if rb is None or rn is None:
+        return False
+    if rb > 100 or rn > 100:
+        return False
+    return True
+
+
+def _recompute_indicateurs_depts(conn, cur, code_depts: List[str]) -> int:
+    """Recalcule les agrégats départements à partir de indicateurs_communes (sans appeler get_comparaison_scores)."""
+    if not code_depts:
+        return 0
+    communes_ref = _get_communes_for_aggregation(cur, code_depts=code_depts, code_regions=None)
+    code_insee_list = [str(c.get("code_insee")) for c in communes_ref if c.get("code_insee")]
+    indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
+    refreshed = 0
+    for code_d in code_depts:
+        subset = [c for c in communes_ref if (c.get("code_dept") or "").strip() == code_d]
+        if not subset:
+            continue
+        commune_indicators = []
+        for c in subset:
+            code_insee = c.get("code_insee")
+            if not code_insee or code_insee not in indic_by_insee:
+                continue
+            pop = int(float(c.get("population") or 1))
+            row = dict(indic_by_insee[code_insee])
+            row["population"] = pop
+            row["dep_nom"] = c.get("dep_nom") or code_d
+            row["code_region"] = c.get("code_region")
+            if _is_valid_rentability_row(row):
+                commune_indicators.append(row)
+        agg = _aggregate_indicators_weighted(commune_indicators, "population")
+        if not agg or not _is_valid_rentability_row(agg):
+            continue
+        agg["mode"] = "departement"
+        agg["code_dept"] = code_d
+        agg["dep_nom"] = agg.get("dep_nom") or code_d
+        agg["region"] = agg.get("region") or ""
+        agg["population"] = int(sum(int(float(r.get("population") or 1)) for r in commune_indicators)) if commune_indicators else None
+        _upsert_indicateurs_depts(conn, cur, agg, commit=False)
+        refreshed += 1
+    return refreshed
+
+
+def _recompute_indicateurs_regions(conn, cur, code_regions: List[str]) -> int:
+    """Recalcule les agrégats régions à partir de indicateurs_communes (sans appeler get_comparaison_scores)."""
+    if not code_regions:
+        return 0
+    communes_ref = _get_communes_for_aggregation(cur, code_depts=None, code_regions=code_regions)
+    code_insee_list = [str(c.get("code_insee")) for c in communes_ref if c.get("code_insee")]
+    indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
+    refreshed = 0
+    for code_r in code_regions:
+        subset = [c for c in communes_ref if (c.get("code_region") or "").strip() == code_r]
+        if not subset:
+            continue
+        commune_indicators = []
+        for c in subset:
+            code_insee = c.get("code_insee")
+            if not code_insee or code_insee not in indic_by_insee:
+                continue
+            pop = int(float(c.get("population") or 1))
+            row = dict(indic_by_insee[code_insee])
+            row["population"] = pop
+            row["code_region"] = c.get("code_region")
+            row["reg_nom"] = c.get("reg_nom")
+            if _is_valid_rentability_row(row):
+                commune_indicators.append(row)
+        agg = _aggregate_indicators_weighted(commune_indicators, "population")
+        if not agg or not _is_valid_rentability_row(agg):
+            continue
+        agg["mode"] = "region"
+        agg["code_region"] = code_r
+        agg["region"] = next((c.get("reg_nom") for c in subset if c.get("reg_nom")), code_r)
+        agg["population"] = int(sum(int(float(r.get("population") or 1)) for r in commune_indicators)) if commune_indicators else None
+        _upsert_indicateurs_regions(conn, cur, agg, commit=False)
+        refreshed += 1
+    return refreshed
+
+
 @app.get("/api/comparaison_scores")
 def get_comparaison_scores(
     mode: str = Query("communes", description="Mode: communes, departements, regions"),
@@ -1727,74 +1838,11 @@ def get_comparaison_scores(
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
             dept_rows_by_code = _read_indicateurs_depts(cur, code_depts)
-            missing_depts = [d for d in code_depts if d not in dept_rows_by_code]
-            if missing_depts:
-                communes_ref = _get_communes_for_aggregation(cur, code_depts=missing_depts, code_regions=None)
-                code_insee_list = [str(c.get("code_insee")) for c in communes_ref if c.get("code_insee")]
-                indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
-                for code_d in missing_depts:
-                    subset = [c for c in communes_ref if (c.get("code_dept") or "").strip() == code_d]
-                    if not subset:
-                        dept_rows_by_code[code_d] = {
-                            "mode": "departement",
-                            "code_dept": code_d,
-                            "dep_nom": code_d,
-                            "region": "",
-                            "renta_brute": None, "renta_nette": None,
-                            "renta_brute_maisons": None, "renta_nette_maisons": None,
-                            "renta_brute_appts": None, "renta_nette_appts": None,
-                            "taux_tfb": None, "taux_teom": None,
-                            "population": None,
-                        }
-                        continue
-                    commune_indicators = []
-                    for c in subset:
-                        c_dept = str(c.get("code_dept") or "")
-                        c_postal = str(c.get("code_postal") or "")
-                        c_commune = str(c.get("commune") or "")
-                        code_insee = c.get("code_insee")
-                        pop = int(float(c.get("population") or 1))
-                        if code_insee and code_insee in indic_by_insee:
-                            row = dict(indic_by_insee[code_insee])
-                            row["population"] = pop
-                            row["dep_nom"] = c.get("dep_nom") or code_d
-                            row["code_region"] = c.get("code_region")
-                            commune_indicators.append(row)
-                            continue
-                        try:
-                            fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
-                        except Exception:
-                            continue
-                        row = _indicators_from_fiche_payload(
-                            fiche, code_insee or "", c_dept, c_postal, c_commune,
-                            reg_nom=c.get("reg_nom"), dep_nom=c.get("dep_nom"), population=pop,
-                        )
-                        row["population"] = pop
-                        row["dep_nom"] = c.get("dep_nom") or code_d
-                        row["code_region"] = c.get("code_region")
-                        if code_insee:
-                            _upsert_indicateurs_communes(conn, cur, row, commit=False)
-                        commune_indicators.append({k: row.get(k) for k in ("region", "dep_nom", "code_region", "renta_brute", "renta_nette", "renta_brute_maisons", "renta_nette_maisons", "renta_brute_appts", "renta_nette_appts", "taux_tfb", "taux_teom", "population")})
-                    agg = _aggregate_indicators_weighted(commune_indicators, "population")
-                    agg["mode"] = "departement"
-                    agg["code_dept"] = code_d
-                    agg["dep_nom"] = agg.get("dep_nom") or code_d
-                    agg["region"] = agg.get("region") or ""
-                    agg["population"] = int(sum(int(float(c.get("population") or 1)) for c in subset)) if subset else None
-                    dept_rows_by_code[code_d] = agg
-                    _upsert_indicateurs_depts(conn, cur, agg, commit=False)
-                conn.commit()
-            rows = [dept_rows_by_code.get(code_d, {
-                "mode": "departement",
-                "code_dept": code_d,
-                "dep_nom": code_d,
-                "region": "",
-                "renta_brute": None, "renta_nette": None,
-                "renta_brute_maisons": None, "renta_nette_maisons": None,
-                "renta_brute_appts": None, "renta_nette_appts": None,
-                "taux_tfb": None, "taux_teom": None,
-                "population": None,
-            }) for code_d in code_depts]
+            rows = []
+            for code_d in code_depts:
+                row = dept_rows_by_code.get(code_d)
+                if row and _is_valid_rentability_row(row):
+                    rows.append(row)
             cur.close()
             rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
             if n_max and len(rows) > n_max:
@@ -1813,71 +1861,11 @@ def get_comparaison_scores(
             conn = get_db_connection()
             cur = conn.cursor(cursor_factory=RealDictCursor)
             region_rows_by_code = _read_indicateurs_regions(cur, code_regions)
-            missing_regions = [r for r in code_regions if r not in region_rows_by_code]
-            if missing_regions:
-                communes_ref = _get_communes_for_aggregation(cur, code_depts=None, code_regions=missing_regions)
-                code_insee_list = [str(c.get("code_insee")) for c in communes_ref if c.get("code_insee")]
-                indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
-                for code_r in missing_regions:
-                    subset = [c for c in communes_ref if (c.get("code_region") or "").strip() == code_r]
-                    if not subset:
-                        region_rows_by_code[code_r] = {
-                            "mode": "region",
-                            "code_region": code_r,
-                            "region": code_r,
-                            "renta_brute": None, "renta_nette": None,
-                            "renta_brute_maisons": None, "renta_nette_maisons": None,
-                            "renta_brute_appts": None, "renta_nette_appts": None,
-                            "taux_tfb": None, "taux_teom": None,
-                            "population": None,
-                        }
-                        continue
-                    commune_indicators = []
-                    for c in subset:
-                        c_dept = str(c.get("code_dept") or "")
-                        c_postal = str(c.get("code_postal") or "")
-                        c_commune = str(c.get("commune") or "")
-                        code_insee = c.get("code_insee")
-                        pop = int(float(c.get("population") or 1))
-                        if code_insee and code_insee in indic_by_insee:
-                            row = dict(indic_by_insee[code_insee])
-                            row["population"] = pop
-                            row["code_region"] = c.get("code_region")
-                            row["reg_nom"] = c.get("reg_nom")
-                            commune_indicators.append(row)
-                            continue
-                        try:
-                            fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
-                        except Exception:
-                            continue
-                        row = _indicators_from_fiche_payload(
-                            fiche, code_insee or "", c_dept, c_postal, c_commune,
-                            reg_nom=c.get("reg_nom"), dep_nom=c.get("dep_nom"), population=pop,
-                        )
-                        row["population"] = pop
-                        row["code_region"] = c.get("code_region")
-                        row["reg_nom"] = c.get("reg_nom")
-                        if code_insee:
-                            _upsert_indicateurs_communes(conn, cur, row, commit=False)
-                        commune_indicators.append({k: row.get(k) for k in ("region", "reg_nom", "code_region", "renta_brute", "renta_nette", "renta_brute_maisons", "renta_nette_maisons", "renta_brute_appts", "renta_nette_appts", "taux_tfb", "taux_teom", "population")})
-                    agg = _aggregate_indicators_weighted(commune_indicators, "population")
-                    agg["mode"] = "region"
-                    agg["code_region"] = code_r
-                    agg["region"] = next((c.get("reg_nom") for c in subset if c.get("reg_nom")), code_r)
-                    agg["population"] = int(sum(int(float(c.get("population") or 1)) for c in subset)) if subset else None
-                    region_rows_by_code[code_r] = agg
-                    _upsert_indicateurs_regions(conn, cur, agg, commit=False)
-                conn.commit()
-            rows = [region_rows_by_code.get(code_r, {
-                "mode": "region",
-                "code_region": code_r,
-                "region": code_r,
-                "renta_brute": None, "renta_nette": None,
-                "renta_brute_maisons": None, "renta_nette_maisons": None,
-                "renta_brute_appts": None, "renta_nette_appts": None,
-                "taux_tfb": None, "taux_teom": None,
-                "population": None,
-            }) for code_r in code_regions]
+            rows = []
+            for code_r in code_regions:
+                row = region_rows_by_code.get(code_r)
+                if row and _is_valid_rentability_row(row):
+                    rows.append(row)
             cur.close()
             rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
             if n_max and len(rows) > n_max:
@@ -1887,7 +1875,7 @@ def get_comparaison_scores(
             if conn:
                 conn.close()
 
-    # mode=communes : lecture prioritaire depuis indicateurs_communes, sinon calcul + remplissage cache
+    # mode=communes : lecture seule depuis indicateurs_communes (aucun recalcul dans le GET)
     depts = [str(x or "").strip() for x in (code_dept or [])]
     postals = [str(x or "").strip() for x in (code_postal or [])]
     noms = [str(x or "").strip() for x in (commune or [])]
@@ -1920,47 +1908,10 @@ def get_comparaison_scores(
             ref = ref_by_key.get(key)
             code_insee = ref.get("code_insee") if ref else None
             if code_insee and code_insee in indic_by_insee:
-                rows.append(indic_by_insee[code_insee])
-                continue
-            # Fallback : calcul à la volée puis remplissage des caches
-            try:
-                fiche = get_fiche_logement(code_dept=c_dept, code_postal=c_postal, commune=c_commune)
-            except Exception as e:
-                _debug_log("[comparaison_scores] erreur fiche pour %s (%s %s): %s", c_commune, c_dept, c_postal, e)
-                continue
-            if not ref:
-                ref = {"code_insee": fiche.get("code_insee"), "code_dept": c_dept, "code_postal": c_postal, "commune": c_commune, "reg_nom": None, "dep_nom": None, "population": None}
-            code_insee = ref.get("code_insee") or fiche.get("code_insee")
-            if not code_insee:
-                continue
-            pop = ref.get("population")
-            if pop is not None and isinstance(pop, Decimal):
-                pop = int(pop)
-            row = _indicators_from_fiche_payload(
-                fiche, code_insee, c_dept, c_postal, ref.get("commune") or c_commune,
-                reg_nom=ref.get("reg_nom"), dep_nom=ref.get("dep_nom"), population=pop,
-            )
-            out = {
-                "code_dept": c_dept,
-                "code_postal": c_postal,
-                "commune": row.get("commune") or c_commune,
-                "region": row.get("region") or "",
-                "renta_brute": row.get("renta_brute"),
-                "renta_nette": row.get("renta_nette"),
-                "renta_brute_maisons": row.get("renta_brute_maisons"),
-                "renta_nette_maisons": row.get("renta_nette_maisons"),
-                "renta_brute_appts": row.get("renta_brute_appts"),
-                "renta_nette_appts": row.get("renta_nette_appts"),
-                "taux_tfb": row.get("taux_tfb"),
-                "taux_teom": row.get("taux_teom"),
-            }
-            row_for_upsert = dict(row)
-            row_for_upsert["code_dept"] = c_dept
-            row_for_upsert["code_postal"] = c_postal
-            row_for_upsert["commune"] = out["commune"]
-            row_for_upsert["region"] = out["region"]
-            _upsert_indicateurs_communes(conn, cur, row_for_upsert)
-            rows.append(out)
+                cached_row = indic_by_insee[code_insee]
+                if _is_valid_rentability_row(cached_row):
+                    rows.append(cached_row)
+            continue
         cur.close()
     finally:
         if conn is not None:
@@ -2159,32 +2110,16 @@ def refresh_indicateurs_agreges(
         refreshed_depts = 0
         refreshed_regions = 0
 
-        # Réutilise la logique d'upsert/fallback déjà centralisée dans comparaison_scores
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
         if target_depts:
-            out_d = get_comparaison_scores(
-                mode="departements",
-                code_dept=target_depts,
-                code_postal=None,
-                commune=None,
-                code_region=None,
-                score_principal="renta_nette",
-                n_max=max(1, len(target_depts)),
-                scores_secondaires=None,
-            )
-            refreshed_depts = len(out_d.get("rows") or [])
-
+            refreshed_depts = _recompute_indicateurs_depts(conn, cur, target_depts)
         if target_regions:
-            out_r = get_comparaison_scores(
-                mode="regions",
-                code_dept=None,
-                code_postal=None,
-                commune=None,
-                code_region=target_regions,
-                score_principal="renta_nette",
-                n_max=max(1, len(target_regions)),
-                scores_secondaires=None,
-            )
-            refreshed_regions = len(out_r.get("rows") or [])
+            refreshed_regions = _recompute_indicateurs_regions(conn, cur, target_regions)
+        conn.commit()
+        cur.close()
+        conn.close()
+        conn = None
 
         return {
             "departements_requested": len(target_depts),
@@ -2200,6 +2135,76 @@ def refresh_indicateurs_agreges(
     finally:
         if conn:
             conn.close()
+
+
+@app.post("/api/force-recalcul-indicateurs")
+def force_recalcul_indicateurs(
+    mode: str = Query("communes", description="communes | departements | regions"),
+    code_dept: Optional[List[str]] = Query(None, description="Codes département (ou communes)"),
+    code_postal: Optional[List[str]] = Query(None, description="Codes postaux (mode=communes)"),
+    commune: Optional[List[str]] = Query(None, description="Communes (mode=communes)"),
+    code_region: Optional[List[str]] = Query(None, description="Codes région (mode=regions)"),
+    workers: int = Query(4, ge=1, le=16, description="Workers pour mode=communes"),
+    batch_commit: int = Query(50, ge=1, le=500, description="Batch commit pour mode=communes"),
+):
+    """
+    Force le recalcul selon le mode courant de comparaison :
+    - communes: purge cache fiche + indicateurs_communes des communes ciblées puis refresh ciblé
+    - departements / regions: force=true sur refresh_indicateurs_agreges des cibles
+    """
+    mode = (mode or "communes").strip().lower()
+    if mode == "departements":
+        targets = [str(x or "").strip() for x in (code_dept or []) if str(x or "").strip()]
+        if not targets:
+            raise HTTPException(status_code=400, detail="En mode départements, fournir au moins un code_dept.")
+        return refresh_indicateurs_agreges(code_dept_list=targets, code_region_list=None, refresh_all=False, force=True)
+    if mode == "regions":
+        targets = [str(x or "").strip() for x in (code_region or []) if str(x or "").strip()]
+        if not targets:
+            raise HTTPException(status_code=400, detail="En mode régions, fournir au moins un code_region.")
+        return refresh_indicateurs_agreges(code_dept_list=None, code_region_list=targets, refresh_all=False, force=True)
+
+    # mode=communes
+    depts = [str(x or "").strip() for x in (code_dept or [])]
+    postals = [str(x or "").strip() for x in (code_postal or [])]
+    noms = [str(x or "").strip() for x in (commune or [])]
+    n = max(len(depts), len(postals), len(noms))
+    while len(depts) < n:
+        depts.append("")
+    while len(postals) < n:
+        postals.append("")
+    while len(noms) < n:
+        noms.append("")
+    communes_in = [(depts[i], postals[i], noms[i]) for i in range(n) if depts[i] and postals[i] and noms[i]]
+    if not communes_in:
+        raise HTTPException(status_code=400, detail="En mode communes, fournir au moins un triplet code_dept/code_postal/commune.")
+
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        ref_list = _resolve_communes_to_ref(cur, communes_in)
+        code_insee_list = [str(r.get("code_insee")) for r in ref_list if r.get("code_insee")]
+        if not code_insee_list:
+            cur.close()
+            return {"requested": len(communes_in), "resolved": 0, "refreshed": 0}
+        cur.execute("DELETE FROM foncier.fiche_logement_cache WHERE code_insee = ANY(%s)", (code_insee_list,))
+        cur.execute("DELETE FROM foncier.indicateurs_communes WHERE code_insee = ANY(%s)", (code_insee_list,))
+        conn.commit()
+        cur.close()
+    finally:
+        if conn:
+            conn.close()
+
+    out = refresh_indicateurs(
+        code_insee_list=code_insee_list,
+        limit=None,
+        batch_commit=batch_commit,
+        workers=workers,
+    )
+    out["requested"] = len(communes_in)
+    out["resolved"] = len(code_insee_list)
+    return out
 
 
 @app.get("/api/ventes", response_model=List[Vente])
