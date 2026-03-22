@@ -1,0 +1,12 @@
+---
+description: Clarifier les intentions Git (push vs commit, périmètre) avant toute commande destructive ou historique
+alwaysApply: true
+---
+
+# Git — clarifier les intentions avant d’agir
+
+- **En cas d’ambiguïté** sur ce que Frédéric veut faire avec Git (ex. « pousser » peut signifier seulement `git push` ou aussi regrouper des commits, inclure des fichiers non suivis, réécrire l’historique), **poser des questions explicites** avant d’exécuter :
+  - S’agit-il uniquement de **`git push`** de commits déjà existants, sans nouveau commit et sans `rebase`/`reset` ?
+  - Faut-il **inclure ou exclure** des chemins précis (fichiers de grilles de tests, CSV, logs, artefacts) ?
+- **Ne pas** interpréter « pousser le code déjà commité » comme une consigne de **`git reset --soft`**, de squash ou de nouveau commit, sauf demande claire.
+- Après clarification, résumer l’action prévue en une phrase (« je vais seulement… ») et n’exécuter qu’ensuite.
