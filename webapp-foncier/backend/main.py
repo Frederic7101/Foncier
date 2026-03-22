@@ -9,11 +9,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, List, Any, Literal
+from typing import Optional, List, Any, Literal, Tuple
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from fastapi import FastAPI, Query, HTTPException, Response
+from fastapi import FastAPI, Query, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -31,10 +31,39 @@ IGN_WMTS_URL = (
 IGN_TILE_CACHE_DIR = Path(__file__).resolve().parent.parent / "frontend" / "data" / "carto" / "ign_tiles"
 
 
+# Fichier de log horodaté (créé au démarrage si DEBUG et LOG_TO_FILE=1)
+_debug_log_file = None
+
+def _init_debug_log_file() -> None:
+    global _debug_log_file
+    if _debug_log_file is not None:
+        return
+    if not DEBUG or not os.environ.get("LOG_TO_FILE", "").strip().lower() in ("1", "true", "yes"):
+        return
+    log_dir = Path(__file__).resolve().parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = log_dir / f"debug_{ts}.log"
+    try:
+        _debug_log_file = open(log_path, "a", encoding="utf-8")
+        _debug_log_file.write(f"# Log started {datetime.now().isoformat()}\n")
+        _debug_log_file.flush()
+    except OSError:
+        _debug_log_file = None
+
 def _debug_log(msg: str, *args: Any, **kwargs: Any) -> None:
-    """Affiche un log uniquement si DEBUG est activé (env DEBUG=1)."""
-    if DEBUG:
-        print(msg % args if args else msg, **kwargs)
+    """Affiche un log uniquement si DEBUG est activé (env DEBUG=1). Optionnellement écrit dans un fichier horodaté si LOG_TO_FILE=1."""
+    if not DEBUG:
+        return
+    text = (msg % args) if args else msg
+    print(text, **kwargs)
+    _init_debug_log_file()
+    if _debug_log_file is not None:
+        try:
+            _debug_log_file.write(text + "\n")
+            _debug_log_file.flush()
+        except OSError:
+            pass
 
 
 # =============================================================================
@@ -182,6 +211,55 @@ def _sql_norm_name_canonical(column_sql: str) -> str:
     return "UPPER(REGEXP_REPLACE(unaccent(" + cleaned + "), '[^a-zA-Z]', '', 'g'))"
 
 
+def _sql_norm_name_canonical_commune_vf(column_sql: str) -> str:
+    """Forme canonique spécifique aux communes dans vf_communes.
+
+    Objectif : ignorer les suffixes d'arrondissements des très grandes villes, ex.:
+    - PARIS 01, PARIS 1ER, PARIS 19 → PARIS
+    - MARSEILLE 1ER, MARSEILLE 15EME → MARSEILLE
+    - LYON 2, LYON 2EME → LYON
+
+    Étapes :
+    1) TRIM
+    2) Retirer un éventuel suffixe " espace + nombre + (ER|EME|E) optionnels" en fin de chaîne
+    3) Parenthèses finales, apostrophes comme _sql_norm_name_canonical
+    4) unaccent
+    5) ne garder que A-Z
+    6) UPPER
+    """
+    base = (
+        "TRIM(" + column_sql + ")"
+    )
+    # Suffixe arrondissement : ex. " PARIS 01", " PARIS 1ER", " PARIS 2EME"
+    without_arr = (
+        "REGEXP_REPLACE("
+        + base
+        + ", '\\s+[0-9]{1,2}\\s*(ER|EME|E)?\\s*$', '', 'i')"
+    )
+    cleaned = (
+        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+        "REGEXP_REPLACE(" + without_arr + ", '\\s*\\([^)]*\\)\\s*$', ''), "
+        "U&'\\2019', ''), U&'\\02bc', ''), U&'\\02b9', ''), U&'\\2032', ''), '''', '')"
+    )
+    return "UPPER(REGEXP_REPLACE(unaccent(" + cleaned + "), '[^a-zA-Z]', '', 'g'))"
+
+
+def _sql_libgeo_ville_canonical(column_sql: str) -> str:
+    """Expression SQL : forme canonique du nom de ville extrait de libgeo (loyers_communes).
+    libgeo peut être 'Paris 1er Arrondissement', 'Marseille 15eme Arrondissement', 'Lyon 2e Arrondissement'.
+    On extrait uniquement le nom avant le premier chiffre (n° d'arrondissement), puis même normalisation (unaccent, A-Z, UPPER)."""
+    # De "Paris 1er Arrondissement" ou "Paris 01" → "Paris" : retirer " espace + premier chiffre + tout le reste"
+    without_arr = (
+        "TRIM(REGEXP_REPLACE(TRIM(" + column_sql + "), E'\\\\s+[0-9].*', '', 'i'))"
+    )
+    cleaned = (
+        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
+        "REGEXP_REPLACE(" + without_arr + ", '\\s*\\([^)]*\\)\\s*$', ''), "
+        "U&'\\2019', ''), U&'\\02bc', ''), U&'\\02b9', ''), U&'\\2032', ''), '''', '')"
+    )
+    return "UPPER(REGEXP_REPLACE(unaccent(" + cleaned + "), '[^a-zA-Z]', '', 'g'))"
+
+
 def _normalize_name(s: Optional[str]) -> str:
     """Met un nom (commune, département, type de bien, etc.) en capitales sans accent pour comparaison SQL.
     Normalise aussi les variantes d'apostrophe en apostrophe ASCII pour que L'Union, L'Union, etc. matchent."""
@@ -320,8 +398,10 @@ def get_ign_tile_cached(
 
 def _get_regions_and_depts(cur) -> tuple[list[dict], list[dict]]:
     """Régions (id, nom, departements) et liste des départements { code, nom }.
-    Source unique : foncier.ref_regions et foncier.ref_departements (aucune liste en dur)."""
-    # Liste des départements présents dans les données agrégées foncier.vf_communes
+    Source : foncier.ref_regions et foncier.ref_departements (référentiel complet).
+    Ne pas filtrer par vf_communes : sinon des départements sans ligne agrégée (ex. 57, 67, 68)
+    disparaissent du regroupement régional alors qu’ils sont bien rattachés dans ref_departements."""
+    # Départements effectivement présents dans vf_communes (info utile pour d’autres usages ; plus pour l’UI régions)
     cur.execute("SELECT DISTINCT code_dept FROM foncier.vf_communes ORDER BY code_dept")
     depts_in_data = [row[0] for row in cur.fetchall()]
     try:
@@ -342,11 +422,14 @@ def _get_regions_and_depts(cur) -> tuple[list[dict], list[dict]]:
         dept_noms = {row[0]: row[2] for row in ref_depts_rows}
         regions = []
         for code_region, nom_region in ref_regions_rows:
-            region_depts = [d for d, r in ref_depts.items() if r == code_region and d in depts_in_data]
+            # Tous les départements de la région selon le référentiel (pas seulement ceux présents dans vf_communes)
+            region_depts = [d for d, r in ref_depts.items() if r == code_region]
             if region_depts:
                 region_depts.sort()
                 regions.append({"id": code_region, "nom": nom_region, "departements": region_depts})
-        departements = [{"code": c, "nom": dept_noms.get(c, c)} for c in depts_in_data]
+        # Liste plate : tous les départements du référentiel (ordre code), pour cohérence avec les cases par région
+        all_dept_codes = sorted(ref_depts.keys())
+        departements = [{"code": c, "nom": dept_noms.get(c, c)} for c in all_dept_codes]
         return regions, departements
     except (psycopg2.Error, ValueError):
         pass
@@ -356,8 +439,8 @@ def _get_regions_and_depts(cur) -> tuple[list[dict], list[dict]]:
 
 @app.get("/api/geo")
 def get_geo():
-    """Régions (métropole) et liste des départements (code + nom) présents dans vf_communes.
-    Utilise ref_regions/ref_departements si présentes (ex. 38 rattaché à Auvergne-Rhône-Alpes)."""
+    """Régions et départements (code + nom) depuis ref_regions / ref_departements.
+    Les listes par région incluent tous les départements du référentiel, pas seulement ceux ayant des lignes dans vf_communes."""
     conn = None
     try:
         conn = get_db_connection()
@@ -365,6 +448,45 @@ def get_geo():
         regions, departements = _get_regions_and_depts(cur)
         cur.close()
         return {"regions": regions, "departements": departements}
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+@app.get("/api/refs-comparaison-logement")
+def get_refs_comparaison_logement():
+    """Listes pour les sélecteurs type de logement, surface, nb de pièces (ref_type_logts, ref_type_surf, ref_nb_pieces)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+        out = {"type_logts": [], "type_surf": [], "nb_pieces": []}
+        try:
+            cur.execute(
+                "SELECT code, libelle, sort_order, type_local_pattern AS type_local_pattern "
+                "FROM foncier.ref_type_logts ORDER BY sort_order, code"
+            )
+            out["type_logts"] = [dict(r) for r in cur.fetchall()]
+        except psycopg2.Error:
+            pass
+        try:
+            cur.execute(
+                "SELECT code, libelle, sort_order, vf_suffix FROM foncier.ref_type_surf ORDER BY sort_order, code"
+            )
+            out["type_surf"] = [dict(r) for r in cur.fetchall()]
+        except psycopg2.Error:
+            pass
+        try:
+            cur.execute(
+                "SELECT code, libelle, sort_order, vf_suffix FROM foncier.ref_nb_pieces ORDER BY sort_order, code"
+            )
+            out["nb_pieces"] = [dict(r) for r in cur.fetchall()]
+        except psycopg2.Error:
+            pass
+        cur.close()
+        return out
     except psycopg2.Error as e:
         raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     finally:
@@ -448,7 +570,7 @@ def get_communes(
                         """
                         SELECT DISTINCT code_dept, code_postal, commune
                         FROM foncier.vf_communes
-                        WHERE """ + _sql_norm_name_canonical("commune") + """ LIKE %s
+                        WHERE """ + _sql_norm_name_canonical_commune_vf("commune") + """ LIKE %s
                            OR code_postal::text LIKE %s
                         ORDER BY commune, code_postal
                         LIMIT 25
@@ -516,6 +638,511 @@ def _int(v: Any) -> int:
         return 0
 
 
+# Libellés « type » ventes / rentabilité (hors maison/appart) — alignés ref_type_logts + UI
+VENTE_TYPE_PARKING = "Parkings / garages"
+VENTE_TYPE_LOCAL_INDUS = "Locaux indus. / comm."
+VENTE_TYPE_TERRAIN = "Terrains"
+VENTE_TYPE_IMMEUBLE = "Immeubles"
+
+EXTRA_VENTE_TYPE_ORDER: Tuple[str, ...] = (
+    VENTE_TYPE_PARKING,
+    VENTE_TYPE_LOCAL_INDUS,
+    VENTE_TYPE_TERRAIN,
+    VENTE_TYPE_IMMEUBLE,
+)
+
+
+def _vf_extra_type_label(type_local: Optional[str]) -> Optional[str]:
+    """Associe vf_communes.type_local (libellé DVF) à un libellé d'affichage pour les ventes agrégées."""
+    if not type_local:
+        return None
+    t = _normalize_name_canonical(type_local)
+    if "DEPENDANCE" in t:
+        return VENTE_TYPE_PARKING
+    if "INDUSTRIEL" in t or "COMMERCIAL" in t:
+        return VENTE_TYPE_LOCAL_INDUS
+    if "TERRAIN" in t:
+        return VENTE_TYPE_TERRAIN
+    if "IMMEUBLE" in t:
+        return VENTE_TYPE_IMMEUBLE
+    return None
+
+
+def _append_weighted_vente_line(dest: List[dict], rows: List[dict], label: str) -> None:
+    """Ajoute une ligne ventes pondérée par nb_ventes (médianes / moyennes DVF)."""
+    if not rows:
+        dest.append({
+            "type": label,
+            "nb_ventes": 0,
+            "prix_median": None,
+            "prix_m2_mediane": None,
+            "surface_mediane": None,
+            "prix_moyen": None,
+            "prix_m2_moyenne": None,
+            "surface_moyenne": None,
+        })
+        return
+    sw = sum(_int(r.get("nb_ventes")) for r in rows) or 1
+
+    def wavg(col: str) -> Optional[float]:
+        total = sum((_float(r.get(col)) or 0) * _int(r.get("nb_ventes")) for r in rows)
+        return round(total / sw, 2) if total is not None else None
+
+    dest.append({
+        "type": label,
+        "nb_ventes": sum(_int(r.get("nb_ventes")) for r in rows),
+        "prix_median": wavg("prix_median"),
+        "prix_m2_mediane": wavg("prix_m2_mediane"),
+        "surface_mediane": wavg("surface_mediane"),
+        "prix_moyen": wavg("prix_moyen"),
+        "prix_m2_moyenne": wavg("prix_m2_moyenne"),
+        "surface_moyenne": wavg("surface_moyenne"),
+    })
+
+
+def _empty_vente_line(label: str) -> dict:
+    return {
+        "type": label,
+        "nb_ventes": 0,
+        "prix_median": None,
+        "prix_m2_mediane": None,
+        "surface_mediane": None,
+        "prix_moyen": None,
+        "prix_m2_moyenne": None,
+        "surface_moyenne": None,
+    }
+
+
+def _vente_line_from_agg(label: str, agg: dict) -> dict:
+    if not agg:
+        return _empty_vente_line(label)
+    return {
+        "type": label,
+        "nb_ventes": agg.get("nb_ventes") or 0,
+        "prix_median": agg.get("prix_median"),
+        "prix_m2_mediane": agg.get("prix_m2_mediane"),
+        "surface_mediane": agg.get("surface_mediane"),
+        "prix_moyen": agg.get("prix_moyen"),
+        "prix_m2_moyenne": agg.get("prix_m2_moyenne"),
+        "surface_moyenne": agg.get("surface_moyenne"),
+    }
+
+
+def _build_ventes_lignes_for_tranche(
+    vf_rows: List[dict],
+    by_type: dict,
+    surface_cat: Optional[str],
+    pieces_cat: Optional[str],
+) -> List[dict]:
+    """Même structure que les lignes ventes fiche (total, Maisons, Appart., types DVF extra) avec agrégats vf pour la tranche S ou T."""
+    ventes_lignes: List[dict] = []
+    if not vf_rows:
+        return ventes_lignes
+    agg_all = _agg_rows(vf_rows, surface_cat, pieces_cat)
+    ventes_lignes.append(_vente_line_from_agg("Maisons/Appart.", agg_all))
+    for label, key in [("Maisons", "Maisons"), ("Appartements", "Appartements")]:
+        rows_bt = by_type.get(key, [])
+        if not rows_bt:
+            ventes_lignes.append(_empty_vente_line(label))
+        else:
+            agg = _agg_rows(rows_bt, surface_cat, pieces_cat)
+            ventes_lignes.append(_vente_line_from_agg(label, agg))
+    extra_buckets = {lbl: [] for lbl in EXTRA_VENTE_TYPE_ORDER}
+    for r in vf_rows:
+        t = (r.get("type_local") or "").strip()
+        if not t:
+            continue
+        norm = _normalize_name_canonical(t)
+        if "APPARTEMENT" in norm or norm == "APPART" or "MAISON" in norm:
+            continue
+        xlabel = _vf_extra_type_label(t)
+        if xlabel and xlabel in extra_buckets:
+            extra_buckets[xlabel].append(r)
+    for lbl in EXTRA_VENTE_TYPE_ORDER:
+        _append_weighted_vente_line(ventes_lignes, extra_buckets[lbl], lbl)
+    return ventes_lignes
+
+
+def _pick_tranche_renta_line(lignes: Optional[List[dict]]) -> dict:
+    """Extrait renta brute/nette pour Maisons, Appartements et ligne agrégée (tranche S ou T)."""
+    by_tb = {}
+    for ln in lignes or []:
+        tb = (ln.get("type_bien") or "").strip()
+        if tb:
+            by_tb[tb] = ln
+
+    def p(tb: str):
+        r = by_tb.get(tb)
+        if not r:
+            return None, None
+        return r.get("renta_brute"), r.get("renta_nette")
+
+    rb_m, rn_m = p("Maisons")
+    rb_a, rn_a = p("Appartements")
+    rb_g, rn_g = p("Maisons/Appart.")
+    return {
+        "renta_brute_maisons": rb_m,
+        "renta_nette_maisons": rn_m,
+        "renta_brute_appts": rb_a,
+        "renta_nette_appts": rn_a,
+        "renta_brute_agg": rb_g,
+        "renta_nette_agg": rn_g,
+    }
+
+
+def _iter_tranche_renta_column_names() -> List[str]:
+    out: List[str] = []
+    for i in range(1, 6):
+        s = f"s{i}"
+        out.extend(
+            [
+                f"renta_brute_maisons_{s}",
+                f"renta_nette_maisons_{s}",
+                f"renta_brute_appts_{s}",
+                f"renta_nette_appts_{s}",
+                f"renta_brute_agg_{s}",
+                f"renta_nette_agg_{s}",
+            ]
+        )
+    for i in range(1, 6):
+        t = f"t{i}"
+        out.extend(
+            [
+                f"renta_brute_maisons_{t}",
+                f"renta_nette_maisons_{t}",
+                f"renta_brute_appts_{t}",
+                f"renta_nette_appts_{t}",
+                f"renta_brute_agg_{t}",
+                f"renta_nette_agg_{t}",
+            ]
+        )
+    return out
+
+
+TRANCHE_RENTA_COLS: Tuple[str, ...] = tuple(_iter_tranche_renta_column_names())
+
+_INDICATEURS_COMMUNES_DATA_COLS: Tuple[str, ...] = (
+    "code_insee",
+    "code_dept",
+    "code_postal",
+    "commune",
+    "reg_nom",
+    "dep_nom",
+    "population",
+    "renta_brute",
+    "renta_nette",
+    "renta_brute_maisons",
+    "renta_nette_maisons",
+    "renta_brute_appts",
+    "renta_nette_appts",
+    "renta_brute_parking",
+    "renta_nette_parking",
+    "renta_brute_local_indus",
+    "renta_nette_local_indus",
+    "renta_brute_terrain",
+    "renta_nette_terrain",
+    "renta_brute_immeuble",
+    "renta_nette_immeuble",
+) + TRANCHE_RENTA_COLS + ("taux_tfb", "taux_teom")
+
+
+def _build_upsert_indicateurs_communes_sql() -> str:
+    renta_cols = [
+        "renta_brute",
+        "renta_nette",
+        "renta_brute_maisons",
+        "renta_nette_maisons",
+        "renta_brute_appts",
+        "renta_nette_appts",
+        "renta_brute_parking",
+        "renta_nette_parking",
+        "renta_brute_local_indus",
+        "renta_nette_local_indus",
+        "renta_brute_terrain",
+        "renta_nette_terrain",
+        "renta_brute_immeuble",
+        "renta_nette_immeuble",
+    ]
+    all_cols = (
+        ["code_insee", "code_dept", "code_postal", "commune", "reg_nom", "dep_nom", "population"]
+        + renta_cols
+        + list(TRANCHE_RENTA_COLS)
+        + ["taux_tfb", "taux_teom", "updated_at"]
+    )
+    insert_cols = ", ".join(all_cols)
+    n_ph = len(all_cols) - 1
+    ph = ", ".join(["%s"] * n_ph) + ", clock_timestamp()"
+    upd_parts = []
+    for c in all_cols:
+        if c == "code_insee":
+            continue
+        if c == "updated_at":
+            upd_parts.append("updated_at = clock_timestamp()")
+        else:
+            upd_parts.append(f"{c} = EXCLUDED.{c}")
+    upd = ", ".join(upd_parts)
+    return (
+        "INSERT INTO foncier.indicateurs_communes ("
+        + insert_cols
+        + ") VALUES ("
+        + ph
+        + ") ON CONFLICT (code_insee) DO UPDATE SET "
+        + upd
+    )
+
+
+_UPSERT_SQL_INDICATEURS_COMMUNES = _build_upsert_indicateurs_communes_sql()
+
+
+def _tuple_params_indicateurs_communes(row: dict) -> tuple:
+    return (
+        row.get("code_insee"),
+        row.get("code_dept"),
+        row.get("code_postal"),
+        row.get("commune"),
+        row.get("region"),
+        row.get("dep_nom"),
+        row.get("population"),
+        row.get("renta_brute"),
+        row.get("renta_nette"),
+        row.get("renta_brute_maisons"),
+        row.get("renta_nette_maisons"),
+        row.get("renta_brute_appts"),
+        row.get("renta_nette_appts"),
+        row.get("renta_brute_parking"),
+        row.get("renta_nette_parking"),
+        row.get("renta_brute_local_indus"),
+        row.get("renta_nette_local_indus"),
+        row.get("renta_brute_terrain"),
+        row.get("renta_nette_terrain"),
+        row.get("renta_brute_immeuble"),
+        row.get("renta_nette_immeuble"),
+        *tuple(row.get(k) for k in TRANCHE_RENTA_COLS),
+        row.get("taux_tfb"),
+        row.get("taux_teom"),
+    )
+
+
+def _append_tranche_floats_from_db_row(r: dict, dest: dict) -> None:
+    for k in TRANCHE_RENTA_COLS:
+        dest[k] = float(r[k]) if r.get(k) is not None else None
+
+
+def _build_upsert_indicateurs_depts_sql() -> str:
+    renta_cols = [
+        "renta_brute",
+        "renta_nette",
+        "renta_brute_maisons",
+        "renta_nette_maisons",
+        "renta_brute_appts",
+        "renta_nette_appts",
+        "renta_brute_parking",
+        "renta_nette_parking",
+        "renta_brute_local_indus",
+        "renta_nette_local_indus",
+        "renta_brute_terrain",
+        "renta_nette_terrain",
+        "renta_brute_immeuble",
+        "renta_nette_immeuble",
+    ]
+    all_cols = (
+        ["code_dept", "dep_nom", "reg_nom", "code_region", "population"]
+        + renta_cols
+        + list(TRANCHE_RENTA_COLS)
+        + ["taux_tfb", "taux_teom", "updated_at"]
+    )
+    insert_cols = ", ".join(all_cols)
+    n_ph = len(all_cols) - 1
+    ph = ", ".join(["%s"] * n_ph) + ", clock_timestamp()"
+    upd_parts = []
+    for c in all_cols:
+        if c == "code_dept":
+            continue
+        if c == "updated_at":
+            upd_parts.append("updated_at = clock_timestamp()")
+        else:
+            upd_parts.append(f"{c} = EXCLUDED.{c}")
+    upd = ", ".join(upd_parts)
+    return (
+        "INSERT INTO foncier.indicateurs_depts ("
+        + insert_cols
+        + ") VALUES ("
+        + ph
+        + ") ON CONFLICT (code_dept) DO UPDATE SET "
+        + upd
+    )
+
+
+_UPSERT_SQL_INDICATEURS_DEPTS = _build_upsert_indicateurs_depts_sql()
+
+
+def _tuple_params_indicateurs_depts(row: dict) -> tuple:
+    return (
+        row.get("code_dept"),
+        row.get("dep_nom"),
+        row.get("region"),
+        row.get("code_region"),
+        row.get("population"),
+        row.get("renta_brute"),
+        row.get("renta_nette"),
+        row.get("renta_brute_maisons"),
+        row.get("renta_nette_maisons"),
+        row.get("renta_brute_appts"),
+        row.get("renta_nette_appts"),
+        row.get("renta_brute_parking"),
+        row.get("renta_nette_parking"),
+        row.get("renta_brute_local_indus"),
+        row.get("renta_nette_local_indus"),
+        row.get("renta_brute_terrain"),
+        row.get("renta_nette_terrain"),
+        row.get("renta_brute_immeuble"),
+        row.get("renta_nette_immeuble"),
+        *tuple(row.get(k) for k in TRANCHE_RENTA_COLS),
+        row.get("taux_tfb"),
+        row.get("taux_teom"),
+    )
+
+
+def _build_upsert_indicateurs_regions_sql() -> str:
+    renta_cols = [
+        "renta_brute",
+        "renta_nette",
+        "renta_brute_maisons",
+        "renta_nette_maisons",
+        "renta_brute_appts",
+        "renta_nette_appts",
+        "renta_brute_parking",
+        "renta_nette_parking",
+        "renta_brute_local_indus",
+        "renta_nette_local_indus",
+        "renta_brute_terrain",
+        "renta_nette_terrain",
+        "renta_brute_immeuble",
+        "renta_nette_immeuble",
+    ]
+    all_cols = (
+        ["code_region", "reg_nom", "population"] + renta_cols + list(TRANCHE_RENTA_COLS) + ["taux_tfb", "taux_teom", "updated_at"]
+    )
+    insert_cols = ", ".join(all_cols)
+    n_ph = len(all_cols) - 1
+    ph = ", ".join(["%s"] * n_ph) + ", clock_timestamp()"
+    upd_parts = []
+    for c in all_cols:
+        if c == "code_region":
+            continue
+        if c == "updated_at":
+            upd_parts.append("updated_at = clock_timestamp()")
+        else:
+            upd_parts.append(f"{c} = EXCLUDED.{c}")
+    upd = ", ".join(upd_parts)
+    return (
+        "INSERT INTO foncier.indicateurs_regions ("
+        + insert_cols
+        + ") VALUES ("
+        + ph
+        + ") ON CONFLICT (code_region) DO UPDATE SET "
+        + upd
+    )
+
+
+_UPSERT_SQL_INDICATEURS_REGIONS = _build_upsert_indicateurs_regions_sql()
+
+
+def _tuple_params_indicateurs_regions(row: dict) -> tuple:
+    return (
+        row.get("code_region"),
+        row.get("region"),
+        row.get("population"),
+        row.get("renta_brute"),
+        row.get("renta_nette"),
+        row.get("renta_brute_maisons"),
+        row.get("renta_nette_maisons"),
+        row.get("renta_brute_appts"),
+        row.get("renta_nette_appts"),
+        row.get("renta_brute_parking"),
+        row.get("renta_nette_parking"),
+        row.get("renta_brute_local_indus"),
+        row.get("renta_nette_local_indus"),
+        row.get("renta_brute_terrain"),
+        row.get("renta_nette_terrain"),
+        row.get("renta_brute_immeuble"),
+        row.get("renta_nette_immeuble"),
+        *tuple(row.get(k) for k in TRANCHE_RENTA_COLS),
+        row.get("taux_tfb"),
+        row.get("taux_teom"),
+    )
+
+
+def _round_indicator_optional(v: Any) -> Optional[float]:
+    if v is None:
+        return None
+    try:
+        return round(float(v), 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _compute_rentabilite_tranches_nested(
+    vf_rows: List[dict],
+    by_type: dict,
+    loc_lignes: List[dict],
+    parc_data: Optional[dict],
+    loyer_ref: Optional[float],
+    taux_tfb: Optional[float],
+    taux_teom: Optional[float],
+    code_insee: Optional[str],
+) -> dict:
+    """Rentabilités par tranche surface S1–S5 et pièces T1–T5 (vf_communes), sans repli sur l’agrégat sans tranche."""
+    out: dict = {"surface": {}, "pieces": {}}
+    if not vf_rows or not loc_lignes:
+        return out
+    for i in range(1, 6):
+        s = f"S{i}"
+        ventes = _build_ventes_lignes_for_tranche(vf_rows, by_type, s, None)
+        lignes = _build_renta_lignes(
+            ventes, loc_lignes, parc_data, loyer_ref, taux_tfb, taux_teom, use_median=True, code_insee=code_insee
+        )
+        out["surface"][s] = _pick_tranche_renta_line(lignes)
+    for i in range(1, 6):
+        t = f"T{i}"
+        ventes = _build_ventes_lignes_for_tranche(vf_rows, by_type, None, t)
+        lignes = _build_renta_lignes(
+            ventes, loc_lignes, parc_data, loyer_ref, taux_tfb, taux_teom, use_median=True, code_insee=code_insee
+        )
+        out["pieces"][t] = _pick_tranche_renta_line(lignes)
+    return out
+
+
+def _flatten_tranche_nested_to_indicator_row(nested: Optional[dict]) -> dict:
+    """Aplatit rentabilite_tranches (surface/pieces) vers les colonnes indicateurs_communes."""
+    row = {k: None for k in TRANCHE_RENTA_COLS}
+    if not nested:
+        return row
+    surf = nested.get("surface") or {}
+    for i in range(1, 6):
+        s = f"S{i}"
+        ss = f"s{i}"
+        d = surf.get(s) or {}
+        row[f"renta_brute_maisons_{ss}"] = d.get("renta_brute_maisons")
+        row[f"renta_nette_maisons_{ss}"] = d.get("renta_nette_maisons")
+        row[f"renta_brute_appts_{ss}"] = d.get("renta_brute_appts")
+        row[f"renta_nette_appts_{ss}"] = d.get("renta_nette_appts")
+        row[f"renta_brute_agg_{ss}"] = d.get("renta_brute_agg")
+        row[f"renta_nette_agg_{ss}"] = d.get("renta_nette_agg")
+    pie = nested.get("pieces") or {}
+    for i in range(1, 6):
+        t = f"T{i}"
+        tt = f"t{i}"
+        d = pie.get(t) or {}
+        row[f"renta_brute_maisons_{tt}"] = d.get("renta_brute_maisons")
+        row[f"renta_nette_maisons_{tt}"] = d.get("renta_nette_maisons")
+        row[f"renta_brute_appts_{tt}"] = d.get("renta_brute_appts")
+        row[f"renta_nette_appts_{tt}"] = d.get("renta_nette_appts")
+        row[f"renta_brute_agg_{tt}"] = d.get("renta_brute_agg")
+        row[f"renta_nette_agg_{tt}"] = d.get("renta_nette_agg")
+    return row
+
+
 def _build_renta_lignes(
     ventes_lignes: List[dict],
     loc_lignes: List[dict],
@@ -524,6 +1151,7 @@ def _build_renta_lignes(
     taux_tfb: Optional[float],
     taux_teom: Optional[float],
     use_median: bool = True,
+    code_insee: Optional[str] = None,
 ) -> List[dict]:
     """Calcule les lignes de rentabilité (brute, HC, nette) par type de bien. Utilisé par fiche-logement et comparaison_scores."""
     if not ventes_lignes or not loc_lignes:
@@ -542,17 +1170,23 @@ def _build_renta_lignes(
     loyer_key = "loyer_med_m2"
     ventes_by_type = {r["type"]: r for r in ventes_lignes}
     loc_by_type = {r["type"]: r for r in loc_lignes}
-    charges_pre = {}
+    charges_pre: dict = {}
     for type_label in ["Maisons", "Appartements"]:
         v = ventes_by_type.get(type_label, {})
         l = loc_by_type.get(type_label, {})
         surf = _float(v.get(surface_key))
         loyer_m2 = _float(l.get(loyer_key))
         if type_label == "Maisons":
-            if taux_teom is not None and surf is not None and surf > 0 and loyer_ref is not None:
+            if taux_teom is not None and taux_teom <= 0.20 and surf is not None and surf > 0 and loyer_ref is not None:
                 charges_pre[type_label] = (taux_teom / 100.0) * surf * 3 * loyer_ref
             else:
-                charges_pre[type_label] = None
+                if taux_teom is None or taux_teom > 0.20:
+                    if surf is not None and surf > 0 and loyer_ref is not None:
+                        charges_pre[type_label] = (10 / 100.0) * surf * 3 * loyer_ref
+                    else:
+                        charges_pre[type_label] = None
+                else:
+                    charges_pre[type_label] = None
         else:
             charges_pre[type_label] = (0.10 * loyer_m2 * surf * 12) if (loyer_m2 is not None and surf is not None and surf > 0) else None
     if charges_pre.get("Maisons") is not None and charges_pre.get("Appartements") is not None and total_log > 0:
@@ -560,18 +1194,41 @@ def _build_renta_lignes(
     else:
         charges_pre["Maisons/Appart."] = charges_pre.get("Maisons") if nb_apparts_agreg == 0 else (charges_pre.get("Appartements") if nb_maisons_agreg == 0 else None)
 
-    out = []
-    for type_label, _poids in [
-        ("Maisons/Appart.", total_log),
-        ("Maisons", nb_maisons_agreg),
-        ("Appartements", nb_apparts_agreg),
-    ]:
+    # Types DVF additionnels : charges au même titre que les appartements (10 % loyer annuel)
+    for type_label in EXTRA_VENTE_TYPE_ORDER:
+        if type_label not in ventes_by_type:
+            continue
+        v = ventes_by_type[type_label]
+        l = loc_by_type.get(type_label, {})
+        loyer_m2 = _float(l.get(loyer_key))
+        surf = _float(v.get(surface_key))
+        if surf is None and not use_median:
+            surf = _float(v.get("surface_mediane"))
+        charges_pre[type_label] = (0.10 * loyer_m2 * surf * 12) if (loyer_m2 is not None and surf is not None and surf > 0) else None
+
+    row_plan: List[Tuple[str, float]] = [
+        ("Maisons/Appart.", float(total_log)),
+        ("Maisons", float(nb_maisons_agreg)),
+        ("Appartements", float(nb_apparts_agreg)),
+    ]
+    for et in EXTRA_VENTE_TYPE_ORDER:
+        if et in ventes_by_type:
+            row_plan.append((et, 0.0))
+
+    out: List[dict] = []
+    for type_label, _poids in row_plan:
         v = ventes_by_type.get(type_label, {})
         l = loc_by_type.get(type_label, {})
         prix_m2 = _float(v.get(prix_m2_key))
+        if (prix_m2 is None or prix_m2 <= 0) and not use_median:
+            prix_m2 = _float(v.get("prix_m2_mediane"))
         prix_total = _float(v.get(prix_total_key))
+        if prix_total is None and not use_median:
+            prix_total = _float(v.get("prix_median"))
         loyer_m2 = _float(l.get(loyer_key))
-        surface_mediane = _float(v.get("surface_mediane"))
+        surface_val = _float(v.get(surface_key))
+        if surface_val is None and not use_median:
+            surface_val = _float(v.get("surface_mediane"))
         charges = charges_pre.get(type_label)
         if prix_m2 is None or prix_m2 <= 0:
             out.append({"type_bien": type_label, "renta_brute": None, "renta_hc": None, "charges_mediane": None, "renta_nette": None})
@@ -579,11 +1236,27 @@ def _build_renta_lignes(
         renta_brute = (loyer_m2 * 12 / prix_m2 * 100) if loyer_m2 is not None else None
         denom = (prix_total * 1.10) if (prix_total is not None and prix_total > 0) else None
         renta_hc = None
-        if loyer_m2 is not None and surface_mediane is not None and surface_mediane > 0 and denom:
-            renta_hc = (loyer_m2 * surface_mediane * 12 - (tf_mediane or 0)) / denom * 100
+        if loyer_m2 is not None and surface_val is not None and surface_val > 0 and denom:
+            renta_hc = (loyer_m2 * surface_val * 12 - (tf_mediane or 0)) / denom * 100
         renta_nette = None
-        if loyer_m2 is not None and surface_mediane is not None and surface_mediane > 0 and denom and charges is not None:
-            renta_nette = (loyer_m2 * surface_mediane * 12 * 0.75 - 0.25 * charges - (tf_mediane or 0)) / denom * 100
+        if loyer_m2 is not None and surface_val is not None and surface_val > 0 and denom and charges is not None:
+            renta_nette = (loyer_m2 * surface_val * 12 * 0.75 - 0.25 * charges - (tf_mediane or 0)) / denom * 100
+        if DEBUG:
+            _debug_log(
+                "[renta-debug] code_insee=%s type=%s prix_m2=%s prix_total=%s loyer_m2=%s "
+                "surface_mediane=%s charges=%s tf_mediane=%s -> renta_brute=%s renta_hc=%s renta_nette=%s",
+                code_insee,
+                type_label,
+                prix_m2,
+                prix_total,
+                loyer_m2,
+                surface_val,
+                charges,
+                tf_mediane,
+                renta_brute,
+                renta_hc,
+                renta_nette,
+            )
         out.append({
             "type_bien": type_label,
             "renta_brute": round(renta_brute, 2) if renta_brute is not None else None,
@@ -592,6 +1265,64 @@ def _build_renta_lignes(
             "renta_nette": round(renta_nette, 2) if renta_nette is not None else None,
         })
     return out
+
+
+def _extract_rentas_from_lignes(lignes: Optional[List[dict]]) -> dict:
+    """Lit renta_brute / renta_nette par type_bien (dont types DVF extra)."""
+    keys_out = {
+        "renta_nette": None,
+        "renta_brute": None,
+        "renta_brute_maisons": None,
+        "renta_nette_maisons": None,
+        "renta_brute_appts": None,
+        "renta_nette_appts": None,
+        "renta_brute_parking": None,
+        "renta_nette_parking": None,
+        "renta_brute_local_indus": None,
+        "renta_nette_local_indus": None,
+        "renta_brute_terrain": None,
+        "renta_nette_terrain": None,
+        "renta_brute_immeuble": None,
+        "renta_nette_immeuble": None,
+    }
+    if not lignes:
+        return keys_out
+    by_tb = {}
+    for ln in lignes:
+        tb = (ln.get("type_bien") or "").strip()
+        if tb:
+            by_tb[tb] = ln
+    if not by_tb:
+        if len(lignes) >= 1:
+            keys_out["renta_nette"] = lignes[0].get("renta_nette")
+            keys_out["renta_brute"] = lignes[0].get("renta_brute")
+        if len(lignes) > 1:
+            keys_out["renta_brute_maisons"] = lignes[1].get("renta_brute")
+            keys_out["renta_nette_maisons"] = lignes[1].get("renta_nette")
+        if len(lignes) > 2:
+            keys_out["renta_brute_appts"] = lignes[2].get("renta_brute")
+            keys_out["renta_nette_appts"] = lignes[2].get("renta_nette")
+        return keys_out
+
+    def pick(tb: str, f: str):
+        r = by_tb.get(tb)
+        return r.get(f) if r else None
+
+    keys_out["renta_nette"] = pick("Maisons/Appart.", "renta_nette")
+    keys_out["renta_brute"] = pick("Maisons/Appart.", "renta_brute")
+    keys_out["renta_brute_maisons"] = pick("Maisons", "renta_brute")
+    keys_out["renta_nette_maisons"] = pick("Maisons", "renta_nette")
+    keys_out["renta_brute_appts"] = pick("Appartements", "renta_brute")
+    keys_out["renta_nette_appts"] = pick("Appartements", "renta_nette")
+    keys_out["renta_brute_parking"] = pick(VENTE_TYPE_PARKING, "renta_brute")
+    keys_out["renta_nette_parking"] = pick(VENTE_TYPE_PARKING, "renta_nette")
+    keys_out["renta_brute_local_indus"] = pick(VENTE_TYPE_LOCAL_INDUS, "renta_brute")
+    keys_out["renta_nette_local_indus"] = pick(VENTE_TYPE_LOCAL_INDUS, "renta_nette")
+    keys_out["renta_brute_terrain"] = pick(VENTE_TYPE_TERRAIN, "renta_brute")
+    keys_out["renta_nette_terrain"] = pick(VENTE_TYPE_TERRAIN, "renta_nette")
+    keys_out["renta_brute_immeuble"] = pick(VENTE_TYPE_IMMEUBLE, "renta_brute")
+    keys_out["renta_nette_immeuble"] = pick(VENTE_TYPE_IMMEUBLE, "renta_nette")
+    return keys_out
 
 
 def _agg_rows(rows: List[dict], surface_cat: Optional[str], pieces_cat: Optional[str]) -> dict:
@@ -609,7 +1340,8 @@ def _agg_rows(rows: List[dict], surface_cat: Optional[str], pieces_cat: Optional
         s = surface_cat.upper().lower()
         col_prix, col_surf, col_p2m = f"prix_med_{s}", f"surf_med_{s}", f"prix_m2_w_{s}"
     elif use_t:
-        t = pieces_cat.upper()
+        # PostgreSQL : identifiants non quotés → minuscules (prix_med_t1, pas prix_med_T1)
+        t = pieces_cat.upper().lower()
         col_prix, col_surf, col_p2m = f"prix_med_{t}", f"surf_med_{t}", f"prix_m2_w_{t}"
     else:
         col_prix, col_surf, col_p2m = "prix_median", "surface_mediane", "prix_m2_mediane"
@@ -752,7 +1484,7 @@ def get_stats(
         """
         params = list(dept_list_vf) + list(types_norm) + [annee_min, annee_max]
         if niveau == "commune":
-            sql += " AND " + _sql_norm_name_canonical("commune") + " = %s"
+            sql += " AND " + _sql_norm_name_canonical_commune_vf("commune") + " = %s"
             params.extend([_normalize_name_canonical(commune)])
         _debug_log("[stats] SQL (exécutable): %s", _debug_sql_params(sql, params))
         cur.execute(sql, params)
@@ -800,6 +1532,22 @@ def get_stats(
                                 loypredm2_ref = float(lr["loypredm2"]) if isinstance(lr["loypredm2"], Decimal) else lr["loypredm2"]
                         except (psycopg2.Error, KeyError, TypeError):
                             pass
+                        if loypredm2_ref is None and ref_params:
+                            try:
+                                commune_norm_stats = ref_params[1]
+                                # Ville à arrondissements : moyenne pondérée par nbobs_com
+                                cur.execute(
+                                    "SELECT SUM(l.loypredm2 * COALESCE(l.nbobs_com, 0)) / NULLIF(SUM(COALESCE(l.nbobs_com, 0)), 0) AS loypredm2 "
+                                    "FROM foncier.loyers_communes l "
+                                    "WHERE " + _sql_libgeo_ville_canonical("l.libgeo") + " = %s "
+                                    "AND l.annee = (SELECT MAX(annee) FROM foncier.loyers_communes l2 WHERE " + _sql_libgeo_ville_canonical("l2.libgeo") + " = %s)",
+                                    (commune_norm_stats, commune_norm_stats),
+                                )
+                                lr = cur.fetchone()
+                                if lr and lr.get("loypredm2") is not None:
+                                    loypredm2_ref = float(lr["loypredm2"]) if isinstance(lr["loypredm2"], Decimal) else lr["loypredm2"]
+                            except (psycopg2.Error, KeyError, TypeError):
+                                pass
                     raw = row.get("codes_postaux")
                     if isinstance(raw, list):
                         liste_cp = [str(x).strip() for x in raw if x]
@@ -877,6 +1625,7 @@ def get_stats(
 _FICHE_PAYLOAD_KEYS = (
     "code_insee", "parc", "ventes", "locations", "fiscalite",
     "rentabilite_mediane", "rentabilite_moyenne", "loypredm2", "prix_m2_moyenne",
+    "rentabilite_tranches",
 )
 
 
@@ -928,10 +1677,14 @@ def get_fiche_logement(
         commune_norm = _normalize_name_canonical(commune)
         _debug_log("[fiche] code_insee=%s vf_communes lookup: code_dept_vf=%r code_postal_vf=%r commune_norm=%s",
             code_insee, code_dept_vf, code_postal_vf, commune_norm)
+        # Important : pour gérer les communes à multiples codes postaux (ex. Paris),
+        # on ne filtre plus par code_postal, uniquement par (code_dept, commune canonique).
         cur.execute(
             "SELECT commune FROM foncier.vf_communes "
-            "WHERE code_dept = %s AND code_postal = %s AND " + _sql_norm_name_canonical("commune") + " = %s LIMIT 1",
-            (code_dept_vf, code_postal_vf, commune_norm),
+            "WHERE code_dept = %s AND "
+            + _sql_norm_name_canonical_commune_vf("commune")
+            + " = %s LIMIT 1",
+            (code_dept_vf, commune_norm),
         )
         vf_commune_row = cur.fetchone()
         # Si rien trouvé et code_dept sur 2 chiffres (ex. "01"), réessayer sans le 0 (ex. "1") car vf_communes peut stocker "1"
@@ -940,14 +1693,17 @@ def get_fiche_logement(
             _debug_log("[fiche] code_insee=%s tentative code_dept_alt=%r (vf_communes sans 0)", code_insee, code_dept_alt)
             cur.execute(
                 "SELECT commune FROM foncier.vf_communes "
-                "WHERE code_dept = %s AND code_postal = %s AND " + _sql_norm_name_canonical("commune") + " = %s LIMIT 1",
-                (code_dept_alt, code_postal_vf, commune_norm),
+                "WHERE code_dept = %s AND "
+                + _sql_norm_name_canonical_commune_vf("commune")
+                + " = %s LIMIT 1",
+                (code_dept_alt, commune_norm),
             )
             vf_commune_row = cur.fetchone()
             if vf_commune_row:
                 code_dept_vf = code_dept_alt
                 _debug_log("[fiche] code_insee=%s vf_communes trouvé avec code_dept_alt=%r", code_insee, code_dept_alt)
         commune_ventes = (vf_commune_row.get("commune") if vf_commune_row and vf_commune_row.get("commune") else commune).strip()
+        use_canonical_commune_ventes = bool(vf_commune_row and vf_commune_row.get("commune"))
         if vf_commune_row and vf_commune_row.get("commune"):
             _debug_log("[fiche] code_insee=%s commune_ventes trouvé vf_communes: %r", code_insee, commune_ventes)
         else:
@@ -990,64 +1746,50 @@ def get_fiche_logement(
             try: return float(v)
             except (TypeError, ValueError): return None
 
-        # 2) Parc logements (agreg_communes_dvf) — année max pour cette commune
+        # 2) Parc logements : on n'utilise plus agreg_communes_dvf (données jugées non fiables pour ce projet).
+        #    parc_data reste vide pour l'instant, les calculs de rentabilité s'appuyant sur vf_communes + loyers_communes.
         parc_annee = None
         parc_data = None
-        cur.execute(
-            "SELECT annee, nb_maisons, nb_apparts, prop_maison, prop_appart, surface_moy "
-            "FROM foncier.agreg_communes_dvf WHERE insee_com = %s ORDER BY annee DESC LIMIT 1",
-            (code_insee,),
-        )
-        parc_row = cur.fetchone()
-        if parc_row:
-            parc_annee = int(parc_row["annee"])
-            nb_m = _int(parc_row.get("nb_maisons"))
-            nb_a = _int(parc_row.get("nb_apparts"))
-            prop_m = _float(parc_row.get("prop_maison")) or 0
-            prop_a = _float(parc_row.get("prop_appart")) or 0
-            total_n = nb_m + nb_a
-            ratio_proprio = (prop_m * nb_m + prop_a * nb_a) / total_n if total_n else None
-            parc_data = {
-                "annee": parc_annee,
-                "nb_maisons": nb_m,
-                "nb_apparts": nb_a,
-                "ratio_proprietaires": round(ratio_proprio, 2) if ratio_proprio is not None else None,
-                "surface_moy": _float(parc_row.get("surface_moy")),
-            }
 
         # 3) Ventes (vf_communes) — année max puis lignes
-        # Si on n'a pas trouvé le libellé exact dans vf_communes, utiliser la comparaison canonique (commune)
-        use_canonical_commune_ventes = not (vf_commune_row and vf_commune_row.get("commune"))
-        if use_canonical_commune_ventes:
-            ventes_where_commune = _sql_norm_name_canonical("commune") + " = %s"
-            ventes_params_commune = (commune_norm,)
-            _debug_log("[fiche] code_insee=%s ventes: utilisation comparaison canonique commune (norm=%s)", code_insee, commune_norm)
-        else:
-            ventes_where_commune = "commune = %s"
-            ventes_params_commune = (commune_ventes,)
+        # Important : pour Paris/Lyon/Marseille et autres villes à arrondissements,
+        # agréger toutes les lignes vf_communes de la commune en utilisant la forme canonique
+        # (même logique que pour loyers_communes via libgeo).
+        ventes_where_commune = _sql_norm_name_canonical_commune_vf("commune") + " = %s"
+        ventes_params_commune = (commune_norm,)
+        _debug_log("[fiche] code_insee=%s ventes: comparaison canonique commune (norm=%s, commune_ventes=%r)", code_insee, commune_norm, commune_ventes)
+        # Même logique : filtrer uniquement par code_dept + commune, pas par code_postal.
         cur.execute(
             "SELECT MAX(annee) AS annee_max FROM foncier.vf_communes "
-            "WHERE code_dept = %s AND code_postal = %s AND " + ventes_where_commune,
-            (code_dept_vf, code_postal_vf) + ventes_params_commune,
+            "WHERE code_dept = %s AND " + ventes_where_commune,
+            (code_dept_vf,) + ventes_params_commune,
         )
         ventes_annee_row = cur.fetchone()
         ventes_annee = int(ventes_annee_row["annee_max"]) if ventes_annee_row and ventes_annee_row.get("annee_max") else None
         ventes_lignes = []
+        vf_rows: List[dict] = []
+        by_type: dict = {}
         if not ventes_annee:
             _debug_log("[fiche] code_insee=%s ventes: aucune année (code_dept=%s code_postal=%s commune_ventes=%r canonical=%s)",
                 code_insee, code_dept_vf, code_postal_vf, commune_ventes, use_canonical_commune_ventes)
         if ventes_annee:
             cur.execute(
-                "SELECT type_local, nb_ventes, prix_median, prix_m2_mediane, surface_mediane, prix_moyen, prix_m2_moyenne, surface_moyenne "
+                "SELECT type_local, nb_ventes, prix_median, prix_m2_mediane, surface_mediane, prix_moyen, prix_m2_moyenne, surface_moyenne, "
+                "prix_med_s1, surf_med_s1, prix_m2_w_s1, prix_med_s2, surf_med_s2, prix_m2_w_s2, "
+                "prix_med_s3, surf_med_s3, prix_m2_w_s3, prix_med_s4, surf_med_s4, prix_m2_w_s4, "
+                "prix_med_s5, surf_med_s5, prix_m2_w_s5, "
+                "prix_med_t1, surf_med_t1, prix_m2_w_t1, prix_med_t2, surf_med_t2, prix_m2_w_t2, "
+                "prix_med_t3, surf_med_t3, prix_m2_w_t3, prix_med_t4, surf_med_t4, prix_m2_w_t4, "
+                "prix_med_t5, surf_med_t5, prix_m2_w_t5 "
                 "FROM foncier.vf_communes "
-                "WHERE code_dept = %s AND code_postal = %s AND " + ventes_where_commune + " AND annee = %s",
-                (code_dept_vf, code_postal_vf) + ventes_params_commune + (ventes_annee,),
+                "WHERE code_dept = %s AND " + ventes_where_commune + " AND annee = %s",
+                (code_dept_vf,) + ventes_params_commune + (ventes_annee,),
             )
             vf_rows = cur.fetchall()
             prix_m2_l1 = vf_rows[0].get("prix_m2_moyenne") if vf_rows else None
             _debug_log("[fiche] code_insee=%s ventes: annee=%s nb_lignes=%s prix_m2_moyenne(ligne0)=%s", code_insee, ventes_annee, len(vf_rows), prix_m2_l1)
             # Mapper type_local (Appartement, Maison) vers clé
-            by_type = {}
+            by_type = {}  # type: dict
             for r in vf_rows:
                 t = (r.get("type_local") or "").strip()
                 if not t:
@@ -1097,25 +1839,58 @@ def get_fiche_logement(
                     "prix_m2_moyenne": wavg2b(rows, "prix_m2_moyenne"),
                     "surface_moyenne": wavg2b(rows, "surface_moyenne"),
                 })
+            # Types DVF additionnels (hors maison / appartement) : dépendances, locaux pro, terrains, immeubles
+            extra_buckets = {lbl: [] for lbl in EXTRA_VENTE_TYPE_ORDER}
+            for r in vf_rows:
+                t = (r.get("type_local") or "").strip()
+                if not t:
+                    continue
+                norm = _normalize_name_canonical(t)
+                if "APPARTEMENT" in norm or norm == "APPART" or "MAISON" in norm:
+                    continue
+                xlabel = _vf_extra_type_label(t)
+                if xlabel and xlabel in extra_buckets:
+                    extra_buckets[xlabel].append(r)
+            for lbl in EXTRA_VENTE_TYPE_ORDER:
+                _append_weighted_vente_line(ventes_lignes, extra_buckets[lbl], lbl)
 
         ventes_payload = {"annee": ventes_annee, "lignes": ventes_lignes} if ventes_annee else None
 
-        # 4) Locations (loyers_communes) — année max pour insee_c
+        # 4) Locations (loyers_communes) — année max pour insee_c ; fallback par libgeo pour Paris/Lyon/Marseille (arrondissements)
         cur.execute(
             "SELECT MAX(annee) AS annee_max FROM foncier.loyers_communes WHERE insee_c = %s",
             (code_insee,),
         )
         loc_annee_row = cur.fetchone()
         loc_annee = int(loc_annee_row["annee_max"]) if loc_annee_row and loc_annee_row.get("annee_max") else None
+        loc_via_libgeo = False
+        if not loc_annee and commune_norm:
+            cur.execute(
+                "SELECT MAX(annee) AS annee_max FROM foncier.loyers_communes l "
+                "WHERE " + _sql_libgeo_ville_canonical("l.libgeo") + " = %s",
+                (commune_norm,),
+            )
+            loc_annee_row = cur.fetchone()
+            loc_annee = int(loc_annee_row["annee_max"]) if loc_annee_row and loc_annee_row.get("annee_max") else None
+            if loc_annee:
+                loc_via_libgeo = True
+                _debug_log("[fiche] code_insee=%s locations: fallback libgeo (arrondissements) annee=%s", code_insee, loc_annee)
         loc_lignes = []
         if not loc_annee:
             _debug_log("[fiche] code_insee=%s locations: aucune année loyers_communes", code_insee)
         if loc_annee:
-            cur.execute(
-                "SELECT type_bien, segment_surface, nbobs_com, loypredm2, lwr_ipm2, upr_ipm2 "
-                "FROM foncier.loyers_communes WHERE insee_c = %s AND annee = %s",
-                (code_insee, loc_annee),
-            )
+            if loc_via_libgeo:
+                cur.execute(
+                    "SELECT type_bien, segment_surface, nbobs_com, loypredm2, lwr_ipm2, upr_ipm2 "
+                    "FROM foncier.loyers_communes l WHERE " + _sql_libgeo_ville_canonical("l.libgeo") + " = %s AND l.annee = %s",
+                    (commune_norm, loc_annee),
+                )
+            else:
+                cur.execute(
+                    "SELECT type_bien, segment_surface, nbobs_com, loypredm2, lwr_ipm2, upr_ipm2 "
+                    "FROM foncier.loyers_communes WHERE insee_c = %s AND annee = %s",
+                    (code_insee, loc_annee),
+                )
             loc_rows = cur.fetchall()
             _debug_log("[fiche] code_insee=%s locations: annee=%s nb_lignes=%s", code_insee, loc_annee, len(loc_rows))
             # segment_surface: 'all', '1-2_pieces', '3_plus_pieces'
@@ -1180,6 +1955,18 @@ def get_fiche_logement(
                     "loyer_q1_m2": round(sum((_float(r.get("lwr_ipm2")) or 0) * _int(r.get("nbobs_com")) for r in rows) / sn, 2) if sn else None,
                     "loyer_q3_m2": round(sum((_float(r.get("upr_ipm2")) or 0) * _int(r.get("nbobs_com")) for r in rows) / sn, 2) if sn else None,
                 })
+            # Proxy : loyer ANIL « appartements » pour parkings / locaux pro (pas de série ANIL dédiée ; prix DVF reste spécifique)
+            _loc_appart = next((x for x in loc_lignes if x.get("type") == "Appartements"), None)
+            if _loc_appart:
+                for _plbl in (VENTE_TYPE_PARKING, VENTE_TYPE_LOCAL_INDUS):
+                    if not any(x.get("type") == _plbl for x in loc_lignes):
+                        loc_lignes.append({
+                            "type": _plbl,
+                            "nb_loyers": _loc_appart.get("nb_loyers"),
+                            "loyer_med_m2": _loc_appart.get("loyer_med_m2"),
+                            "loyer_q1_m2": _loc_appart.get("loyer_q1_m2"),
+                            "loyer_q3_m2": _loc_appart.get("loyer_q3_m2"),
+                        })
 
         locations_payload = {"annee": loc_annee, "lignes": loc_lignes} if loc_annee else None
 
@@ -1215,6 +2002,18 @@ def get_fiche_logement(
             lr_row = cur.fetchone()
             if lr_row and lr_row.get("loypredm2") is not None:
                 loyer_ref = _float(lr_row["loypredm2"])
+            if loyer_ref is None and commune_norm:
+                # Ville à arrondissements (Paris, Lyon, Marseille) : moyenne pondérée par nbobs_com
+                cur.execute(
+                    "SELECT SUM(l.loypredm2 * COALESCE(l.nbobs_com, 0)) / NULLIF(SUM(COALESCE(l.nbobs_com, 0)), 0) AS loypredm2 "
+                    "FROM foncier.loyers_communes l "
+                    "WHERE " + _sql_libgeo_ville_canonical("l.libgeo") + " = %s AND l.annee = %s",
+                    (commune_norm, annee_loyer),
+                )
+                lr_row = cur.fetchone()
+                if lr_row and lr_row.get("loypredm2") is not None:
+                    loyer_ref = _float(lr_row["loypredm2"])
+                    _debug_log("[fiche] code_insee=%s loyer_ref fallback libgeo (pondéré nbobs_com): %s", code_insee, loyer_ref)
         # Taxe foncière simulée par année pour la colonne Fiscalité (surface_moy × 3 × loypredm2 × taux_tfb/100, valeur locative cadastrale)
         if surface_moy_agreg is not None and loyer_ref is not None:
             for f in fiscalite_list:
@@ -1222,8 +2021,18 @@ def get_fiche_logement(
                 f["taxe_fonciere_simulee"] = round(surface_moy_agreg * 3 * loyer_ref * (tfb / 100.0), 2) if tfb is not None else None
 
         # 6) Rentabilités (médianes et moyennes) par type
-        renta_med = _build_renta_lignes(ventes_lignes, loc_lignes, parc_data, loyer_ref, taux_tfb, taux_teom, use_median=True) if ventes_lignes and loc_lignes else []
-        renta_moy = _build_renta_lignes(ventes_lignes, loc_lignes, parc_data, loyer_ref, taux_tfb, taux_teom, use_median=False) if ventes_lignes and loc_lignes else []
+        renta_med = _build_renta_lignes(
+            ventes_lignes, loc_lignes, parc_data, loyer_ref, taux_tfb, taux_teom, use_median=True, code_insee=code_insee
+        ) if ventes_lignes and loc_lignes else []
+        renta_moy = _build_renta_lignes(
+            ventes_lignes, loc_lignes, parc_data, loyer_ref, taux_tfb, taux_teom, use_median=False, code_insee=code_insee
+        ) if ventes_lignes and loc_lignes else []
+
+        rentabilite_tranches = None
+        if vf_rows and loc_lignes:
+            rentabilite_tranches = _compute_rentabilite_tranches_nested(
+                vf_rows, by_type, loc_lignes, parc_data, loyer_ref, taux_tfb, taux_teom, code_insee
+            )
 
         prix_m2_moyenne_fiche = None
         if ventes_lignes and len(ventes_lignes) > 0:
@@ -1240,6 +2049,7 @@ def get_fiche_logement(
             "rentabilite_moyenne": {"lignes": renta_moy} if renta_moy else None,
             "loypredm2": float(loyer_ref) if loyer_ref is not None else None,
             "prix_m2_moyenne": float(prix_m2_moyenne_fiche) if prix_m2_moyenne_fiche is not None else None,
+            "rentabilite_tranches": rentabilite_tranches,
         })
         # Écriture cache pour les prochaines requêtes
         try:
@@ -1327,16 +2137,26 @@ def _indicators_from_fiche_payload(
         _debug_log("[indicators] code_insee=%s renta_brute NULL (loypredm2=%s prix_m2_moy=%s)", code_insee, loypredm2, prix_m2_moy)
     renta_nette = None
     renta_brute_maisons = renta_nette_maisons = renta_brute_appts = renta_nette_appts = None
+    renta_brute_parking = renta_nette_parking = None
+    renta_brute_local_indus = renta_nette_local_indus = None
+    renta_brute_terrain = renta_nette_terrain = None
+    renta_brute_immeuble = renta_nette_immeuble = None
     if fiche.get("rentabilite_mediane") and fiche["rentabilite_mediane"].get("lignes"):
         lignes = fiche["rentabilite_mediane"]["lignes"]
-        if len(lignes) > 0:
-            renta_nette = lignes[0].get("renta_nette")
-        if len(lignes) > 1:
-            renta_brute_maisons = lignes[1].get("renta_brute")
-            renta_nette_maisons = lignes[1].get("renta_nette")
-        if len(lignes) > 2:
-            renta_brute_appts = lignes[2].get("renta_brute")
-            renta_nette_appts = lignes[2].get("renta_nette")
+        rx = _extract_rentas_from_lignes(lignes)
+        renta_nette = rx.get("renta_nette")
+        renta_brute_maisons = rx.get("renta_brute_maisons")
+        renta_nette_maisons = rx.get("renta_nette_maisons")
+        renta_brute_appts = rx.get("renta_brute_appts")
+        renta_nette_appts = rx.get("renta_nette_appts")
+        renta_brute_parking = rx.get("renta_brute_parking")
+        renta_nette_parking = rx.get("renta_nette_parking")
+        renta_brute_local_indus = rx.get("renta_brute_local_indus")
+        renta_nette_local_indus = rx.get("renta_nette_local_indus")
+        renta_brute_terrain = rx.get("renta_brute_terrain")
+        renta_nette_terrain = rx.get("renta_nette_terrain")
+        renta_brute_immeuble = rx.get("renta_brute_immeuble")
+        renta_nette_immeuble = rx.get("renta_nette_immeuble")
         _debug_log("[indicators] code_insee=%s rentabilite_mediane: %s lignes → renta_nette=%s", code_insee, len(lignes), renta_nette)
     else:
         _debug_log("[indicators] code_insee=%s renta_nette NULL (pas de rentabilite_mediane.lignes)", code_insee)
@@ -1344,7 +2164,8 @@ def _indicators_from_fiche_payload(
     if fiche.get("fiscalite") and len(fiche["fiscalite"]) > 0:
         taux_tfb = fiche["fiscalite"][0].get("taux_tfb")
         taux_teom = fiche["fiscalite"][0].get("taux_teom")
-    return {
+    tr_flat = _flatten_tranche_nested_to_indicator_row(fiche.get("rentabilite_tranches"))
+    out = {
         "code_insee": code_insee,
         "code_dept": code_dept,
         "code_postal": code_postal,
@@ -1356,11 +2177,22 @@ def _indicators_from_fiche_payload(
         "renta_nette_maisons": round(renta_nette_maisons, 2) if renta_nette_maisons is not None else None,
         "renta_brute_appts": round(renta_brute_appts, 2) if renta_brute_appts is not None else None,
         "renta_nette_appts": round(renta_nette_appts, 2) if renta_nette_appts is not None else None,
+        "renta_brute_parking": round(renta_brute_parking, 2) if renta_brute_parking is not None else None,
+        "renta_nette_parking": round(renta_nette_parking, 2) if renta_nette_parking is not None else None,
+        "renta_brute_local_indus": round(renta_brute_local_indus, 2) if renta_brute_local_indus is not None else None,
+        "renta_nette_local_indus": round(renta_nette_local_indus, 2) if renta_nette_local_indus is not None else None,
+        "renta_brute_terrain": round(renta_brute_terrain, 2) if renta_brute_terrain is not None else None,
+        "renta_nette_terrain": round(renta_nette_terrain, 2) if renta_nette_terrain is not None else None,
+        "renta_brute_immeuble": round(renta_brute_immeuble, 2) if renta_brute_immeuble is not None else None,
+        "renta_nette_immeuble": round(renta_nette_immeuble, 2) if renta_nette_immeuble is not None else None,
         "taux_tfb": float(taux_tfb) if taux_tfb is not None else None,
         "taux_teom": float(taux_teom) if taux_teom is not None else None,
         "dep_nom": dep_nom,
         "population": population,
     }
+    for k in TRANCHE_RENTA_COLS:
+        out[k] = _round_indicator_optional(tr_flat.get(k))
+    return out
 
 
 def _compute_one_commune_indicators(stats: dict, fiche: dict, c_dept: str, c_postal: str, c_commune: str) -> dict:
@@ -1376,23 +2208,34 @@ def _compute_one_commune_indicators(stats: dict, fiche: dict, c_dept: str, c_pos
             pass
     renta_nette = None
     renta_brute_maisons = renta_nette_maisons = renta_brute_appts = renta_nette_appts = None
+    renta_brute_parking = renta_nette_parking = None
+    renta_brute_local_indus = renta_nette_local_indus = None
+    renta_brute_terrain = renta_nette_terrain = None
+    renta_brute_immeuble = renta_nette_immeuble = None
     if fiche.get("rentabilite_mediane") and fiche["rentabilite_mediane"].get("lignes"):
         lignes = fiche["rentabilite_mediane"]["lignes"]
-        if len(lignes) > 0:
-            renta_nette = lignes[0].get("renta_nette")
-        if len(lignes) > 1:
-            renta_brute_maisons = lignes[1].get("renta_brute")
-            renta_nette_maisons = lignes[1].get("renta_nette")
-        if len(lignes) > 2:
-            renta_brute_appts = lignes[2].get("renta_brute")
-            renta_nette_appts = lignes[2].get("renta_nette")
+        rx = _extract_rentas_from_lignes(lignes)
+        renta_nette = rx.get("renta_nette")
+        renta_brute_maisons = rx.get("renta_brute_maisons")
+        renta_nette_maisons = rx.get("renta_nette_maisons")
+        renta_brute_appts = rx.get("renta_brute_appts")
+        renta_nette_appts = rx.get("renta_nette_appts")
+        renta_brute_parking = rx.get("renta_brute_parking")
+        renta_nette_parking = rx.get("renta_nette_parking")
+        renta_brute_local_indus = rx.get("renta_brute_local_indus")
+        renta_nette_local_indus = rx.get("renta_nette_local_indus")
+        renta_brute_terrain = rx.get("renta_brute_terrain")
+        renta_nette_terrain = rx.get("renta_nette_terrain")
+        renta_brute_immeuble = rx.get("renta_brute_immeuble")
+        renta_nette_immeuble = rx.get("renta_nette_immeuble")
     taux_tfb = taux_teom = None
     if fiche.get("fiscalite") and len(fiche["fiscalite"]) > 0:
         taux_tfb = fiche["fiscalite"][0].get("taux_tfb")
         taux_teom = fiche["fiscalite"][0].get("taux_teom")
     region = stats.get("reg_nom") or ""
     nom_commune = stats.get("nom_standard") or c_commune
-    return {
+    tr_flat = _flatten_tranche_nested_to_indicator_row(fiche.get("rentabilite_tranches"))
+    out_cc = {
         "code_dept": c_dept,
         "code_postal": c_postal,
         "commune": nom_commune,
@@ -1403,9 +2246,20 @@ def _compute_one_commune_indicators(stats: dict, fiche: dict, c_dept: str, c_pos
         "renta_nette_maisons": round(renta_nette_maisons, 2) if renta_nette_maisons is not None else None,
         "renta_brute_appts": round(renta_brute_appts, 2) if renta_brute_appts is not None else None,
         "renta_nette_appts": round(renta_nette_appts, 2) if renta_nette_appts is not None else None,
+        "renta_brute_parking": round(renta_brute_parking, 2) if renta_brute_parking is not None else None,
+        "renta_nette_parking": round(renta_nette_parking, 2) if renta_nette_parking is not None else None,
+        "renta_brute_local_indus": round(renta_brute_local_indus, 2) if renta_brute_local_indus is not None else None,
+        "renta_nette_local_indus": round(renta_nette_local_indus, 2) if renta_nette_local_indus is not None else None,
+        "renta_brute_terrain": round(renta_brute_terrain, 2) if renta_brute_terrain is not None else None,
+        "renta_nette_terrain": round(renta_nette_terrain, 2) if renta_nette_terrain is not None else None,
+        "renta_brute_immeuble": round(renta_brute_immeuble, 2) if renta_brute_immeuble is not None else None,
+        "renta_nette_immeuble": round(renta_nette_immeuble, 2) if renta_nette_immeuble is not None else None,
         "taux_tfb": float(taux_tfb) if taux_tfb is not None else None,
         "taux_teom": float(taux_teom) if taux_teom is not None else None,
     }
+    for k in TRANCHE_RENTA_COLS:
+        out_cc[k] = _round_indicator_optional(tr_flat.get(k))
+    return out_cc
 
 
 def _resolve_communes_to_ref(cur, communes: List[tuple]) -> List[dict]:
@@ -1442,8 +2296,11 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
         placeholders = ",".join(["%s"] * len(code_insee_list))
         cur.execute(
             "SELECT code_insee, code_dept, code_postal, commune, reg_nom, dep_nom, population, "
-            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, taux_tfb, taux_teom "
-            "FROM foncier.indicateurs_communes WHERE code_insee IN (" + placeholders + ")",
+            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
+            "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
+            "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
+            + ", ".join(TRANCHE_RENTA_COLS)
+            + ", taux_tfb, taux_teom FROM foncier.indicateurs_communes WHERE code_insee IN (" + placeholders + ")",
             code_insee_list,
         )
         rows = cur.fetchall()
@@ -1451,7 +2308,7 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
         for r in rows:
             ci = r.get("code_insee")
             if ci:
-                out[ci] = {
+                row_d = {
                     "code_dept": r.get("code_dept"),
                     "code_postal": r.get("code_postal"),
                     "commune": r.get("commune"),
@@ -1462,9 +2319,19 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
                     "renta_nette_maisons": float(r["renta_nette_maisons"]) if r.get("renta_nette_maisons") is not None else None,
                     "renta_brute_appts": float(r["renta_brute_appts"]) if r.get("renta_brute_appts") is not None else None,
                     "renta_nette_appts": float(r["renta_nette_appts"]) if r.get("renta_nette_appts") is not None else None,
+                    "renta_brute_parking": float(r["renta_brute_parking"]) if r.get("renta_brute_parking") is not None else None,
+                    "renta_nette_parking": float(r["renta_nette_parking"]) if r.get("renta_nette_parking") is not None else None,
+                    "renta_brute_local_indus": float(r["renta_brute_local_indus"]) if r.get("renta_brute_local_indus") is not None else None,
+                    "renta_nette_local_indus": float(r["renta_nette_local_indus"]) if r.get("renta_nette_local_indus") is not None else None,
+                    "renta_brute_terrain": float(r["renta_brute_terrain"]) if r.get("renta_brute_terrain") is not None else None,
+                    "renta_nette_terrain": float(r["renta_nette_terrain"]) if r.get("renta_nette_terrain") is not None else None,
+                    "renta_brute_immeuble": float(r["renta_brute_immeuble"]) if r.get("renta_brute_immeuble") is not None else None,
+                    "renta_nette_immeuble": float(r["renta_nette_immeuble"]) if r.get("renta_nette_immeuble") is not None else None,
                     "taux_tfb": float(r["taux_tfb"]) if r.get("taux_tfb") is not None else None,
                     "taux_teom": float(r["taux_teom"]) if r.get("taux_teom") is not None else None,
                 }
+                _append_tranche_floats_from_db_row(r, row_d)
+                out[ci] = row_d
         return out
     except psycopg2.Error:
         return {}
@@ -1473,38 +2340,7 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
 def _upsert_indicateurs_communes(conn, cur, row: dict, commit: bool = True) -> None:
     """Insère ou met à jour une ligne dans indicateurs_communes. Si commit=False, le commit est laissé à l'appelant (batch)."""
     try:
-        cur.execute(
-            """
-            INSERT INTO foncier.indicateurs_communes (
-                code_insee, code_dept, code_postal, commune, reg_nom, dep_nom, population,
-                renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, taux_tfb, taux_teom, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
-            ON CONFLICT (code_insee) DO UPDATE SET
-                code_dept = EXCLUDED.code_dept, code_postal = EXCLUDED.code_postal, commune = EXCLUDED.commune,
-                reg_nom = EXCLUDED.reg_nom, dep_nom = EXCLUDED.dep_nom, population = EXCLUDED.population,
-                renta_brute = EXCLUDED.renta_brute, renta_nette = EXCLUDED.renta_nette,
-                renta_brute_maisons = EXCLUDED.renta_brute_maisons, renta_nette_maisons = EXCLUDED.renta_nette_maisons,
-                renta_brute_appts = EXCLUDED.renta_brute_appts, renta_nette_appts = EXCLUDED.renta_nette_appts,
-                taux_tfb = EXCLUDED.taux_tfb, taux_teom = EXCLUDED.taux_teom, updated_at = clock_timestamp()
-            """,
-            (
-                row.get("code_insee"),
-                row.get("code_dept"),
-                row.get("code_postal"),
-                row.get("commune"),
-                row.get("region"),
-                row.get("dep_nom"),
-                row.get("population"),
-                row.get("renta_brute"),
-                row.get("renta_nette"),
-                row.get("renta_brute_maisons"),
-                row.get("renta_nette_maisons"),
-                row.get("renta_brute_appts"),
-                row.get("renta_nette_appts"),
-                row.get("taux_tfb"),
-                row.get("taux_teom"),
-            ),
-        )
+        cur.execute(_UPSERT_SQL_INDICATEURS_COMMUNES, _tuple_params_indicateurs_communes(row))
         if commit:
             conn.commit()
     except (psycopg2.Error, TypeError, KeyError):
@@ -1521,8 +2357,11 @@ def _read_indicateurs_depts(cur, code_dept_list: List[str]) -> dict:
         placeholders = ",".join(["%s"] * len(code_dept_list))
         cur.execute(
             "SELECT code_dept, dep_nom, reg_nom, code_region, population, "
-            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, taux_tfb, taux_teom "
-            "FROM foncier.indicateurs_depts WHERE code_dept IN (" + placeholders + ")",
+            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
+            "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
+            "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
+            + ", ".join(TRANCHE_RENTA_COLS)
+            + ", taux_tfb, taux_teom FROM foncier.indicateurs_depts WHERE code_dept IN (" + placeholders + ")",
             code_dept_list,
         )
         rows = cur.fetchall()
@@ -1544,9 +2383,18 @@ def _read_indicateurs_depts(cur, code_dept_list: List[str]) -> dict:
                 "renta_nette_maisons": float(r["renta_nette_maisons"]) if r.get("renta_nette_maisons") is not None else None,
                 "renta_brute_appts": float(r["renta_brute_appts"]) if r.get("renta_brute_appts") is not None else None,
                 "renta_nette_appts": float(r["renta_nette_appts"]) if r.get("renta_nette_appts") is not None else None,
+                "renta_brute_parking": float(r["renta_brute_parking"]) if r.get("renta_brute_parking") is not None else None,
+                "renta_nette_parking": float(r["renta_nette_parking"]) if r.get("renta_nette_parking") is not None else None,
+                "renta_brute_local_indus": float(r["renta_brute_local_indus"]) if r.get("renta_brute_local_indus") is not None else None,
+                "renta_nette_local_indus": float(r["renta_nette_local_indus"]) if r.get("renta_nette_local_indus") is not None else None,
+                "renta_brute_terrain": float(r["renta_brute_terrain"]) if r.get("renta_brute_terrain") is not None else None,
+                "renta_nette_terrain": float(r["renta_nette_terrain"]) if r.get("renta_nette_terrain") is not None else None,
+                "renta_brute_immeuble": float(r["renta_brute_immeuble"]) if r.get("renta_brute_immeuble") is not None else None,
+                "renta_nette_immeuble": float(r["renta_nette_immeuble"]) if r.get("renta_nette_immeuble") is not None else None,
                 "taux_tfb": float(r["taux_tfb"]) if r.get("taux_tfb") is not None else None,
                 "taux_teom": float(r["taux_teom"]) if r.get("taux_teom") is not None else None,
             }
+            _append_tranche_floats_from_db_row(r, out[str(code_d)])
         return out
     except psycopg2.Error:
         return {}
@@ -1555,36 +2403,7 @@ def _read_indicateurs_depts(cur, code_dept_list: List[str]) -> dict:
 def _upsert_indicateurs_depts(conn, cur, row: dict, commit: bool = True) -> None:
     """Insère ou met à jour une ligne dans indicateurs_depts."""
     try:
-        cur.execute(
-            """
-            INSERT INTO foncier.indicateurs_depts (
-                code_dept, dep_nom, reg_nom, code_region, population,
-                renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts,
-                taux_tfb, taux_teom, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
-            ON CONFLICT (code_dept) DO UPDATE SET
-                dep_nom = EXCLUDED.dep_nom, reg_nom = EXCLUDED.reg_nom, code_region = EXCLUDED.code_region,
-                population = EXCLUDED.population, renta_brute = EXCLUDED.renta_brute, renta_nette = EXCLUDED.renta_nette,
-                renta_brute_maisons = EXCLUDED.renta_brute_maisons, renta_nette_maisons = EXCLUDED.renta_nette_maisons,
-                renta_brute_appts = EXCLUDED.renta_brute_appts, renta_nette_appts = EXCLUDED.renta_nette_appts,
-                taux_tfb = EXCLUDED.taux_tfb, taux_teom = EXCLUDED.taux_teom, updated_at = clock_timestamp()
-            """,
-            (
-                row.get("code_dept"),
-                row.get("dep_nom"),
-                row.get("region"),
-                row.get("code_region"),
-                row.get("population"),
-                row.get("renta_brute"),
-                row.get("renta_nette"),
-                row.get("renta_brute_maisons"),
-                row.get("renta_nette_maisons"),
-                row.get("renta_brute_appts"),
-                row.get("renta_nette_appts"),
-                row.get("taux_tfb"),
-                row.get("taux_teom"),
-            ),
-        )
+        cur.execute(_UPSERT_SQL_INDICATEURS_DEPTS, _tuple_params_indicateurs_depts(row))
         if commit:
             conn.commit()
     except (psycopg2.Error, TypeError, KeyError):
@@ -1601,8 +2420,11 @@ def _read_indicateurs_regions(cur, code_region_list: List[str]) -> dict:
         placeholders = ",".join(["%s"] * len(code_region_list))
         cur.execute(
             "SELECT code_region, reg_nom, population, "
-            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, taux_tfb, taux_teom "
-            "FROM foncier.indicateurs_regions WHERE code_region IN (" + placeholders + ")",
+            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
+            "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
+            "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
+            + ", ".join(TRANCHE_RENTA_COLS)
+            + ", taux_tfb, taux_teom FROM foncier.indicateurs_regions WHERE code_region IN (" + placeholders + ")",
             code_region_list,
         )
         rows = cur.fetchall()
@@ -1622,9 +2444,18 @@ def _read_indicateurs_regions(cur, code_region_list: List[str]) -> dict:
                 "renta_nette_maisons": float(r["renta_nette_maisons"]) if r.get("renta_nette_maisons") is not None else None,
                 "renta_brute_appts": float(r["renta_brute_appts"]) if r.get("renta_brute_appts") is not None else None,
                 "renta_nette_appts": float(r["renta_nette_appts"]) if r.get("renta_nette_appts") is not None else None,
+                "renta_brute_parking": float(r["renta_brute_parking"]) if r.get("renta_brute_parking") is not None else None,
+                "renta_nette_parking": float(r["renta_nette_parking"]) if r.get("renta_nette_parking") is not None else None,
+                "renta_brute_local_indus": float(r["renta_brute_local_indus"]) if r.get("renta_brute_local_indus") is not None else None,
+                "renta_nette_local_indus": float(r["renta_nette_local_indus"]) if r.get("renta_nette_local_indus") is not None else None,
+                "renta_brute_terrain": float(r["renta_brute_terrain"]) if r.get("renta_brute_terrain") is not None else None,
+                "renta_nette_terrain": float(r["renta_nette_terrain"]) if r.get("renta_nette_terrain") is not None else None,
+                "renta_brute_immeuble": float(r["renta_brute_immeuble"]) if r.get("renta_brute_immeuble") is not None else None,
+                "renta_nette_immeuble": float(r["renta_nette_immeuble"]) if r.get("renta_nette_immeuble") is not None else None,
                 "taux_tfb": float(r["taux_tfb"]) if r.get("taux_tfb") is not None else None,
                 "taux_teom": float(r["taux_teom"]) if r.get("taux_teom") is not None else None,
             }
+            _append_tranche_floats_from_db_row(r, out[str(code_r)])
         return out
     except psycopg2.Error:
         return {}
@@ -1633,34 +2464,7 @@ def _read_indicateurs_regions(cur, code_region_list: List[str]) -> dict:
 def _upsert_indicateurs_regions(conn, cur, row: dict, commit: bool = True) -> None:
     """Insère ou met à jour une ligne dans indicateurs_regions."""
     try:
-        cur.execute(
-            """
-            INSERT INTO foncier.indicateurs_regions (
-                code_region, reg_nom, population,
-                renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts,
-                taux_tfb, taux_teom, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, clock_timestamp())
-            ON CONFLICT (code_region) DO UPDATE SET
-                reg_nom = EXCLUDED.reg_nom, population = EXCLUDED.population,
-                renta_brute = EXCLUDED.renta_brute, renta_nette = EXCLUDED.renta_nette,
-                renta_brute_maisons = EXCLUDED.renta_brute_maisons, renta_nette_maisons = EXCLUDED.renta_nette_maisons,
-                renta_brute_appts = EXCLUDED.renta_brute_appts, renta_nette_appts = EXCLUDED.renta_nette_appts,
-                taux_tfb = EXCLUDED.taux_tfb, taux_teom = EXCLUDED.taux_teom, updated_at = clock_timestamp()
-            """,
-            (
-                row.get("code_region"),
-                row.get("region"),
-                row.get("population"),
-                row.get("renta_brute"),
-                row.get("renta_nette"),
-                row.get("renta_brute_maisons"),
-                row.get("renta_nette_maisons"),
-                row.get("renta_brute_appts"),
-                row.get("renta_nette_appts"),
-                row.get("taux_tfb"),
-                row.get("taux_teom"),
-            ),
-        )
+        cur.execute(_UPSERT_SQL_INDICATEURS_REGIONS, _tuple_params_indicateurs_regions(row))
         if commit:
             conn.commit()
     except (psycopg2.Error, TypeError, KeyError):
@@ -1723,24 +2527,31 @@ def _aggregate_indicators_weighted(commune_rows: List[dict], weight_key: str = "
         except (TypeError, ValueError):
             return None
 
-    def _is_valid_row(row: dict) -> bool:
-        rb = _to_float_or_none(row.get("renta_brute"))
-        rn = _to_float_or_none(row.get("renta_nette"))
-        if rb is None or rn is None:
-            return False
-        if rb > 100 or rn > 100:
-            return False
-        return True
+    def _row_has_any_indicator(row: dict) -> bool:
+        keys = [
+            "renta_brute", "renta_nette", "renta_brute_maisons", "renta_nette_maisons",
+            "renta_brute_appts", "renta_nette_appts",
+            "renta_brute_parking", "renta_nette_parking", "renta_brute_local_indus", "renta_nette_local_indus",
+            "renta_brute_terrain", "renta_nette_terrain", "renta_brute_immeuble", "renta_nette_immeuble",
+            "taux_tfb", "taux_teom",
+        ] + list(TRANCHE_RENTA_COLS)
+        for k in keys:
+            if _to_float_or_none(row.get(k)) is not None:
+                return True
+        return False
 
-    commune_rows = [r for r in (commune_rows or []) if _is_valid_row(r)]
+    commune_rows = [r for r in (commune_rows or []) if _row_has_any_indicator(r)]
     if not commune_rows:
         return {}
     total_w = 0
     sums = {}
     numeric_keys = [
         "renta_brute", "renta_nette", "renta_brute_maisons", "renta_nette_maisons",
-        "renta_brute_appts", "renta_nette_appts", "taux_tfb", "taux_teom",
-    ]
+        "renta_brute_appts", "renta_nette_appts",
+        "renta_brute_parking", "renta_nette_parking", "renta_brute_local_indus", "renta_nette_local_indus",
+        "renta_brute_terrain", "renta_nette_terrain", "renta_brute_immeuble", "renta_nette_immeuble",
+        "taux_tfb", "taux_teom",
+    ] + list(TRANCHE_RENTA_COLS)
     for k in numeric_keys:
         sums[k] = 0.0
     first = commune_rows[0]
@@ -1784,10 +2595,10 @@ def _is_valid_rentability_row(row: dict) -> bool:
     """Ligne affichable: renta_brute + renta_nette déterminées et <= 100%."""
     rb = _to_float_or_none(row.get("renta_brute"))
     rn = _to_float_or_none(row.get("renta_nette"))
-    if rb is None or rn is None:
+    """if rb is None or rn is None:
         return False
     if rb > 100 or rn > 100:
-        return False
+        return False"""
     return True
 
 
@@ -1864,6 +2675,39 @@ def _recompute_indicateurs_regions(conn, cur, code_regions: List[str]) -> int:
     return refreshed
 
 
+_COMPARAISON_BASE_SCORE_KEYS = frozenset(
+    [
+        "renta_brute",
+        "renta_nette",
+        "renta_brute_maisons",
+        "renta_nette_maisons",
+        "renta_brute_appts",
+        "renta_nette_appts",
+        "renta_brute_parking",
+        "renta_nette_parking",
+        "renta_brute_local_indus",
+        "renta_nette_local_indus",
+        "renta_brute_terrain",
+        "renta_nette_terrain",
+        "renta_brute_immeuble",
+        "renta_nette_immeuble",
+        "taux_tfb",
+        "taux_teom",
+    ]
+)
+COMPARAISON_SCORE_KEYS = _COMPARAISON_BASE_SCORE_KEYS | frozenset(TRANCHE_RENTA_COLS)
+
+
+def _normalize_comparaison_score_key(score_principal: Optional[str]) -> str:
+    sp = (score_principal or "renta_nette").strip()
+    if sp in COMPARAISON_SCORE_KEYS:
+        return sp
+    # Sentinelle UI : pas de repli sur renta_nette agrégée (tri neutre, colonne absente).
+    if sp == "__indicateur_non_calcule__":
+        return sp
+    return "renta_nette"
+
+
 @app.get("/api/comparaison_scores")
 def get_comparaison_scores(
     mode: str = Query("communes", description="Mode: communes, departements, regions"),
@@ -1871,18 +2715,27 @@ def get_comparaison_scores(
     code_postal: Optional[List[str]] = Query(None, description="Code postal (répété pour chaque commune)"),
     commune: Optional[List[str]] = Query(None, description="Nom commune (répété pour chaque commune)"),
     code_region: Optional[List[str]] = Query(None, description="Code région (pour mode=regions, répété)"),
-    score_principal: str = Query("renta_nette", description="Score principal: renta_brute, renta_nette"),
+    score_principal: str = Query(
+        "renta_nette",
+        description="Clé de tri / colonne indicateur (renta_brute, renta_nette, colonnes tranches s1–s5 / t1–t5, etc.)",
+    ),
     n_max: int = Query(100, ge=1, le=500, description="Nombre max de lignes à retourner (optionnel)"),
     scores_secondaires: Optional[List[str]] = Query(None, description="Scores secondaires (taux_tfb, taux_teom, etc.)"),
+    type_logt: Optional[str] = Query(None, description="Filtre ref_type_logts (codes) — réservé à une évolution future"),
+    type_surf: Optional[str] = Query(None, description="Filtre ref_type_surf — réservé à une évolution future"),
+    nb_pieces: Optional[str] = Query(None, description="Filtre ref_nb_pieces — réservé à une évolution future"),
 ):
     """
     Retourne le classement selon le score principal.
     - mode=communes : liste (code_dept, code_postal, commune) par paramètres répétés.
     - mode=departements : liste code_dept ; agrégation pondérée par population des communes du département.
     - mode=regions : liste code_region ; agrégation pondérée par population des communes de la région.
+
+    Les lignes sont lues dans `indicateurs_*` (colonnes précalculées). Le tri utilise `score_principal`
+    (ex. `renta_nette_maisons_s3` pour une tranche surface). Les filtres type_logt / type_surf / nb_pieces
+    sont informatifs côté UI ; le score exact se choisit via `score_principal`.
     """
-    if score_principal not in ("renta_brute", "renta_nette"):
-        score_principal = "renta_nette"
+    score_key = _normalize_comparaison_score_key(score_principal)
     mode = (mode or "communes").strip().lower()
     if mode not in ("communes", "departements", "regions"):
         mode = "communes"
@@ -1902,7 +2755,7 @@ def get_comparaison_scores(
                 if row and _is_valid_rentability_row(row):
                     rows.append(row)
             cur.close()
-            rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
+            rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
             if n_max and len(rows) > n_max:
                 rows = rows[:n_max]
             return {"rows": rows}
@@ -1925,7 +2778,7 @@ def get_comparaison_scores(
                 if row and _is_valid_rentability_row(row):
                     rows.append(row)
             cur.close()
-            rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
+            rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
             if n_max and len(rows) > n_max:
                 rows = rows[:n_max]
             return {"rows": rows}
@@ -1975,25 +2828,29 @@ def get_comparaison_scores(
         if conn is not None:
             conn.close()
 
-    rows.sort(key=lambda r: (r.get(score_principal) is None, -(r.get(score_principal) or 0)))
+    rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
     if n_max and len(rows) > n_max:
         rows = rows[:n_max]
     _debug_log("[comparaison_scores] sortie: %s ligne(s) retournée(s)", len(rows))
     return {"rows": rows}
 
 
-@app.post("/api/refresh-indicateurs")
-def refresh_indicateurs(
-    code_insee_list: Optional[List[str]] = Query(None),
-    limit: Optional[int] = Query(None, ge=0, le=50000, description="Max communes à traiter ; absent ou 0 = sans limite (toutes)"),
-    batch_commit: int = Query(50, ge=1, le=500, description="Commit tous les N upserts (réduit les round-trips DB)"),
-    workers: int = Query(4, ge=1, le=16, description="Nombre de workers parallèles pour calculer les fiches (cache fiche + indicateurs)"),
-):
+# Noms de paramètres connus pour refresh-indicateurs (pour détecter les typos)
+_REFRESH_INDICATEURS_KNOWN_PARAMS = {"code_insee_list", "limit", "batch_commit", "workers"}
+_REFRESH_INDICATEURS_USAGE = (
+    "Usage: POST /api/refresh-indicateurs?code_insee_list=<code1>&code_insee_list=<code2>&... "
+    "(paramètre sans 'e' final). Exemple: POST /api/refresh-indicateurs?code_insee_list=97306"
+)
+
+def _refresh_indicateurs_impl(
+    code_insee_list: Optional[List[str]],
+    limit: Optional[int],
+    batch_commit: int,
+    workers: int,
+) -> dict:
     """
-    Remplit ou met à jour fiche_logement_cache et indicateurs_communes pour les communes demandées.
-    Si code_insee_list est fourni, traite uniquement ces code_insee. Sinon traite les communes de ref_communes
-    (sans limite si limit absent ou 0, sinon limit communes).
-    Lit d'abord le cache fiche quand il existe ; les fiches manquantes sont calculées en parallèle (workers).
+    Corps métier de POST /api/refresh-indicateurs (sans validation HTTP des query params).
+    Appelable depuis d'autres endpoints (ex. force-recalcul) sans objet Request.
     """
     conn = None
     try:
@@ -2093,8 +2950,10 @@ def refresh_indicateurs(
                 fiche, code_insee, code_dept, code_postal or "", commune,
                 reg_nom=ref.get("reg_nom"), dep_nom=ref.get("dep_nom"), population=pop,
             )
-            _debug_log("[refresh-indicateurs] code_insee=%s upsert: renta_brute=%s renta_nette=%s (from_cache=%s)",
-                code_insee, row.get("renta_brute"), row.get("renta_nette"), (code_insee in cache_by_insee))
+            # Ne loguer que les communes pour lesquelles on a recalculé la fiche (pas déjà en cache), pour éviter de polluer les logs.
+            if code_insee not in was_in_cache:
+                _debug_log("[refresh-indicateurs] code_insee=%s upsert: renta_brute=%s renta_nette=%s",
+                    code_insee, row.get("renta_brute"), row.get("renta_nette"))
             _upsert_indicateurs_communes(conn, cur, row, commit=False)
             done += 1
             if (done % batch_commit) == 0:
@@ -2110,6 +2969,36 @@ def refresh_indicateurs(
     finally:
         if conn:
             conn.close()
+
+
+@app.post("/api/refresh-indicateurs")
+def refresh_indicateurs(
+    request: Request,
+    code_insee_list: Optional[List[str]] = Query(
+        None,
+        description="Liste de code_insee à traiter. Syntaxe : répéter le paramètre (ex. ?code_insee_list=75056&code_insee_list=13001) ou en JSON body si besoin.",
+    ),
+    limit: Optional[int] = Query(None, ge=0, le=50000, description="Max communes à traiter ; absent ou 0 = sans limite (toutes)"),
+    batch_commit: int = Query(50, ge=1, le=500, description="Commit tous les N upserts (réduit les round-trips DB)"),
+    workers: int = Query(4, ge=1, le=16, description="Nombre de workers parallèles pour calculer les fiches (cache fiche + indicateurs)"),
+):
+    """
+    Remplit ou met à jour fiche_logement_cache et indicateurs_communes pour les communes demandées.
+    Si code_insee_list est fourni, traite uniquement ces code_insee. Sinon traite les communes de ref_communes
+    (sans limite si limit absent ou 0, sinon limit communes).
+    Lit d'abord le cache fiche quand il existe ; les fiches manquantes sont calculées en parallèle (workers).
+    """
+    query_keys = set(request.query_params.keys())
+    typo = query_keys & {"code_insee_liste", "code_insee_listes"}
+    unknown = query_keys - _REFRESH_INDICATEURS_KNOWN_PARAMS
+    unknown_code_insee = [k for k in unknown if k.startswith("code_insee")]
+    if typo or unknown_code_insee:
+        bad = list(typo or unknown_code_insee)[0]
+        raise HTTPException(
+            status_code=400,
+            detail=f"Paramètre inconnu: '{bad}'. Utilisez 'code_insee_list' (sans 'e' final). {_REFRESH_INDICATEURS_USAGE}",
+        )
+    return _refresh_indicateurs_impl(code_insee_list, limit, batch_commit, workers)
 
 
 @app.post("/api/refresh-indicateurs-agreges")
@@ -2254,7 +3143,7 @@ def force_recalcul_indicateurs(
         if conn:
             conn.close()
 
-    out = refresh_indicateurs(
+    out = _refresh_indicateurs_impl(
         code_insee_list=code_insee_list,
         limit=None,
         batch_commit=batch_commit,

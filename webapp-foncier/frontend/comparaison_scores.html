@@ -130,16 +130,52 @@
       }
       #app-comparaison .stats-reset-btn:hover { background: #7dd3fc; color: #075985; }
 
-      .comparaison-selected-list { margin-top: 1rem; padding: 0.5rem 0; }
-      .comparaison-selected-list h3 { margin: 0 0 0.5rem; font-size: 0.9rem; color: #374151; }
-      .comparaison-selected-list ul { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      .comparaison-selected-list { margin-top: 0.5rem; padding: 0.35rem 0; }
+      .comparaison-selected-list h3 { margin: 0 0 0.35rem; font-size: 0.9rem; color: #374151; }
+      .comparaison-selected-scroll {
+        max-height: 7.5em;
+        overflow-y: auto;
+        padding-right: 0.25rem;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.4rem;
+        background: #fafafa;
+      }
+      .comparaison-selected-list ul { list-style: none; padding: 0.35rem 0.5rem; margin: 0; display: flex; flex-wrap: wrap; gap: 0.5rem; }
       .comparaison-selected-list li { display: inline-flex; align-items: center; gap: 0.35rem; padding: 0.25rem 0.5rem; background: #e5e7eb; border-radius: 0.35rem; font-size: 0.85rem; }
       .comparaison-selected-list li button { background: none; border: none; cursor: pointer; color: #6b7280; padding: 0 0.2rem; font-size: 1rem; line-height: 1; }
       .comparaison-selected-list li button:hover { color: #dc2626; }
       .comparaison-selected-list .btn-vider { margin-left: 0.5rem; font-size: 0.8rem; color: #6b7280; background: none; border: none; cursor: pointer; text-decoration: underline; }
       .comparaison-selected-list .btn-vider:hover { color: #111; }
 
-      .comparaison-tables-wrap { margin-top: 1rem; }
+      .comparaison-results-view { margin-top: 1rem; }
+      .comparaison-view-tabs {
+        display: flex;
+        gap: 0.35rem;
+        margin-bottom: 0.75rem;
+        border-bottom: 1px solid #e5e7eb;
+        padding-bottom: 0.35rem;
+      }
+      .comparaison-tab {
+        padding: 0.45rem 1rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #6b7280;
+        background: #f3f4f6;
+        border: 1px solid #e5e7eb;
+        border-radius: 0.4rem 0.4rem 0 0;
+        cursor: pointer;
+      }
+      .comparaison-tab:hover { color: #374151; background: #e5e7eb; }
+      .comparaison-tab.is-active {
+        color: #111827;
+        background: #fff;
+        border-bottom-color: #fff;
+        margin-bottom: -1px;
+        position: relative;
+        z-index: 1;
+      }
+      .comparaison-panel[hidden] { display: none !important; }
+      .comparaison-tables-wrap { margin-top: 0; }
       .comparaison-table-block { margin-bottom: 2rem; }
       .comparaison-table-block:last-child { margin-bottom: 0; }
       .comparaison-table-title { font-size: 1rem; color: #374151; font-weight: 600; margin: 0 0 0.5rem; padding: 0; }
@@ -158,6 +194,8 @@
       .comparaison-table tbody tr:last-child td { border-bottom: none; }
       .comparaison-table .commune-link { color: #2563eb; text-decoration: none; font-weight: 500; }
       .comparaison-table .commune-link:hover { text-decoration: underline; }
+      .comparaison-tables-dynamic { display: flex; flex-direction: column; gap: 1.25rem; }
+      .comparaison-table-criteria { margin: 0 0 0.5rem; font-size: 0.8rem; color: #6b7280; }
       .comparaison-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
       .comparaison-table th.sortable:hover { background: #e2e8f0; }
       .comparaison-table th.sortable .sort-icon { font-size: 0.7em; margin-left: 0.2rem; opacity: 0.7; }
@@ -169,6 +207,91 @@
         width: 1.5rem; height: 1.5rem; border: 3px solid #e5e7eb; border-top-color: #2563eb; border-radius: 50%;
         animation: comparaison-spin 0.8s linear infinite;
       }
+      .comparaison-criteria-block {
+        margin-top: 0.75rem;
+        padding-top: 0.75rem;
+        border-top: 1px solid #e5e7eb;
+      }
+      .comparaison-criteria-block h3 { margin: 0 0 0.5rem; font-size: 0.95rem; color: #374151; font-weight: 600; }
+      .comparaison-criteria-block .help { font-size: 0.8rem; color: #6b7280; margin-bottom: 0.5rem; }
+      .comparaison-criteria-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.75rem 1rem;
+        margin-bottom: 0.5rem;
+      }
+      .comparaison-criteria-row .field { margin: 0; }
+      .comparaison-criteria-row label { font-size: 0.85rem; color: #4b5563; }
+      .comparaison-criteria-row select { min-width: 200px; padding: 0.35rem 0.5rem; border-radius: 0.35rem; border: 1px solid #d1d5db; }
+      .comparaison-select-multi {
+        min-width: 9rem;
+        max-width: 14rem;
+        padding: 0.25rem 0.35rem;
+        border-radius: 0.35rem;
+        border: 1px solid #d1d5db;
+        font-size: 0.82rem;
+        vertical-align: middle;
+      }
+      .comparaison-criteria-grid {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-end;
+        gap: 0.75rem 1.25rem;
+      }
+      .comparaison-criteria-col {
+        flex: 1 1 11rem;
+        min-width: 9.5rem;
+        max-width: 20rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .comparaison-granularity-column {
+        display: flex;
+        flex-direction: column;
+        gap: 0.35rem;
+      }
+      .granularity-col-title {
+        font-size: 0.72rem;
+        font-weight: 600;
+        color: #6b7280;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+      }
+      .comparaison-granularity-radios {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.35rem 0.85rem;
+      }
+      .comparaison-granularity-radios label {
+        font-size: 0.8rem;
+        color: #4b5563;
+        display: inline-flex;
+        align-items: center;
+        gap: 0.3rem;
+      }
+      .comparaison-field-inline {
+        display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 0.2rem;
+        margin: 0;
+      }
+      .comparaison-field-inline label {
+        font-size: 0.78rem;
+        color: #4b5563;
+        white-space: nowrap;
+      }
+      .comparaison-filters .field label,
+      #comparaison-mode-departements .field label,
+      #comparaison-mode-regions .field label {
+        display: block;
+        font-size: 0.85rem;
+        margin-bottom: 0.2rem;
+      }
+
       .comparaison-map-wrap {
         margin-top: 1rem;
         background: #fff;
@@ -182,6 +305,50 @@
         color: #374151;
         font-weight: 600;
       }
+      .comparaison-maps-zone { margin-top: 0.35rem; }
+      .comparaison-map-group { margin-bottom: 1.25rem; }
+      .comparaison-map-group:last-child { margin-bottom: 0; }
+      .comparaison-map-group-title {
+        margin: 0 0 0.5rem;
+        font-size: 0.9rem;
+        color: #1f2937;
+        font-weight: 600;
+      }
+      .comparaison-map-cards-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 0.75rem;
+      }
+      .comparaison-map-card-choro {
+        border: 1px solid #e5e7eb;
+        border-radius: 0.5rem;
+        padding: 0.5rem;
+        background: #f8fafc;
+      }
+      .comparaison-map-card-choro .card-head {
+        font-size: 0.82rem;
+        color: #374151;
+        margin-bottom: 0.25rem;
+        line-height: 1.35;
+      }
+      .comparaison-map-card-choro .card-legend {
+        margin-top: 0.35rem;
+        font-size: 0.75rem;
+        color: #6b7280;
+      }
+      .comparaison-map-card-choro .card-footnote {
+        margin-top: 0.25rem;
+        font-size: 0.72rem;
+        color: #9ca3af;
+        font-style: italic;
+      }
+      .comparaison-map-instance {
+        width: 100%;
+        height: 340px;
+        border-radius: 0.4rem;
+        border: 1px solid #d1d5db;
+        background: #eef2ff;
+      }
       #comparaison-score-map-single {
         width: 100%;
         height: 520px;
@@ -190,11 +357,25 @@
         background: #f8fafc;
       }
       #comparaison-communes-maps-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+      }
+      #comparaison-communes-maps-grid[hidden] { display: none; }
+      .comparaison-communes-maps-job {
+        margin: 0;
+      }
+      .comparaison-communes-maps-job-title {
+        font-size: 0.95rem;
+        margin: 0 0 0.35rem;
+        color: #1e293b;
+        font-weight: 600;
+      }
+      .comparaison-communes-maps-grid-inner {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
         gap: 0.75rem;
       }
-      #comparaison-communes-maps-grid[hidden] { display: none; }
       .comparaison-commune-map-card {
         border: 1px solid #e5e7eb;
         border-radius: 0.5rem;
@@ -295,23 +476,73 @@
           <div id="comparaison-mode-departements" class="comparaison-filters-wrap" style="display: none;">
             <div class="comparaison-filters comparaison-multi-row">
               <div class="field">
-                <span class="field-label">Région(s)</span>
-                <div id="comparaison-regions-checkboxes" class="comparaison-checkboxes"></div>
-                <label class="comparaison-check-all"><input type="checkbox" id="comparaison-all-regions" /> Toutes les régions</label>
+                <label for="comparaison-region-select-dept">Région(s)</label>
+                <select id="comparaison-region-select-dept" class="comparaison-select-multi" multiple size="3"></select>
               </div>
               <div class="field">
-                <span class="field-label">Département(s)</span>
-                <div id="comparaison-depts-checkboxes" class="comparaison-checkboxes"></div>
-                <label class="comparaison-check-all"><input type="checkbox" id="comparaison-all-depts" /> Tous les départements</label>
+                <label for="comparaison-dept-select">Département(s)</label>
+                <select id="comparaison-dept-select" class="comparaison-select-multi" multiple size="3"></select>
               </div>
             </div>
           </div>
           <div id="comparaison-mode-regions" class="comparaison-filters-wrap" style="display: none;">
             <div class="comparaison-filters comparaison-multi-row">
               <div class="field">
-                <span class="field-label">Région(s)</span>
-                <div id="comparaison-regions-checkboxes-regions" class="comparaison-checkboxes"></div>
-                <label class="comparaison-check-all"><input type="checkbox" id="comparaison-all-regions-regions" /> Toutes les régions</label>
+                <label for="comparaison-region-select-only">Région(s)</label>
+                <select id="comparaison-region-select-only" class="comparaison-select-multi" multiple size="3"></select>
+              </div>
+            </div>
+          </div>
+
+          <div class="comparaison-selected-list" id="comparaison-selected-block" aria-hidden="true">
+            <h3 id="comparaison-selected-title">Zones sélectionnées</h3>
+            <div class="comparaison-selected-scroll">
+              <ul id="comparaison-selected-ul"></ul>
+            </div>
+            <button type="button" class="btn-vider" id="comparaison-vider-liste">Vider la liste</button>
+          </div>
+
+          <div id="comparaison-criteria-block" class="comparaison-criteria-block" hidden>
+            <h3>Critères sur les locaux</h3>
+            <div class="comparaison-criteria-grid">
+              <div class="comparaison-criteria-col">
+                <div class="comparaison-granularity-column" role="group" aria-labelledby="comparaison-granularity-type-legend">
+                  <span id="comparaison-granularity-type-legend" class="granularity-col-title">Granularité</span>
+                  <div class="comparaison-granularity-radios">
+                    <label><input type="radio" name="comparaison-granularity-type" value="agg" checked /> Agrégée</label>
+                    <label><input type="radio" name="comparaison-granularity-type" value="detail" /> Détaillée</label>
+                  </div>
+                </div>
+                <div class="field comparaison-field-inline">
+                  <label for="comparaison-type-logt">Type de local</label>
+                  <select id="comparaison-type-logt" class="comparaison-select-multi" multiple size="3"></select>
+                </div>
+              </div>
+              <div id="comparaison-surf-col" class="comparaison-criteria-col" style="display: none;">
+                <div class="comparaison-granularity-column" role="group" aria-labelledby="comparaison-granularity-surf-legend">
+                  <span id="comparaison-granularity-surf-legend" class="granularity-col-title">Granularité</span>
+                  <div class="comparaison-granularity-radios">
+                    <label><input type="radio" name="comparaison-granularity-surf" value="agg" checked /> Agrégée</label>
+                    <label><input type="radio" name="comparaison-granularity-surf" value="detail" /> Détaillée</label>
+                  </div>
+                </div>
+                <div class="field comparaison-field-inline">
+                  <label for="comparaison-surf">Surface</label>
+                  <select id="comparaison-surf" class="comparaison-select-multi" multiple size="3"></select>
+                </div>
+              </div>
+              <div id="comparaison-pieces-col" class="comparaison-criteria-col" style="display: none;">
+                <div class="comparaison-granularity-column" role="group" aria-labelledby="comparaison-granularity-pieces-legend">
+                  <span id="comparaison-granularity-pieces-legend" class="granularity-col-title">Granularité</span>
+                  <div class="comparaison-granularity-radios">
+                    <label><input type="radio" name="comparaison-granularity-pieces" value="agg" checked /> Agrégée</label>
+                    <label><input type="radio" name="comparaison-granularity-pieces" value="detail" /> Détaillée</label>
+                  </div>
+                </div>
+                <div class="field comparaison-field-inline">
+                  <label for="comparaison-pieces">Nombre de pièces</label>
+                  <select id="comparaison-pieces" class="comparaison-select-multi" multiple size="3"></select>
+                </div>
               </div>
             </div>
           </div>
@@ -334,7 +565,7 @@
                 <label>&nbsp;</label>
                 <button type="button" class="comparaison-btn" id="comparaison-btn">Comparer</button>
                 <button type="button" class="stats-reset-btn" id="comparaison-reset-btn">Réinitialiser</button>
-                <button type="button" class="comparaison-btn force-recalc" id="comparaison-force-btn">Forcer le recalcul</button>
+                <button type="button" class="comparaison-btn force-recalc" id="comparaison-force-btn" title="Relance le calcul côté serveur des indicateurs mis en cache pour les zones actuellement sélectionnées (peut prendre quelques secondes). Utile après une mise à jour des données en base.">Forcer le recalcul</button>
               </div>
             </div>
             <div class="comparaison-scores-row" id="comparaison-indicators-row">
@@ -349,50 +580,26 @@
               </div>
             </div>
           </div>
-
-          <div class="comparaison-selected-list" id="comparaison-selected-block" aria-hidden="true">
-            <h3 id="comparaison-selected-title">Communes sélectionnées</h3>
-            <ul id="comparaison-selected-ul"></ul>
-            <button type="button" class="btn-vider" id="comparaison-vider-liste">Vider la liste</button>
-          </div>
         </section>
 
-        <div class="comparaison-tables-wrap">
-          <div id="comparaison-empty">Ajoutez au moins une commune à la liste ci‑dessus (recherche ou sélecteur), choisissez les indicateurs et cliquez sur Comparer.</div>
-          <div id="comparaison-loading" aria-hidden="true"><span class="comparaison-spinner" aria-hidden="true"></span> Chargement…</div>
-          <div id="comparaison-error" role="alert" hidden></div>
-          <div class="comparaison-table-block" id="comparaison-block-all" aria-hidden="true">
-            <h3 class="comparaison-table-title">Indicateurs pour les maisons &amp; appartements</h3>
-            <div class="comparaison-table-wrap">
-              <table class="comparaison-table" id="comparaison-table-all">
-                <thead id="comparaison-thead-all"><tr><th class="col-num">Rang</th><th>Région</th><th class="col-num">Code dépt</th><th class="col-num">Code postal</th><th>Commune</th></tr></thead>
-                <tbody id="comparaison-tbody-all"></tbody>
-              </table>
+        <div class="comparaison-results-view">
+          <div class="comparaison-view-tabs" role="tablist" aria-label="Affichage des résultats">
+            <button type="button" class="comparaison-tab is-active" role="tab" id="comparaison-tab-tables" aria-selected="true" aria-controls="comparaison-panel-tables">Affichage tableaux</button>
+            <button type="button" class="comparaison-tab" role="tab" id="comparaison-tab-maps" aria-selected="false" aria-controls="comparaison-panel-maps">Affichage cartes</button>
+          </div>
+          <div id="comparaison-panel-tables" role="tabpanel" aria-labelledby="comparaison-tab-tables" class="comparaison-panel">
+            <div class="comparaison-tables-wrap">
+              <div id="comparaison-empty">Ajoutez au moins une commune à la liste ci‑dessus (recherche ou sélecteur), choisissez les indicateurs et cliquez sur Comparer.</div>
+              <div id="comparaison-loading" aria-hidden="true"><span class="comparaison-spinner" aria-hidden="true"></span> Chargement…</div>
+              <div id="comparaison-error" role="alert" hidden></div>
+              <div id="comparaison-tables-dynamic" class="comparaison-tables-dynamic" aria-live="polite"></div>
             </div>
           </div>
-          <div class="comparaison-table-block" id="comparaison-block-maisons" aria-hidden="true">
-            <h3 class="comparaison-table-title">Indicateurs pour les maisons</h3>
-            <div class="comparaison-table-wrap">
-              <table class="comparaison-table" id="comparaison-table-maisons">
-                <thead id="comparaison-thead-maisons"><tr><th class="col-num">Rang</th><th>Région</th><th class="col-num">Code dépt</th><th class="col-num">Code postal</th><th>Commune</th></tr></thead>
-                <tbody id="comparaison-tbody-maisons"></tbody>
-              </table>
-            </div>
-          </div>
-          <div class="comparaison-table-block" id="comparaison-block-appts" aria-hidden="true">
-            <h3 class="comparaison-table-title">Indicateurs pour les appartements</h3>
-            <div class="comparaison-table-wrap">
-              <table class="comparaison-table" id="comparaison-table-appts">
-                <thead id="comparaison-thead-appts"><tr><th class="col-num">Rang</th><th>Région</th><th class="col-num">Code dépt</th><th class="col-num">Code postal</th><th>Commune</th></tr></thead>
-                <tbody id="comparaison-tbody-appts"></tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
+          <div id="comparaison-panel-maps" role="tabpanel" aria-labelledby="comparaison-tab-maps" class="comparaison-panel" hidden>
         <section class="comparaison-map-wrap" id="comparaison-map-wrap" aria-hidden="true">
-          <h3 class="comparaison-map-title">Carte de France — score sélectionné</h3>
-          <div id="comparaison-score-map-single"></div>
+          <h3 class="comparaison-map-title" id="comparaison-map-main-title">Cartes — indicateur principal</h3>
+          <div id="comparaison-maps-zone" class="comparaison-maps-zone"></div>
+          <div id="comparaison-score-map-single" style="display: none;"></div>
           <div id="comparaison-communes-maps-grid" hidden></div>
           <div id="comparaison-map-status"></div>
           <div id="comparaison-map-legend" hidden>
@@ -403,6 +610,8 @@
             </div>
           </div>
         </section>
+          </div>
+        </div>
       </main>
     </div>
 
@@ -443,6 +652,10 @@
           return labels[key] || key;
         }
 
+        function makeFilterKey(typeLogt, typeSurf, nbPieces) {
+          return String(typeLogt || "") + FILTER_KEY_SEP + String(typeSurf || "") + FILTER_KEY_SEP + String(nbPieces || "");
+        }
+
         var CATEGORY_INDICATORS = { rentabilite: ["renta_brute", "renta_nette"], taxes: ["taux_tfb", "taux_teom"] };
         var CATEGORY_LABELS = { rentabilite: "Rentabilité", taxes: "Taxes" };
         var TABLE_BLOCKS = [
@@ -450,17 +663,365 @@
           { id: "maisons", keyMap: { renta_brute: "renta_brute_maisons", renta_nette: "renta_nette_maisons", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
           { id: "appts", keyMap: { renta_brute: "renta_brute_appts", renta_nette: "renta_nette_appts", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } }
         ];
+
+        /** Colonnes API / indicateurs_communes pour les codes ref_type_logts (hors surface/pièces). */
+        function rentaKeyPairForTypeLogt(typeCode) {
+          var u = String(typeCode || "TOUS").toUpperCase();
+          if (u === "PARKING") return { rb: "renta_brute_parking", rn: "renta_nette_parking" };
+          if (u === "LOCAL_INDUS") return { rb: "renta_brute_local_indus", rn: "renta_nette_local_indus" };
+          if (u === "TERRAIN") return { rb: "renta_brute_terrain", rn: "renta_nette_terrain" };
+          if (u === "IMMEUBLE") return { rb: "renta_brute_immeuble", rn: "renta_nette_immeuble" };
+          return null;
+        }
+
+        function isRentabiliteTypeSupported(typeCode) {
+          var u = String(typeCode || "TOUS").toUpperCase();
+          if (!u || u === "TOUS") return true;
+          if (u === "MAISON" || u === "APPART") return true;
+          return rentaKeyPairForTypeLogt(u) != null;
+        }
+
+        /** Clé d’indicateur absente du payload API : affichage « — », pas de repli sur l’agrégat global. */
+        var RENTA_UNAVAILABLE_KEY = "__indicateur_non_calcule__";
+
+        function getTableKeyMapForTypeCode(typeCode, cat, typeSurf, nbPieces) {
+          if (cat !== "rentabilite") return TABLE_BLOCKS[0].keyMap;
+          var surf = String(typeSurf || "TOUTES").toUpperCase();
+          var pie = String(nbPieces || "TOUS").toUpperCase();
+          var hasSurf = surf !== "TOUTES" && surf !== "" && /^S[1-5]$/.test(surf);
+          var hasPie = pie !== "TOUS" && pie !== "" && /^T[1-5]$/.test(pie);
+          if (hasSurf || hasPie) {
+            return {
+              renta_brute: resolveFullRentabiliteScoreKey("renta_brute", typeCode, typeSurf, nbPieces, cat),
+              renta_nette: resolveFullRentabiliteScoreKey("renta_nette", typeCode, typeSurf, nbPieces, cat),
+              taux_tfb: "taux_tfb",
+              taux_teom: "taux_teom"
+            };
+          }
+          var rp = rentaKeyPairForTypeLogt(typeCode);
+          if (rp) {
+            return {
+              renta_brute: rp.rb,
+              renta_nette: rp.rn,
+              taux_tfb: "taux_tfb",
+              taux_teom: "taux_teom"
+            };
+          }
+          if (!isRentabiliteTypeSupported(typeCode)) {
+            return {
+              renta_brute: RENTA_UNAVAILABLE_KEY,
+              renta_nette: RENTA_UNAVAILABLE_KEY,
+              taux_tfb: "taux_tfb",
+              taux_teom: "taux_teom"
+            };
+          }
+          var u = String(typeCode || "TOUS").toUpperCase();
+          if (u === "MAISON") return TABLE_BLOCKS[1].keyMap;
+          if (u === "APPART") return TABLE_BLOCKS[2].keyMap;
+          return TABLE_BLOCKS[0].keyMap;
+        }
+
+        function mergeRowsForBounds(rowsByFilterKey, jobs) {
+          var seen = new Set();
+          var out = [];
+          (jobs || []).forEach(function (job) {
+            (rowsByFilterKey[job.filterKey] || []).forEach(function (r) {
+              var mode = getDisplayModeFromRows([r]);
+              var key =
+                mode === "regions"
+                  ? "r:" + String(r.code_region || "")
+                  : mode === "departements"
+                  ? "d:" + String(r.code_dept || "")
+                  : "c:" +
+                    String(r.code_dept || "") +
+                    "|" +
+                    String(r.code_postal || "") +
+                    "|" +
+                    normalizeNameCanonical(r.commune || r.nom_commune || "");
+              if (seen.has(key)) return;
+              seen.add(key);
+              out.push(r);
+            });
+          });
+          return out;
+        }
+        var FILTER_KEY_SEP = "\u0001";
+        var ALL_REGIONS_SPECIAL = "__ALL_REGIONS__";
+        var ALL_DEPTS_SPECIAL = "__ALL_DEPTS__";
+        var lastExclusiveTousClick = { type: null, surf: null, pieces: null, regionDept: null, regionOnly: null, dept: null };
+
+        function getSelectedValuesFromMulti(selectId) {
+          var sel = document.getElementById(selectId);
+          if (!sel) return [];
+          return Array.from(sel.selectedOptions).map(function (o) {
+            return o.value;
+          });
+        }
+
+        function setOnlySelected(selectId, value) {
+          var sel = document.getElementById(selectId);
+          if (!sel) return;
+          Array.from(sel.options).forEach(function (o) {
+            o.selected = o.value === value;
+          });
+        }
+
+        function bindExclusiveTousMulti(selectId, tousCode, lastKey) {
+          var sel = document.getElementById(selectId);
+          if (!sel || !sel.multiple) return;
+          sel.addEventListener("mousedown", function (e) {
+            var t = e.target;
+            if (t && t.tagName === "OPTION") lastExclusiveTousClick[lastKey] = t.value;
+          });
+          sel.addEventListener("change", function () {
+            var vals = getSelectedValuesFromMulti(selectId);
+            var hasT = vals.indexOf(tousCode) !== -1;
+            if (!hasT || vals.length <= 1) return;
+            var last = lastExclusiveTousClick[lastKey];
+            if (last === tousCode) {
+              setOnlySelected(selectId, tousCode);
+            } else {
+              Array.from(sel.options).forEach(function (o) {
+                if (o.value === tousCode) o.selected = false;
+              });
+            }
+          });
+        }
+
+        function bindExclusiveAllRegions(selectId, lastKey) {
+          var sel = document.getElementById(selectId);
+          if (!sel || !sel.multiple) return;
+          sel.addEventListener("mousedown", function (e) {
+            var t = e.target;
+            if (t && t.tagName === "OPTION") lastExclusiveTousClick[lastKey] = t.value;
+          });
+          sel.addEventListener("change", function () {
+            var vals = getSelectedValuesFromMulti(selectId);
+            var hasA = vals.indexOf(ALL_REGIONS_SPECIAL) !== -1;
+            if (!hasA || vals.length <= 1) return;
+            var last = lastExclusiveTousClick[lastKey];
+            if (last === ALL_REGIONS_SPECIAL) {
+              setOnlySelected(selectId, ALL_REGIONS_SPECIAL);
+            } else {
+              Array.from(sel.options).forEach(function (o) {
+                if (o.value === ALL_REGIONS_SPECIAL) o.selected = false;
+              });
+            }
+          });
+        }
+
+        function bindExclusiveAllDepts() {
+          var sel = document.getElementById("comparaison-dept-select");
+          if (!sel || !sel.multiple) return;
+          sel.addEventListener("mousedown", function (e) {
+            var t = e.target;
+            if (t && t.tagName === "OPTION") lastExclusiveTousClick.dept = t.value;
+          });
+          sel.addEventListener("change", function () {
+            var vals = getSelectedValuesFromMulti("comparaison-dept-select");
+            var hasA = vals.indexOf(ALL_DEPTS_SPECIAL) !== -1;
+            if (!hasA || vals.length <= 1) return;
+            var last = lastExclusiveTousClick.dept;
+            if (last === ALL_DEPTS_SPECIAL) {
+              setOnlySelected("comparaison-dept-select", ALL_DEPTS_SPECIAL);
+            } else {
+              Array.from(sel.options).forEach(function (o) {
+                if (o.value === ALL_DEPTS_SPECIAL) o.selected = false;
+              });
+            }
+          });
+        }
+
+        function getMultiSelectEffectiveSingle(selectId, defaultCode, tousCode) {
+          var vals = getSelectedValuesFromMulti(selectId);
+          if (vals.length === 0) return defaultCode;
+          if (vals.length === 1) return vals[0];
+          if (vals.indexOf(tousCode) !== -1) return tousCode;
+          return vals[0];
+        }
+
+        function shouldShowSurfPiecesSelectors() {
+          var vals = getSelectedValuesFromMulti("comparaison-type-logt").map(function (v) {
+            return String(v || "").toUpperCase();
+          });
+          if (vals.length === 0) return true;
+          if (vals.indexOf("TOUS") !== -1) return true;
+          return vals.indexOf("MAISON") !== -1 || vals.indexOf("APPART") !== -1;
+        }
+
+        function updateSurfPiecesVisibility() {
+          var show = shouldShowSurfPiecesSelectors();
+          var surfCol = document.getElementById("comparaison-surf-col");
+          var pieCol = document.getElementById("comparaison-pieces-col");
+          if (surfCol) surfCol.style.display = show ? "" : "none";
+          if (pieCol) pieCol.style.display = show ? "" : "none";
+          if (!show) {
+            var sSurf = document.getElementById("comparaison-surf");
+            var sPie = document.getElementById("comparaison-pieces");
+            if (sSurf) setOnlySelected("comparaison-surf", "TOUTES");
+            if (sPie) setOnlySelected("comparaison-pieces", "TOUS");
+          }
+        }
+
+        function hasGeographicSelection() {
+          var mode = getComparaisonMode();
+          if (mode === "communes") return selectedCommunes.length > 0;
+          if (mode === "departements") return getSelectedDeptCodes().length > 0;
+          if (mode === "regions") return getSelectedRegionIdsForRegionsMode().length > 0;
+          return false;
+        }
+
+        function updateComparaisonCriteriaBlockVisibility() {
+          var block = document.getElementById("comparaison-criteria-block");
+          if (!block) return;
+          if (hasGeographicSelection()) {
+            block.removeAttribute("hidden");
+          } else {
+            block.setAttribute("hidden", "hidden");
+          }
+        }
+
+        function validateComparaisonRefCriteria() {
+          var block = document.getElementById("comparaison-criteria-block");
+          if (!block || block.hasAttribute("hidden")) return null;
+          var types = getSelectedValuesFromMulti("comparaison-type-logt");
+          if (types.length === 0) {
+            return "Sélectionnez au moins une valeur pour le critère « Type de local ».";
+          }
+          if (shouldShowSurfPiecesSelectors()) {
+            var s = getSelectedValuesFromMulti("comparaison-surf");
+            var p = getSelectedValuesFromMulti("comparaison-pieces");
+            if (s.length === 0) return "Sélectionnez au moins une valeur pour le critère « Surface ».";
+            if (p.length === 0) return "Sélectionnez au moins une valeur pour le critère « Nombre de pièces ».";
+          }
+          return null;
+        }
+
+        function setMapTabVisible(show) {
+          var tabMaps = document.getElementById("comparaison-tab-maps");
+          var tabTables = document.getElementById("comparaison-tab-tables");
+          var panelTables = document.getElementById("comparaison-panel-tables");
+          var panelMaps = document.getElementById("comparaison-panel-maps");
+          if (!tabMaps) return;
+          tabMaps.hidden = !show;
+          if (!show && tabMaps.classList.contains("is-active") && tabTables && panelTables && panelMaps) {
+            tabTables.classList.add("is-active");
+            tabMaps.classList.remove("is-active");
+            tabTables.setAttribute("aria-selected", "true");
+            tabMaps.setAttribute("aria-selected", "false");
+            panelTables.hidden = false;
+            panelMaps.hidden = true;
+          }
+        }
+
+        function computeTableIndicatorsForJob(job, cat, displayIndicators) {
+          var fkParts = (job.filterKey || "").split(FILTER_KEY_SEP);
+          var keyMap = getTableKeyMapForTypeCode(job.typeCodeForColumns, cat, fkParts[1], fkParts[2]);
+          var tableIndicators = [];
+          displayIndicators.forEach(function (ind) {
+            var tableKey = keyMap[ind.key];
+            if (tableKey != null) {
+              tableIndicators.push({ key: tableKey, label: getScoreLabel(ind.key) });
+            }
+          });
+          if (tableIndicators.length === 0 && displayIndicators.length > 0) {
+            var k0 = displayIndicators[0].key;
+            var tk0 = keyMap[k0] != null ? keyMap[k0] : k0;
+            tableIndicators = [{ key: tk0, label: getScoreLabel(k0) }];
+          }
+          return tableIndicators;
+        }
+
+        function rowHasNumericIndicator(row, tableIndicators) {
+          for (var i = 0; i < tableIndicators.length; i++) {
+            var k = tableIndicators[i].key;
+            if (k === RENTA_UNAVAILABLE_KEY) continue;
+            var v = row[k];
+            if (v != null && v !== "" && Number.isFinite(Number(v))) return true;
+          }
+          return false;
+        }
+
+        function jobHasDisplayableData(rows, job, cat, displayIndicators) {
+          if (!rows || !rows.length) return false;
+          var tableIndicators = computeTableIndicatorsForJob(job, cat, displayIndicators);
+          if (!tableIndicators.length) return false;
+          return rows.some(function (r) {
+            return rowHasNumericIndicator(r, tableIndicators);
+          });
+        }
+
+        /**
+         * Score numérique pour cartes : ignorer null et chaîne vide explicitement.
+         * En JavaScript, Number(null) === 0 : sans ce garde-fou, une donnée absente est traitée comme 0 et les cartes
+         * (ex. Terrains / Parkings) restent affichées alors qu’aucune commune n’a de valeur pour cette colonne.
+         */
+        function numericScoreFromRow(r, key) {
+          if (!key || key === RENTA_UNAVAILABLE_KEY) return NaN;
+          var raw = r[key];
+          if (raw == null || raw === "") return NaN;
+          var v = Number(raw);
+          return Number.isFinite(v) ? v : NaN;
+        }
+
+        /** Une carte n’est rendue que si au moins une ligne a une valeur finie pour la colonne score de ce job (vérifié par carte, pas globalement). */
+        function jobHasMapDisplayableData(rows, job) {
+          if (!job || !job.scoreKey) return false;
+          if (job.scoreKey === RENTA_UNAVAILABLE_KEY) return false;
+          rows = rows || [];
+          return rows.some(function (r) {
+            return Number.isFinite(numericScoreFromRow(r, job.scoreKey));
+          });
+        }
+
+        function filterJobsForMapRendering(jobs, rowsByFilterKey) {
+          return (jobs || []).filter(function (j) {
+            return jobHasMapDisplayableData(rowsByFilterKey[j.filterKey] || [], j);
+          });
+        }
+
         var lastComparaisonRows = [];
+        var lastComparaisonJobs = [];
+        var lastRowsByFilterKey = {};
         var lastTableConfigs = [];
-        var sortByTable = { all: { key: null, desc: true }, maisons: { key: null, desc: true }, appts: { key: null, desc: true } };
+        var sortByTable = {};
         var mapViz = {
           map: null,
           layer: null,
           mode: null,
           communeMaps: [],
-          geoCache: { departements: null, regions: null, communesAll: null }
+          multiChoroMaps: [],
+          geoCache: { departements: null, regions: null, communesAll: null },
+          mapSyncIgnore: false
         };
+        var refData = { type_logts: [], type_surf: [], nb_pieces: [] };
+        var REF_TYPE_LOGTS_FALLBACK = [
+          { code: "TOUS", libelle: "Tous" },
+          { code: "MAISON", libelle: "Maisons" },
+          { code: "APPART", libelle: "Appartements" },
+          { code: "LOCAL_INDUS", libelle: "Locaux indus. / comm." },
+          { code: "PARKING", libelle: "Parkings / garages" },
+          { code: "TERRAIN", libelle: "Terrains" },
+          { code: "IMMEUBLE", libelle: "Immeubles" }
+        ];
+        var REF_TYPE_SURF_FALLBACK = [
+          { code: "TOUTES", libelle: "Toutes" },
+          { code: "S1", libelle: "Tranche S1" },
+          { code: "S2", libelle: "Tranche S2" },
+          { code: "S3", libelle: "Tranche S3" },
+          { code: "S4", libelle: "Tranche S4" },
+          { code: "S5", libelle: "Tranche S5" }
+        ];
+        var REF_NB_PIECES_FALLBACK = [
+          { code: "TOUS", libelle: "Tous" },
+          { code: "T1", libelle: "1 pièce (T1)" },
+          { code: "T2", libelle: "2 pièces (T2)" },
+          { code: "T3", libelle: "3 pièces (T3)" },
+          { code: "T4", libelle: "4 pièces (T4)" },
+          { code: "T5", libelle: "5 pièces et + (T5)" }
+        ];
         var communeMapSeq = 0;
+        var choroMapSeq = 0;
         var GEOJSON_URLS = {
           departements: "data/carto/departements-version-simplifiee.geojson",
           regions: "data/carto/regions-version-simplifiee.geojson",
@@ -497,9 +1058,15 @@
           r.sort(function (a, b) {
             var va = a[key];
             var vb = b[key];
-            var na = va == null || va === "" ? -Infinity : Number(va);
-            var nb = vb == null || vb === "" ? -Infinity : Number(vb);
-            if (na !== nb) return desc ? (nb - na) : (na - nb);
+            var na =
+              va == null || va === "" || !Number.isFinite(Number(va)) ? null : Number(va);
+            var nb =
+              vb == null || vb === "" || !Number.isFinite(Number(vb)) ? null : Number(vb);
+            /* Valeurs manquantes toujours en fin de tableau (pas de repli sur -Infinity). */
+            if (na === null && nb === null) return 0;
+            if (na === null) return 1;
+            if (nb === null) return -1;
+            if (na !== nb) return desc ? nb - na : na - nb;
             return 0;
           });
           return r;
@@ -521,7 +1088,8 @@
             var region = row.region || row.reg_nom || "—";
             var cells = indicators.map(function (ind) {
               var v = row[ind.key];
-              var s = v != null ? formatPct(v) : "—";
+              var hasNum = v != null && v !== "" && Number.isFinite(Number(v));
+              var s = hasNum ? formatPct(Number(v)) : "—";
               return "<td class=\"col-num\">" + s + "</td>";
             });
             if (displayMode === "departements") {
@@ -551,6 +1119,7 @@
             if (!key) return;
             th.onclick = function () {
               var st = sortByTable[blockId];
+              if (!st) return;
               if (st.key === key) st.desc = !st.desc; else { st.key = key; st.desc = true; }
               theadEl.querySelectorAll("th.sortable .sort-icon").forEach(function (span) {
                 span.textContent = "";
@@ -562,6 +1131,119 @@
               }
               renderTableBody(tbodyEl, rows, indicators, st.key, st.desc);
             };
+          });
+        }
+
+        function uniqueFilterKeysFromJobs(jobs) {
+          var seen = new Set();
+          var out = [];
+          (jobs || []).forEach(function (j) {
+            var fk = j.filterKey;
+            if (!fk || seen.has(fk)) return;
+            seen.add(fk);
+            out.push(fk);
+          });
+          return out;
+        }
+
+        function fetchComparaisonScoresBatch(baseParams, uniqueKeys, scorePrincipal, cat) {
+          if (!uniqueKeys.length) return Promise.resolve({});
+          return Promise.all(
+            uniqueKeys.map(function (fk) {
+              var parts = fk.split(FILTER_KEY_SEP);
+              var p = new URLSearchParams(baseParams.toString());
+              p.set("type_logt", parts[0] != null ? parts[0] : "");
+              p.set("type_surf", parts[1] != null ? parts[1] : "");
+              p.set("nb_pieces", parts[2] != null ? parts[2] : "");
+              var sk = resolveFullRentabiliteScoreKey(scorePrincipal, parts[0], parts[1], parts[2], cat);
+              p.set("score_principal", sk);
+              return fetch(API_BASE + "/api/comparaison_scores?" + p.toString())
+                .then(function (r) {
+                  if (!r.ok) {
+                    throw new Error(
+                      r.status === 404 ? "Endpoint /api/comparaison_scores non encore implémenté." : "Erreur " + r.status
+                    );
+                  }
+                  return r.json();
+                })
+                .then(function (data) {
+                  return { fk: fk, rows: data.rows || data.lignes || data.communes || [] };
+                });
+            })
+          ).then(function (pairs) {
+            var out = {};
+            pairs.forEach(function (x) {
+              out[x.fk] = x.rows;
+            });
+            return out;
+          });
+        }
+
+        function renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat, displayIndicators, theadPrefix) {
+          var dyn = document.getElementById("comparaison-tables-dynamic");
+          if (!dyn) return;
+          dyn.innerHTML = "";
+          sortByTable = {};
+
+          jobs.forEach(function (job, idx) {
+            var rows = rowsByFilterKey[job.filterKey] || [];
+            var jobId = "comparaison-job-" + idx;
+            sortByTable[jobId] = { key: null, desc: true };
+
+            var tableIndicators = computeTableIndicatorsForJob(job, cat, displayIndicators);
+            if (tableIndicators.length === 0) return;
+            if (!jobHasDisplayableData(rows, job, cat, displayIndicators)) return;
+            sortByTable[jobId].key = tableIndicators[0].key;
+
+            var theadRow = theadPrefix;
+            tableIndicators.forEach(function (ind, i) {
+              var label = escapeHtml(ind.label);
+              var dir = i === 0 ? " ▼" : "";
+              theadRow +=
+                '<th class="col-num sortable" data-sort="' +
+                escapeHtml(ind.key) +
+                '" data-label="' +
+                label.replace(/"/g, "&quot;") +
+                '">' +
+                label +
+                '<span class="sort-icon">' +
+                dir +
+                "</span></th>";
+            });
+            theadRow += "</tr>";
+
+            var titleHtml =
+              "<strong>" + escapeHtml(job.groupTitle) + "</strong> — " + escapeHtml(job.cardTitle);
+            var crit = job.criteriaLine
+              ? '<p class="comparaison-table-criteria">' + escapeHtml(job.criteriaLine) + "</p>"
+              : "";
+
+            var section = document.createElement("section");
+            section.className = "comparaison-table-block";
+            section.id = jobId;
+            section.setAttribute("aria-hidden", "false");
+            section.innerHTML =
+              '<h3 class="comparaison-table-title">' +
+              titleHtml +
+              "</h3>" +
+              crit +
+              '<div class="comparaison-table-wrap"><table class="comparaison-table" id="' +
+              jobId +
+              '-table"><thead id="' +
+              jobId +
+              '-thead">' +
+              theadRow +
+              '</thead><tbody id="' +
+              jobId +
+              '-tbody"></tbody></table></div>';
+
+            dyn.appendChild(section);
+
+            var tbodyEl = document.getElementById(jobId + "-tbody");
+            var theadEl = document.getElementById(jobId + "-thead");
+            var st = sortByTable[jobId];
+            renderTableBody(tbodyEl, rows, tableIndicators, st.key, st.desc, displayMode);
+            bindSortHandlers(jobId, theadEl, tbodyEl, rows, tableIndicators);
           });
         }
 
@@ -591,15 +1273,13 @@
             }
             emptyEl.style.display = "block";
           }
-          TABLE_BLOCKS.forEach(function (block) {
-            var blockEl = document.getElementById("comparaison-block-" + block.id);
-            var tbodyEl = document.getElementById("comparaison-tbody-" + block.id);
-            if (tbodyEl) tbodyEl.innerHTML = "";
-            if (blockEl) blockEl.setAttribute("aria-hidden", "true");
-          });
+          var dynClear = document.getElementById("comparaison-tables-dynamic");
+          if (dynClear) dynClear.innerHTML = "";
           lastComparaisonRows = [];
+          lastComparaisonJobs = [];
+          lastRowsByFilterKey = {};
           lastTableConfigs = [];
-          sortByTable = { all: { key: null, desc: true }, maisons: { key: null, desc: true }, appts: { key: null, desc: true } };
+          sortByTable = {};
           clearComparaisonMap();
         }
 
@@ -642,16 +1322,6 @@
           ignLayer.addTo(map);
         }
 
-        function ensureComparaisonMap() {
-          if (mapViz.map || typeof L === "undefined") return mapViz.map;
-          var mapEl = document.getElementById("comparaison-score-map-single");
-          if (!mapEl) return null;
-          mapViz.map = L.map("comparaison-score-map-single", { zoomControl: true, scrollWheelZoom: false, minZoom: 4, maxZoom: 11 });
-          attachPreferredBaseLayer(mapViz.map);
-          mapViz.map.setView([46.7, 2.5], 5);
-          return mapViz.map;
-        }
-
         function clearCommuneMaps() {
           if (Array.isArray(mapViz.communeMaps)) {
             mapViz.communeMaps.forEach(function (entry) {
@@ -668,20 +1338,38 @@
           }
         }
 
-        function clearComparaisonMap() {
-          var mapWrap = document.getElementById("comparaison-map-wrap");
-          var legend = document.getElementById("comparaison-map-legend");
-          var status = document.getElementById("comparaison-map-status");
+        function resetComparaisonMapVisuals() {
+          mapViz.mapSyncIgnore = false;
           var singleMap = document.getElementById("comparaison-score-map-single");
-          if (mapWrap) mapWrap.setAttribute("aria-hidden", "true");
-          if (legend) legend.hidden = true;
-          if (status) status.textContent = "";
+          var mapsZone = document.getElementById("comparaison-maps-zone");
           if (singleMap) singleMap.style.display = "none";
+          if (mapsZone) {
+            mapsZone.innerHTML = "";
+            mapsZone.style.display = "";
+          }
+          if (Array.isArray(mapViz.multiChoroMaps)) {
+            mapViz.multiChoroMaps.forEach(function (entry) {
+              if (entry && entry.map && typeof entry.map.remove === "function") {
+                try { entry.map.remove(); } catch (e) {}
+              }
+            });
+          }
+          mapViz.multiChoroMaps = [];
           if (mapViz.layer && mapViz.map) {
             mapViz.map.removeLayer(mapViz.layer);
             mapViz.layer = null;
           }
           clearCommuneMaps();
+        }
+
+        function clearComparaisonMap() {
+          var mapWrap = document.getElementById("comparaison-map-wrap");
+          var legend = document.getElementById("comparaison-map-legend");
+          var status = document.getElementById("comparaison-map-status");
+          if (mapWrap) mapWrap.setAttribute("aria-hidden", "true");
+          if (legend) legend.hidden = true;
+          if (status) status.textContent = "";
+          resetComparaisonMapVisuals();
           mapViz.mode = null;
         }
 
@@ -749,6 +1437,82 @@
           return "#1e3a8a";
         }
 
+        function boundsForChoroplethSelection(geojson, mapMode, rows) {
+          if (!geojson || !Array.isArray(geojson.features) || typeof L === "undefined") return null;
+          var codes = new Set();
+          rows.forEach(function (r) {
+            var code = mapMode === "regions" ? String(r.code_region || "").trim() : String(r.code_dept || "").trim();
+            if (code) codes.add(code);
+          });
+          if (codes.size === 0) return null;
+          var b = L.latLngBounds([]);
+          var ok = false;
+          geojson.features.forEach(function (feature) {
+            var code = getFeatureCode((feature && feature.properties) || {}, mapMode);
+            if (!codes.has(code)) return;
+            try {
+              var fb = L.geoJSON(feature).getBounds();
+              if (fb && fb.isValid && fb.isValid()) {
+                b.extend(fb);
+                ok = true;
+              }
+            } catch (e) {}
+          });
+          return ok && b.isValid() ? b : null;
+        }
+
+        function applySameBoundsToMaps(maps, bounds, options) {
+          if (!maps || !maps.length || typeof L === "undefined") return false;
+          if (!bounds || typeof bounds.isValid !== "function" || !bounds.isValid()) return false;
+          mapViz.mapSyncIgnore = true;
+          var opts = options || { padding: [12, 12], maxZoom: 11 };
+          maps.forEach(function (m) {
+            try {
+              m.fitBounds(bounds, opts);
+            } catch (e) {}
+          });
+          mapViz.mapSyncIgnore = false;
+          return true;
+        }
+
+        function bindLinkedLeafletMaps(maps) {
+          if (!maps || maps.length < 2 || typeof L === "undefined") return;
+          maps.forEach(function (m) {
+            function syncOthers() {
+              if (mapViz.mapSyncIgnore) return;
+              mapViz.mapSyncIgnore = true;
+              var center = m.getCenter();
+              var zoom = m.getZoom();
+              maps.forEach(function (other) {
+                if (other === m) return;
+                try {
+                  var oc = other.getCenter();
+                  var oz = other.getZoom();
+                  if (
+                    Math.abs(oc.lat - center.lat) > 1e-7 ||
+                    Math.abs(oc.lng - center.lng) > 1e-7 ||
+                    Math.abs(oz - zoom) > 0.001
+                  ) {
+                    other.setView(center, zoom, { animate: false });
+                  }
+                } catch (e2) {}
+              });
+              mapViz.mapSyncIgnore = false;
+            }
+            m.on("moveend", syncOthers);
+            m.on("zoomend", syncOthers);
+          });
+        }
+
+        function invalidateMapsSoon(maps, delayMs) {
+          var d = delayMs == null ? 100 : delayMs;
+          setTimeout(function () {
+            (maps || []).forEach(function (m) {
+              if (m && typeof m.invalidateSize === "function") m.invalidateSize();
+            });
+          }, d);
+        }
+
         function ensureGeoJson(mode) {
           if (mode !== "regions" && mode !== "departements") return Promise.resolve(null);
           if (mapViz.geoCache[mode]) return Promise.resolve(mapViz.geoCache[mode]);
@@ -761,69 +1525,306 @@
           });
         }
 
-        function renderStandardChoropleth(rows, displayMode, scoreKey, min, max) {
-          var status = document.getElementById("comparaison-map-status");
-          var singleMap = document.getElementById("comparaison-score-map-single");
-          var grid = document.getElementById("comparaison-communes-maps-grid");
-          if (singleMap) singleMap.style.display = "";
-          if (grid) grid.hidden = true;
-          clearCommuneMaps();
-          var mapMode = displayMode;
-          ensureGeoJson(mapMode)
-            .then(function (geojson) {
-              var map = ensureComparaisonMap();
-              if (!map || !geojson) throw new Error("Librairie cartographique indisponible.");
-              if (mapViz.layer) {
-                map.removeLayer(mapViz.layer);
-                mapViz.layer = null;
-              }
-              var valueByCode = {};
-              rows.forEach(function (r) {
-                var code = mapMode === "regions" ? (r.code_region || "") : (r.code_dept || "");
-                var val = Number(r[scoreKey]);
-                if (!code || !Number.isFinite(val)) return;
-                valueByCode[String(code).trim()] = val;
-              });
-              mapViz.layer = L.geoJSON(geojson, {
-                style: function (feature) {
-                  var code = getFeatureCode((feature && feature.properties) || {}, mapMode);
-                  var value = valueByCode[code];
-                  var active = Number.isFinite(value);
-                  return {
-                    color: active ? "#334155" : "#cbd5e1",
-                    weight: active ? 1.1 : 0.7,
-                    fillColor: scoreColor(value, min, max),
-                    fillOpacity: active ? 0.43 : 0.11
-                  };
-                },
-                onEachFeature: function (feature, layer) {
-                  var props = (feature && feature.properties) || {};
-                  var code = getFeatureCode(props, mapMode);
-                  var name = getFeatureName(props, mapMode) || code || "Zone";
-                  var value = valueByCode[code];
-                  var content = "<strong>" + escapeHtml(name) + "</strong>";
-                  if (code) content += " (" + escapeHtml(code) + ")";
-                  content += "<br/>" + escapeHtml(getScoreLabel(scoreKey)) + " : " + (Number.isFinite(value) ? escapeHtml(formatLegendValue(value)) : "—");
-                  layer.bindTooltip(content, { sticky: true });
-                }
-              }).addTo(map);
-              mapViz.mode = mapMode;
-              setTimeout(function () {
-                if (map && typeof map.invalidateSize === "function") map.invalidateSize();
-              }, 0);
-              try {
-                map.fitBounds(mapViz.layer.getBounds(), { padding: [12, 12] });
-              } catch (e) {
-                map.setView([46.7, 2.5], 5);
-              }
-              if (status) status.textContent = "Carte par " + (displayMode === "regions" ? "région" : "département") + " selon l'indicateur principal.";
-            })
-            .catch(function (err) {
-              if (status) status.textContent = (err && err.message) ? err.message : "Impossible de charger la carte.";
-            });
+        function refLibelle(arr, code) {
+          var row = (arr || []).find(function (x) { return String(x.code) === String(code); });
+          return row ? row.libelle : code;
         }
 
-        function renderCommuneDeptMaps(rows, scoreKey, min, max) {
+        function resolveTypeScoreKey(scorePrincipal, typeCode, cat) {
+          if (cat !== "rentabilite") return scorePrincipal;
+          var t = String(typeCode || "TOUS").toUpperCase();
+          if (!t || t === "TOUS") return scorePrincipal;
+          if (t === "MAISON") {
+            if (scorePrincipal === "renta_brute") return "renta_brute_maisons";
+            if (scorePrincipal === "renta_nette") return "renta_nette_maisons";
+            return scorePrincipal;
+          }
+          if (t === "APPART") {
+            if (scorePrincipal === "renta_brute") return "renta_brute_appts";
+            if (scorePrincipal === "renta_nette") return "renta_nette_appts";
+            return scorePrincipal;
+          }
+          var rp = rentaKeyPairForTypeLogt(t);
+          if (rp) {
+            if (scorePrincipal === "renta_brute") return rp.rb;
+            if (scorePrincipal === "renta_nette") return rp.rn;
+            return scorePrincipal;
+          }
+          if (!isRentabiliteTypeSupported(typeCode)) return RENTA_UNAVAILABLE_KEY;
+          return scorePrincipal;
+        }
+
+        /**
+         * Colonne API pour rentabilité selon type + tranche surface (S1–S5) ou pièces (T1–T5).
+         * Priorité surface si les deux sont renseignés (aligné vf_communes / backend).
+         * Pas de repli sur l’agrégat sans tranche : clés dédiées ou indisponible.
+         */
+        function resolveFullRentabiliteScoreKey(scorePrincipal, typeLogt, typeSurf, nbPieces, cat) {
+          if (cat !== "rentabilite") return scorePrincipal;
+          var sp = String(scorePrincipal || "renta_nette");
+          var isBrute = sp.indexOf("renta_brute") === 0;
+          var pref = isBrute ? "renta_brute" : "renta_nette";
+          var t = String(typeLogt || "TOUS").toUpperCase();
+          var surf = String(typeSurf || "TOUTES").toUpperCase();
+          var pie = String(nbPieces || "TOUS").toUpperCase();
+          var hasSurf = surf !== "TOUTES" && surf !== "" && /^S[1-5]$/.test(surf);
+          var hasPie = pie !== "TOUS" && pie !== "" && /^T[1-5]$/.test(pie);
+          if (hasSurf) {
+            if (t === "MAISON") return pref + "_maisons_" + surf.toLowerCase();
+            if (t === "APPART") return pref + "_appts_" + surf.toLowerCase();
+            if (!t || t === "TOUS") return pref + "_agg_" + surf.toLowerCase();
+            /* Tranches S/T : uniquement maisons / appts / agrégat en base — pas de repli sur renta_* type DVF. */
+            return RENTA_UNAVAILABLE_KEY;
+          }
+          if (hasPie) {
+            if (t === "MAISON") return pref + "_maisons_" + pie.toLowerCase();
+            if (t === "APPART") return pref + "_appts_" + pie.toLowerCase();
+            if (!t || t === "TOUS") return pref + "_agg_" + pie.toLowerCase();
+            return RENTA_UNAVAILABLE_KEY;
+          }
+          return resolveTypeScoreKey(scorePrincipal, typeLogt, cat);
+        }
+
+        /** Granularité « détaillée » pour un critère (type / surface / pièces), indépendamment des autres. */
+        function granularityIsDetail(radioName) {
+          var el = document.querySelector('input[name="' + radioName + '"]:checked');
+          return el && el.value === "detail";
+        }
+
+        function buildMapJobs(scorePrincipal, cat) {
+          var showSurfPieces = shouldShowSurfPiecesSelectors();
+          var showType = granularityIsDetail("comparaison-granularity-type");
+          var showSurf = granularityIsDetail("comparaison-granularity-surf") && showSurfPieces;
+          var showPieces = granularityIsDetail("comparaison-granularity-pieces") && showSurfPieces;
+          var types = refData.type_logts.length ? refData.type_logts : REF_TYPE_LOGTS_FALLBACK;
+          var surfs = refData.type_surf.length ? refData.type_surf : REF_TYPE_SURF_FALLBACK;
+          var pieces = refData.nb_pieces.length ? refData.nb_pieces : REF_NB_PIECES_FALLBACK;
+          var selT = getMultiSelectEffectiveSingle("comparaison-type-logt", "TOUS", "TOUS");
+          var selS = getMultiSelectEffectiveSingle("comparaison-surf", "TOUTES", "TOUTES");
+          var selP = getMultiSelectEffectiveSingle("comparaison-pieces", "TOUS", "TOUS");
+          var jobs = [];
+
+          if (!showType && !showSurf && !showPieces) {
+            jobs.push({
+              groupTitle: "Vue synthétique",
+              cardTitle: refLibelle(types, selT) + " — " + refLibelle(surfs, selS) + " — " + refLibelle(pieces, selP),
+              scoreKey: resolveFullRentabiliteScoreKey(scorePrincipal, selT, selS, selP, cat),
+              footnote: null,
+              criteriaLine: "Type : " + refLibelle(types, selT) + " · Surface : " + refLibelle(surfs, selS) + " · Pièces : " + refLibelle(pieces, selP),
+              filterKey: makeFilterKey(selT, selS, selP),
+              typeCodeForColumns: selT
+            });
+            return jobs;
+          }
+
+          if (showType) {
+            types.forEach(function (t) {
+              jobs.push({
+                groupTitle: "Type de local",
+                cardTitle: t.libelle,
+                scoreKey: resolveFullRentabiliteScoreKey(scorePrincipal, t.code, selS, selP, cat),
+                footnote:
+                  cat === "rentabilite" && !isRentabiliteTypeSupported(t.code)
+                    ? "Rentabilité non calculée pour ce code de type (non référencé). Pas de repli sur l’agrégat « tous types »."
+                    : null,
+                criteriaLine: "Surface : " + refLibelle(surfs, selS) + " · Pièces : " + refLibelle(pieces, selP),
+                filterKey: makeFilterKey(t.code, selS, selP),
+                typeCodeForColumns: t.code
+              });
+            });
+          }
+          if (showSurf) {
+            surfs.forEach(function (s) {
+              jobs.push({
+                groupTitle: "Surface",
+                cardTitle: s.libelle,
+                scoreKey: resolveFullRentabiliteScoreKey(scorePrincipal, selT, s.code, selP, cat),
+                footnote:
+                  s.code !== "TOUTES" && cat === "rentabilite"
+                    ? "Indicateurs issus des colonnes tranche surface (vf_communes S1–S5), sans repli sur l’agrégat global."
+                    : null,
+                criteriaLine: "Type : " + refLibelle(types, selT) + " · Pièces : " + refLibelle(pieces, selP),
+                filterKey: makeFilterKey(selT, s.code, selP),
+                typeCodeForColumns: selT
+              });
+            });
+          }
+          if (showPieces) {
+            pieces.forEach(function (p) {
+              jobs.push({
+                groupTitle: "Nombre de pièces",
+                cardTitle: p.libelle,
+                scoreKey: resolveFullRentabiliteScoreKey(scorePrincipal, selT, selS, p.code, cat),
+                footnote:
+                  p.code !== "TOUS" && cat === "rentabilite"
+                    ? "Indicateurs issus des colonnes tranche pièces (vf_communes T1–T5), sans repli sur l’agrégat global."
+                    : null,
+                criteriaLine: "Type : " + refLibelle(types, selT) + " · Surface : " + refLibelle(surfs, selS),
+                filterKey: makeFilterKey(selT, selS, p.code),
+                typeCodeForColumns: selT
+              });
+            });
+          }
+          return jobs;
+        }
+
+        function renderChoroplethIntoDiv(divId, rows, displayMode, scoreKey, min, max) {
+          var mapMode = displayMode;
+          return ensureGeoJson(mapMode).then(function (geojson) {
+            if (typeof L === "undefined" || !geojson) throw new Error("Librairie cartographique indisponible.");
+            var map = L.map(divId, { zoomControl: true, scrollWheelZoom: false, minZoom: 4, maxZoom: 11 });
+            attachPreferredBaseLayer(map);
+            map.setView([46.7, 2.5], 5);
+            var codesInScope = new Set();
+            rows.forEach(function (r) {
+              var code = mapMode === "regions" ? String(r.code_region || "").trim() : String(r.code_dept || "").trim();
+              if (code) codesInScope.add(code);
+            });
+            var valueByCode = {};
+            rows.forEach(function (r) {
+              var code = mapMode === "regions" ? String(r.code_region || "").trim() : String(r.code_dept || "").trim();
+              var val = numericScoreFromRow(r, scoreKey);
+              if (!code || !Number.isFinite(val)) return;
+              valueByCode[code] = val;
+            });
+            if (codesInScope.size === 0 && Object.keys(valueByCode).length > 0) {
+              Object.keys(valueByCode).forEach(function (k) {
+                codesInScope.add(k);
+              });
+            }
+            var layer = L.geoJSON(geojson, {
+              style: function (feature) {
+                var code = getFeatureCode((feature && feature.properties) || {}, mapMode);
+                var inScope = codesInScope.size === 0 ? false : codesInScope.has(code);
+                var raw = valueByCode[code];
+                var value = inScope ? (Number.isFinite(raw) ? raw : null) : null;
+                var active = inScope;
+                return {
+                  color: active ? "#334155" : "#cbd5e1",
+                  weight: active ? 1.1 : 0.7,
+                  fillColor: value === null ? "#f1f5f9" : scoreColor(value, min, max),
+                  fillOpacity: active ? 0.43 : 0.11
+                };
+              },
+              onEachFeature: function (feature, lyr) {
+                var props = (feature && feature.properties) || {};
+                var code = getFeatureCode(props, mapMode);
+                var name = getFeatureName(props, mapMode) || code || "Zone";
+                var inScope = codesInScope.size === 0 ? false : codesInScope.has(code);
+                var raw = valueByCode[code];
+                var value = inScope ? (Number.isFinite(raw) ? raw : null) : null;
+                var content = "<strong>" + escapeHtml(name) + "</strong>";
+                if (code) content += " (" + escapeHtml(code) + ")";
+                content +=
+                  "<br/>" +
+                  escapeHtml(getScoreLabel(scoreKey)) +
+                  " : " +
+                  (value !== null ? escapeHtml(formatLegendValue(value)) : "—");
+                lyr.bindTooltip(content, { sticky: true });
+              }
+            }).addTo(map);
+            mapViz.multiChoroMaps.push({ map: map, layer: layer });
+          });
+        }
+
+        function aggregateCommuneScoresFromRows(deptRows) {
+          var buckets = {};
+          deptRows.forEach(function (x) {
+            if (!buckets[x.communeNorm]) {
+              buckets[x.communeNorm] = { name: x.communeRaw, scores: [] };
+            }
+            buckets[x.communeNorm].scores.push(x.score);
+          });
+          var out = {};
+          Object.keys(buckets).forEach(function (k) {
+            var arr = buckets[k].scores;
+            var finite = arr.filter(function (s) {
+              return s != null && Number.isFinite(Number(s));
+            });
+            var score =
+              finite.length > 0
+                ? finite.reduce(function (a, b) {
+                    return a + Number(b);
+                  }, 0) / finite.length
+                : null;
+            out[k] = { name: buckets[k].name, score: score };
+          });
+          return out;
+        }
+
+        /** Regroupe les lignes API par département pour une colonne score (type, tranche S/T, etc.). */
+        function partitionRowsByDeptForCommuneMaps(rows, scoreKey) {
+          var byDept = {};
+          (rows || []).forEach(function (r) {
+            var deptCode = String(r.code_dept || "").trim().toUpperCase();
+            var communeName = normalizeNameCanonical(r.commune || r.nom_commune || "");
+            if (!deptCode || !communeName) return;
+            var raw = r[scoreKey];
+            var num = raw != null && raw !== "" ? Number(raw) : NaN;
+            var score = Number.isFinite(num) ? num : null;
+            if (!byDept[deptCode]) byDept[deptCode] = [];
+            byDept[deptCode].push({
+              communeNorm: communeName,
+              communeRaw: r.commune || r.nom_commune || "",
+              score: score
+            });
+          });
+          selectedCommunes.forEach(function (c) {
+            var deptCode = String(c.code_dept || "").trim().toUpperCase();
+            var communeName = normalizeNameCanonical(c.commune || "");
+            if (!deptCode || !communeName) return;
+            if (!byDept[deptCode]) byDept[deptCode] = [];
+            var exists = byDept[deptCode].some(function (x) {
+              return x.communeNorm === communeName;
+            });
+            if (!exists) {
+              byDept[deptCode].push({ communeNorm: communeName, communeRaw: c.commune || "", score: null });
+            }
+          });
+          var deptEntries = Object.keys(byDept).map(function (code) {
+            return { code: code, rows: byDept[code] };
+          });
+          deptEntries.sort(function (a, b) {
+            if (b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
+            return a.code.localeCompare(b.code);
+          });
+          var limited = deptEntries.slice(0, 12);
+          return { byDept: byDept, limited: limited, deptEntriesTotal: deptEntries };
+        }
+
+        /**
+         * Cadrage initial par carte : Leaflet a besoin que le conteneur ait une taille réelle (surtout la 1ère carte).
+         * Chaque appel est indépendant (pas d’état partagé entre cartes).
+         */
+        function scheduleIndependentCommuneMapFit(map, layer, selBounds, fitOpts) {
+          function applyFit() {
+            try {
+              if (map && typeof map.invalidateSize === "function") {
+                map.invalidateSize({ animate: false });
+              }
+              if (selBounds && selBounds.isValid && selBounds.isValid()) {
+                map.fitBounds(selBounds, fitOpts);
+              } else if (layer && layer.getBounds && layer.getBounds().isValid()) {
+                map.fitBounds(layer.getBounds(), fitOpts);
+              }
+            } catch (e) {}
+          }
+          requestAnimationFrame(function () {
+            requestAnimationFrame(applyFit);
+          });
+          setTimeout(applyFit, 80);
+          setTimeout(applyFit, 200);
+          setTimeout(applyFit, 400);
+          setTimeout(applyFit, 650);
+        }
+
+        /**
+         * Cartes communales : une grille par critère (job) si type / surface / pièces décomposés.
+         * Même échelle min/max (légende) pour tous les panneaux.
+         * Cadrage : zoom/centrage **par carte** sur les communes sélectionnées **dans ce département** (pas de vue globale commune).
+         * Pas de liaison zoom/pan entre cartes (réservé aux modes départements / régions).
+         */
+        function renderCommuneDeptMapsMulti(jobs, rowsByFilterKey, min, max) {
           var status = document.getElementById("comparaison-map-status");
           var singleMap = document.getElementById("comparaison-score-map-single");
           var grid = document.getElementById("comparaison-communes-maps-grid");
@@ -836,112 +1837,157 @@
           clearCommuneMaps();
           grid.hidden = false;
 
-          var byDept = {};
-          rows.forEach(function (r) {
-            var deptCode = String(r.code_dept || "").trim().toUpperCase();
-            var communeName = normalizeNameCanonical(r.commune || r.nom_commune || "");
-            var score = Number(r[scoreKey]);
-            if (!deptCode || !communeName || !Number.isFinite(score)) return;
-            if (!byDept[deptCode]) byDept[deptCode] = [];
-            byDept[deptCode].push({ communeNorm: communeName, communeRaw: (r.commune || r.nom_commune || ""), score: score });
-          });
-          var deptEntries = Object.keys(byDept).map(function (code) {
-            return { code: code, rows: byDept[code] };
-          });
-          deptEntries.sort(function (a, b) {
-            if (b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
-            return a.code.localeCompare(b.code);
-          });
-          var limited = deptEntries.slice(0, 12);
+          if (!jobs || !jobs.length) {
+            if (status) status.textContent = "Aucun critère de carte.";
+            return;
+          }
+
+          var firstRows = rowsByFilterKey[jobs[0].filterKey] || [];
+          var firstPart = partitionRowsByDeptForCommuneMaps(firstRows, jobs[0].scoreKey);
+          var limited = firstPart.limited;
           if (!limited.length) {
             if (status) status.textContent = "Aucune commune exploitable pour la cartographie.";
             return;
           }
 
-          var renderPromises = limited.map(function (deptEntry) {
-            communeMapSeq += 1;
-            var mapId = "comparaison-commune-map-" + communeMapSeq;
-            var deptLabel = deptEntry.code + " " + (geo.deptNomByCode[deptEntry.code] || "");
-            var card = document.createElement("div");
-            card.className = "comparaison-commune-map-card";
-            card.innerHTML = "<h4>" + escapeHtml(deptLabel.trim()) + "</h4><div id=\"" + escapeHtml(mapId) + "\" class=\"comparaison-commune-map\"></div>";
-            grid.appendChild(card);
-
-            var valuesByCommune = {};
-            deptEntry.rows.forEach(function (x) {
-              if (!valuesByCommune[x.communeNorm]) valuesByCommune[x.communeNorm] = { total: 0, count: 0, name: x.communeRaw };
-              valuesByCommune[x.communeNorm].total += x.score;
-              valuesByCommune[x.communeNorm].count += 1;
-            });
-
-            return ensureCommunesGeoJsonAll().then(function (allGeoJson) {
-              var geojson = buildDeptGeoJsonFromAllCommunes(allGeoJson, deptEntry.code);
-              if (!geojson.features || !geojson.features.length) {
-                throw new Error("Aucun fond communal local trouvé pour le département " + deptEntry.code + ".");
-              }
+          ensureCommunesGeoJsonAll()
+            .then(function (allGeoJson) {
               if (typeof L === "undefined") throw new Error("Librairie cartographique indisponible.");
-              var selectedNames = Object.keys(valuesByCommune);
-              var selectedBounds = L.latLngBounds([]);
-              var hasSelectedBounds = false;
-              geojson.features.forEach(function (feature) {
-                var props = (feature && feature.properties) || {};
-                var n = normalizeNameCanonical(props.nom || props.name || "");
-                if (!valuesByCommune[n]) return;
-                try {
-                  var b = L.geoJSON(feature).getBounds();
-                  if (b && b.isValid && b.isValid()) {
-                    selectedBounds.extend(b);
-                    hasSelectedBounds = true;
-                  }
-                } catch (e) {}
-              });
-              var map = L.map(mapId, { zoomControl: true, scrollWheelZoom: false, minZoom: 7, maxZoom: 17 });
-              attachPreferredBaseLayer(map);
-              var layer = L.geoJSON(geojson, {
-                style: function (feature) {
-                  var props = (feature && feature.properties) || {};
-                  var n = normalizeNameCanonical(props.nom || props.name || "");
-                  var found = valuesByCommune[n];
-                  var score = found ? (found.total / Math.max(1, found.count)) : null;
-                  var active = Number.isFinite(score);
-                  return {
-                    color: active ? "#0f172a" : "#cbd5e1",
-                    weight: active ? 1.0 : 0.5,
-                    fillColor: scoreColor(score, min, max),
-                    fillOpacity: active ? 0.44 : 0.08
-                  };
-                },
-                onEachFeature: function (feature, layerEl) {
-                  var props = (feature && feature.properties) || {};
-                  var nom = props.nom || props.name || "Commune";
-                  var n = normalizeNameCanonical(nom);
-                  var found = valuesByCommune[n];
-                  var score = found ? (found.total / Math.max(1, found.count)) : null;
-                  var txt = "<strong>" + escapeHtml(nom) + "</strong><br/>" + escapeHtml(getScoreLabel(scoreKey)) + " : " + (Number.isFinite(score) ? escapeHtml(formatLegendValue(score)) : "hors sélection");
-                  layerEl.bindTooltip(txt, { sticky: true });
-                }
-              }).addTo(map);
-              mapViz.communeMaps.push({ map: map, layer: layer, mapId: mapId, deptCode: deptEntry.code });
-              setTimeout(function () {
-                if (map && typeof map.invalidateSize === "function") map.invalidateSize();
-              }, 0);
-              try {
-                if (hasSelectedBounds) {
-                  var isSingleCommune = selectedNames.length === 1;
-                  map.fitBounds(selectedBounds, { padding: [10, 10], maxZoom: isSingleCommune ? 17 : 15 });
-                } else {
-                  map.fitBounds(layer.getBounds(), { padding: [10, 10], maxZoom: 12 });
-                }
-              } catch (e) {
-                map.setView([46.7, 2.5], 8);
-              }
-            });
-          });
+              var allMaps = [];
+              var fitOpts = {
+                padding: [10, 10],
+                maxZoom: selectedCommunes.length === 1 ? 17 : 15
+              };
 
-          Promise.all(renderPromises)
-            .then(function () {
-              var msg = "Mode communes : zoom automatique sur les communes sélectionnées (max 12 départements).";
-              if (deptEntries.length > 12) msg += " Affichage limité aux 12 départements les plus représentés.";
+              jobs.forEach(function (job) {
+                var rowsJob = rowsByFilterKey[job.filterKey] || [];
+                var part = partitionRowsByDeptForCommuneMaps(rowsJob, job.scoreKey);
+                var scoreKey = job.scoreKey;
+
+                var jobWrap = document.createElement("div");
+                jobWrap.className = "comparaison-communes-maps-job";
+                if (jobs.length > 1) {
+                  var titleJob = document.createElement("h4");
+                  titleJob.className = "comparaison-communes-maps-job-title";
+                  titleJob.textContent = job.groupTitle + " — " + job.cardTitle;
+                  jobWrap.appendChild(titleJob);
+                  if (job.criteriaLine) {
+                    var critP = document.createElement("p");
+                    critP.className = "comparaison-table-criteria";
+                    critP.style.marginBottom = "0.5rem";
+                    critP.textContent = job.criteriaLine;
+                    jobWrap.appendChild(critP);
+                  }
+                }
+                var innerGrid = document.createElement("div");
+                innerGrid.className = "comparaison-communes-maps-grid-inner";
+                jobWrap.appendChild(innerGrid);
+                grid.appendChild(jobWrap);
+
+                limited.forEach(function (deptEntry) {
+                  var rowsForDept = part.byDept[deptEntry.code] || [];
+
+                  communeMapSeq += 1;
+                  var mapId = "comparaison-commune-map-" + communeMapSeq;
+                  var deptLabel = deptEntry.code + " " + (geo.deptNomByCode[deptEntry.code] || "");
+                  var card = document.createElement("div");
+                  card.className = "comparaison-commune-map-card";
+                  card.innerHTML =
+                    "<h4>" +
+                    escapeHtml(deptLabel.trim()) +
+                    "</h4><div id=\"" +
+                    escapeHtml(mapId) +
+                    "\" class=\"comparaison-commune-map\"></div>";
+                  innerGrid.appendChild(card);
+
+                  var valuesByCommune = aggregateCommuneScoresFromRows(rowsForDept);
+                  var geojson = buildDeptGeoJsonFromAllCommunes(allGeoJson, deptEntry.code);
+                  if (!geojson.features || !geojson.features.length) {
+                    return;
+                  }
+                  var map = L.map(mapId, { zoomControl: true, scrollWheelZoom: false, minZoom: 7, maxZoom: 17 });
+                  attachPreferredBaseLayer(map);
+                  var layer = L.geoJSON(geojson, {
+                    style: function (feature) {
+                      var props = (feature && feature.properties) || {};
+                      var n = normalizeNameCanonical(props.nom || props.name || "");
+                      var found = valuesByCommune[n];
+                      var scoreVal =
+                        found && found.score != null && Number.isFinite(Number(found.score))
+                          ? Number(found.score)
+                          : null;
+                      var active = found != null;
+                      return {
+                        color: active ? "#0f172a" : "#cbd5e1",
+                        weight: active ? 1.0 : 0.5,
+                        fillColor: active && scoreVal != null ? scoreColor(scoreVal, min, max) : "#f1f5f9",
+                        fillOpacity: active ? 0.44 : 0.08
+                      };
+                    },
+                    onEachFeature: function (feature, layerEl) {
+                      var props = (feature && feature.properties) || {};
+                      var nom = props.nom || props.name || "Commune";
+                      var n = normalizeNameCanonical(nom);
+                      var found = valuesByCommune[n];
+                      var scoreVal =
+                        found && found.score != null && Number.isFinite(Number(found.score))
+                          ? Number(found.score)
+                          : null;
+                      var label =
+                        found == null
+                          ? "hors sélection"
+                          : scoreVal == null
+                          ? "—"
+                          : escapeHtml(formatLegendValue(scoreVal));
+                      var txt =
+                        "<strong>" +
+                        escapeHtml(nom) +
+                        "</strong><br/>" +
+                        escapeHtml(getScoreLabel(scoreKey)) +
+                        " : " +
+                        label;
+                      layerEl.bindTooltip(txt, { sticky: true });
+                    }
+                  }).addTo(map);
+                  /* Cadrage local au département : union des polygones des communes sélectionnées uniquement. */
+                  var selBounds = L.latLngBounds([]);
+                  (geojson.features || []).forEach(function (feature) {
+                    var props = (feature && feature.properties) || {};
+                    var n = normalizeNameCanonical(props.nom || props.name || "");
+                    if (!valuesByCommune[n]) return;
+                    try {
+                      var fb = L.geoJSON(feature).getBounds();
+                      if (fb && fb.isValid && fb.isValid()) selBounds.extend(fb);
+                    } catch (eB) {}
+                  });
+                  /* fitBounds différé + invalidateSize par carte : évite un zoom incorrect sur la 1ère (conteneur pas encore dimensionné). */
+                  scheduleIndependentCommuneMapFit(map, layer, selBounds, fitOpts);
+                  mapViz.communeMaps.push({
+                    map: map,
+                    layer: layer,
+                    mapId: mapId,
+                    deptCode: deptEntry.code,
+                    selBounds: selBounds,
+                    fitOpts: fitOpts
+                  });
+                  allMaps.push(map);
+                });
+              });
+
+              invalidateMapsSoon(allMaps, 120);
+              var nd = firstPart.deptEntriesTotal.length;
+              var nj = jobs.length;
+              var msg =
+                "Mode communes : même échelle de couleurs (min/max) pour tous les panneaux ; " +
+                "chaque carte est centrée sur les communes sélectionnées dans le département concerné ; " +
+                "zoom / pan indépendants entre cartes. " +
+                allMaps.length +
+                " carte(s) (max 12 départements × " +
+                nj +
+                " critère(s)).";
+              if (nd > 12) {
+                msg += " Affichage limité aux 12 départements les plus représentés.";
+              }
               if (status) status.textContent = msg;
               mapViz.mode = "communes";
             })
@@ -950,38 +1996,154 @@
             });
         }
 
-        function renderComparaisonMap(rows, displayMode, scoreKey) {
+        function renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePrincipal) {
           var mapWrap = document.getElementById("comparaison-map-wrap");
           var status = document.getElementById("comparaison-map-status");
           var legend = document.getElementById("comparaison-map-legend");
           var minEl = document.getElementById("comparaison-map-legend-min");
           var maxEl = document.getElementById("comparaison-map-legend-max");
+          var titleEl = document.getElementById("comparaison-map-main-title");
+          var mapsZone = document.getElementById("comparaison-maps-zone");
           if (!mapWrap || !status || !legend || !minEl || !maxEl) return;
 
-          if (!Array.isArray(rows) || rows.length === 0) {
+          if (!jobs || !jobs.length) {
             clearComparaisonMap();
             return;
           }
-          mapWrap.removeAttribute("aria-hidden");
-          if (status) status.textContent = "Chargement de la carte…";
-          var values = rows.map(function (r) { return Number(r[scoreKey]); }).filter(function (v) { return Number.isFinite(v); });
-          if (!values.length) {
-            legend.hidden = true;
-            status.textContent = "Aucune valeur exploitable pour afficher une échelle de score.";
-            clearCommuneMaps();
-            if (mapViz.layer && mapViz.map) { mapViz.map.removeLayer(mapViz.layer); mapViz.layer = null; }
+          var hasAnyRows = jobs.some(function (j) {
+            return (rowsByFilterKey[j.filterKey] || []).length > 0;
+          });
+          if (!hasAnyRows) {
+            clearComparaisonMap();
             return;
           }
-          var min = Math.min.apply(null, values);
-          var max = Math.max.apply(null, values);
+          var mapJobs = filterJobsForMapRendering(jobs, rowsByFilterKey);
+          if (!mapJobs.length) {
+            clearComparaisonMap();
+            if (status) {
+              status.textContent =
+                "Aucune carte à afficher : pour chaque combinaison (type de local, surface, pièces), des valeurs sont nécessaires ; les panneaux sans donnée pour ce score sont masqués.";
+            }
+            return;
+          }
+          resetComparaisonMapVisuals();
+          mapWrap.removeAttribute("aria-hidden");
+          if (status) status.textContent = "Chargement des cartes…";
+          if (titleEl) titleEl.textContent = "Cartes — " + getScoreLabel(scorePrincipal);
+
+          var allValues = [];
+          mapJobs.forEach(function (job) {
+            var rows = rowsByFilterKey[job.filterKey] || [];
+            rows.forEach(function (r) {
+              var v = numericScoreFromRow(r, job.scoreKey);
+              if (Number.isFinite(v)) allValues.push(v);
+            });
+          });
+          if (!allValues.length) {
+            clearComparaisonMap();
+            if (status) {
+              status.textContent =
+                "Aucune valeur exploitable pour afficher une échelle de score pour les colonnes demandées.";
+            }
+            return;
+          }
+          var min = Math.min.apply(null, allValues);
+          var max = Math.max.apply(null, allValues);
           minEl.textContent = "Min : " + formatLegendValue(min);
           maxEl.textContent = "Max : " + formatLegendValue(max);
           legend.hidden = false;
+
+          var rowsMerged = mergeRowsForBounds(rowsByFilterKey, mapJobs);
+
           if (displayMode === "communes") {
-            renderCommuneDeptMaps(rows, scoreKey, min, max);
-          } else {
-            renderStandardChoropleth(rows, displayMode, scoreKey, min, max);
+            if (mapsZone) mapsZone.innerHTML = "";
+            if (titleEl) {
+              titleEl.textContent =
+                mapJobs.length > 1
+                  ? "Cartes — " + getScoreLabel(scorePrincipal) + " (échelle commune à tous les panneaux)"
+                  : "Cartes — " + getScoreLabel(scorePrincipal);
+            }
+            renderCommuneDeptMapsMulti(mapJobs, rowsByFilterKey, min, max);
+            mapViz.mode = "communes";
+            return;
           }
+
+          var entries = mapJobs.map(function (job) {
+            return { job: job, mapId: "comparaison-choro-" + choroMapSeq++ };
+          });
+          var groupOrder = [];
+          var byGroup = {};
+          entries.forEach(function (e) {
+            var g = e.job.groupTitle || "Cartes";
+            if (!byGroup[g]) {
+              byGroup[g] = [];
+              groupOrder.push(g);
+            }
+            byGroup[g].push(e);
+          });
+          var htmlParts = [];
+          groupOrder.forEach(function (gTitle) {
+            htmlParts.push(
+              '<div class="comparaison-map-group"><h4 class="comparaison-map-group-title">' +
+                escapeHtml(gTitle) +
+                '</h4><div class="comparaison-map-cards-grid">'
+            );
+            byGroup[gTitle].forEach(function (e) {
+              var j = e.job;
+              htmlParts.push(
+                '<article class="comparaison-map-card-choro"><div class="card-head"><strong>' +
+                  escapeHtml(j.groupTitle) +
+                  "</strong> — " +
+                  escapeHtml(j.cardTitle) +
+                  "</div>" +
+                  (j.criteriaLine ? '<div class="card-legend">' + escapeHtml(j.criteriaLine) + "</div>" : "") +
+                  '<div id="' +
+                  escapeHtml(e.mapId) +
+                  '" class="comparaison-map-instance"></div>' +
+                  (j.footnote ? '<p class="card-footnote">' + escapeHtml(j.footnote) + "</p>" : "") +
+                  "</article>"
+              );
+            });
+            htmlParts.push("</div></div>");
+          });
+          if (mapsZone) mapsZone.innerHTML = htmlParts.join("");
+
+          var renderPromises = entries.map(function (e) {
+            var rows = rowsByFilterKey[e.job.filterKey] || [];
+            return renderChoroplethIntoDiv(e.mapId, rows, displayMode, e.job.scoreKey, min, max);
+          });
+          Promise.all(renderPromises)
+            .then(function () {
+              return ensureGeoJson(displayMode);
+            })
+            .then(function (gj) {
+              var maps = (mapViz.multiChoroMaps || []).map(function (x) {
+                return x.map;
+              });
+              var b = boundsForChoroplethSelection(gj, displayMode, rowsMerged);
+              if (!b || !b.isValid()) {
+                try {
+                  var first = mapViz.multiChoroMaps[0];
+                  if (first && first.layer && typeof first.layer.getBounds === "function") {
+                    b = first.layer.getBounds();
+                  }
+                } catch (e0) {}
+              }
+              var fitOpts = { padding: [12, 12], maxZoom: 11 };
+              if (b && b.isValid()) {
+                applySameBoundsToMaps(maps, b, fitOpts);
+              }
+              bindLinkedLeafletMaps(maps);
+              invalidateMapsSoon(maps, 120);
+              status.textContent =
+                displayMode === "regions"
+                  ? "Carte(s) par région — même cadrage, zoom et déplacement synchronisés entre les vues."
+                  : "Carte(s) par département — même cadrage, zoom et déplacement synchronisés entre les vues.";
+              mapViz.mode = displayMode;
+            })
+            .catch(function (err) {
+              status.textContent = (err && err.message) ? err.message : "Impossible de charger les cartes.";
+            });
         }
 
         function switchModeUI() {
@@ -1005,137 +2167,158 @@
           updateSelectedListForMode();
         }
 
-        function fillRegionsCheckboxes(containerId) {
-          var container = document.getElementById(containerId);
-          if (!container) return;
-          container.innerHTML = (geo.regions || []).map(function (r) {
-            return "<label><input type=\"checkbox\" class=\"comparaison-region-cb\" value=\"" + escapeHtml(r.id) + "\" data-nom=\"" + escapeHtml(r.nom) + "\" /> " + escapeHtml(r.nom) + "</label>";
-          }).join("");
+        function fillRegionsMultiSelectDeptMode() {
+          var sel = document.getElementById("comparaison-region-select-dept");
+          if (!sel) return;
+          sel.innerHTML = "";
+          var optAll = document.createElement("option");
+          optAll.value = ALL_REGIONS_SPECIAL;
+          optAll.textContent = "Toutes les régions";
+          sel.appendChild(optAll);
+          (geo.regions || []).forEach(function (r) {
+            var o = document.createElement("option");
+            o.value = r.id;
+            o.textContent = r.nom;
+            sel.appendChild(o);
+          });
+          setOnlySelected("comparaison-region-select-dept", ALL_REGIONS_SPECIAL);
         }
 
-        function fillDeptsCheckboxes(preserveSelection) {
-          var container = document.getElementById("comparaison-depts-checkboxes");
-          if (!container) return;
+        function fillRegionsMultiSelectRegionsOnly() {
+          var sel = document.getElementById("comparaison-region-select-only");
+          if (!sel) return;
+          sel.innerHTML = "";
+          var optAll = document.createElement("option");
+          optAll.value = ALL_REGIONS_SPECIAL;
+          optAll.textContent = "Toutes les régions";
+          sel.appendChild(optAll);
+          (geo.regions || []).forEach(function (r) {
+            var o = document.createElement("option");
+            o.value = r.id;
+            o.textContent = r.nom;
+            sel.appendChild(o);
+          });
+          Array.from(sel.options).forEach(function (o) {
+            o.selected = false;
+          });
+        }
+
+        function getDeptModeSelectedRegionIdsForFilter() {
+          var vals = getSelectedValuesFromMulti("comparaison-region-select-dept");
+          if (vals.indexOf(ALL_REGIONS_SPECIAL) !== -1) {
+            return (geo.regions || []).map(function (r) {
+              return r.id;
+            });
+          }
+          return vals.filter(function (v) {
+            return v !== ALL_REGIONS_SPECIAL;
+          });
+        }
+
+        function fillDeptsMultiSelect(preserveSelection) {
+          var sel = document.getElementById("comparaison-dept-select");
+          if (!sel) return;
           if (preserveSelection == null) preserveSelection = true;
-          var prevSelected = new Set(
-            Array.from(container.querySelectorAll(".comparaison-dept-cb:checked")).map(function (cb) { return cb.value; })
-          );
-          var regionCbs = document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb:checked");
-          var selectedRegionIds = Array.from(regionCbs).map(function (cb) { return cb.value; });
+          var prevSel = getSelectedValuesFromMulti("comparaison-dept-select");
+          var selectedRegionIds = getDeptModeSelectedRegionIdsForFilter();
           var allDepts = geo.departements || [];
-          var deptsToShow = selectedRegionIds.length === 0
-            ? allDepts
-            : allDepts.filter(function (d) {
-                var code = typeof d === "object" ? d.code : d;
-                var reg = (geo.regions || []).find(function (r) { return (r.departements || []).indexOf(code) !== -1; });
-                return reg && selectedRegionIds.indexOf(reg.id) !== -1;
-              });
-          container.innerHTML = deptsToShow.map(function (d) {
+          var deptsToShow =
+            selectedRegionIds.length === 0
+              ? allDepts
+              : allDepts.filter(function (d) {
+                  var code = typeof d === "object" ? d.code : d;
+                  var reg = (geo.regions || []).find(function (r) {
+                    return (r.departements || []).indexOf(code) !== -1;
+                  });
+                  return reg && selectedRegionIds.indexOf(reg.id) !== -1;
+                });
+          sel.innerHTML = "";
+          var optAllD = document.createElement("option");
+          optAllD.value = ALL_DEPTS_SPECIAL;
+          optAllD.textContent = "Tous les départements";
+          sel.appendChild(optAllD);
+          deptsToShow.forEach(function (d) {
             var code = typeof d === "object" ? d.code : d;
-            var nom = typeof d === "object" ? d.nom : (geo.deptNomByCode[code] || code);
-            var checked = preserveSelection && prevSelected.has(code) ? " checked" : "";
-            return "<label><input type=\"checkbox\" class=\"comparaison-dept-cb\" value=\"" + escapeHtml(code) + "\" data-nom=\"" + escapeHtml(nom) + "\"" + checked + " /> " + escapeHtml(code) + " " + escapeHtml(nom) + "</label>";
-          }).join("");
-          syncDeptAllCheckboxState();
-        }
-
-        function getDeptModeRegionCbs() {
-          return Array.from(document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb"));
-        }
-
-        function getRegionsModeRegionCbs() {
-          return Array.from(document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb"));
-        }
-
-        function getDeptCbs() {
-          return Array.from(document.querySelectorAll("#comparaison-depts-checkboxes .comparaison-dept-cb"));
-        }
-
-        function setDeptModeAllRegions(checked) {
-          getDeptModeRegionCbs().forEach(function (cb) { cb.checked = !!checked; });
-          var all = document.getElementById("comparaison-all-regions");
-          if (all) all.checked = !!checked;
-        }
-
-        function setRegionsModeAllRegions(checked) {
-          getRegionsModeRegionCbs().forEach(function (cb) { cb.checked = !!checked; });
-          var all = document.getElementById("comparaison-all-regions-regions");
-          if (all) all.checked = !!checked;
-        }
-
-        function setAllDepts(checked) {
-          getDeptCbs().forEach(function (cb) { cb.checked = !!checked; });
-          var all = document.getElementById("comparaison-all-depts");
-          if (all) all.checked = !!checked;
-        }
-
-        function syncDeptRegionsAllCheckboxState() {
-          var cbs = getDeptModeRegionCbs();
-          var all = document.getElementById("comparaison-all-regions");
-          if (!all) return;
-          all.checked = cbs.length > 0 && cbs.every(function (cb) { return cb.checked; });
-        }
-
-        function syncRegionsAllCheckboxState() {
-          var cbs = getRegionsModeRegionCbs();
-          var all = document.getElementById("comparaison-all-regions-regions");
-          if (!all) return;
-          all.checked = cbs.length > 0 && cbs.every(function (cb) { return cb.checked; });
-        }
-
-        function syncDeptAllCheckboxState() {
-          var cbs = getDeptCbs();
-          var all = document.getElementById("comparaison-all-depts");
-          if (!all) return;
-          all.checked = cbs.length > 0 && cbs.every(function (cb) { return cb.checked; });
+            var nom = typeof d === "object" ? d.nom : geo.deptNomByCode[code] || code;
+            var o = document.createElement("option");
+            o.value = code;
+            o.textContent = code + " " + nom;
+            sel.appendChild(o);
+          });
+          if (preserveSelection) {
+            var codes = Array.from(sel.options).map(function (o) {
+              return o.value;
+            });
+            prevSel.forEach(function (v) {
+              if (codes.indexOf(v) === -1) return;
+              var opt = Array.from(sel.options).find(function (x) {
+                return x.value === v;
+              });
+              if (opt) opt.selected = true;
+            });
+          }
         }
 
         function initDepartementsModeSelectionState() {
-          // Initialisation demandée : toutes les régions cochées, tous les départements décochés.
-          setDeptModeAllRegions(true);
-          fillDeptsCheckboxes(false);
-          var allDepts = document.getElementById("comparaison-all-depts");
-          if (allDepts) allDepts.checked = false;
+          fillRegionsMultiSelectDeptMode();
+          fillDeptsMultiSelect(false);
         }
 
         function getSelectedRegionIds() {
-          var allCb = document.getElementById("comparaison-all-regions");
-          if (allCb && allCb.checked) return (geo.regions || []).map(function (r) { return r.id; });
-          var cbs = document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb:checked");
-          return Array.from(cbs).map(function (cb) { return cb.value; });
+          return getDeptModeSelectedRegionIdsForFilter();
         }
 
         function getSelectedRegionIdsForRegionsMode() {
-          var allCb = document.getElementById("comparaison-all-regions-regions");
-          if (allCb && allCb.checked) return (geo.regions || []).map(function (r) { return r.id; });
-          var cbs = document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb:checked");
-          return Array.from(cbs).map(function (cb) { return cb.value; });
+          var vals = getSelectedValuesFromMulti("comparaison-region-select-only");
+          if (vals.indexOf(ALL_REGIONS_SPECIAL) !== -1) {
+            return (geo.regions || []).map(function (r) {
+              return r.id;
+            });
+          }
+          return vals.filter(function (v) {
+            return v !== ALL_REGIONS_SPECIAL;
+          });
+        }
+
+        function getDeptCodesForCurrentRegionFilter() {
+          var regionIds = getSelectedRegionIds();
+          if (regionIds.length === 0) {
+            return (geo.departements || []).map(function (d) {
+              return typeof d === "object" ? d.code : d;
+            });
+          }
+          var codes = [];
+          (geo.regions || []).forEach(function (r) {
+            if (regionIds.indexOf(r.id) !== -1 && r.departements) codes.push.apply(codes, r.departements);
+          });
+          return codes.filter(function (c, i, a) {
+            return a.indexOf(c) === i;
+          });
         }
 
         function getSelectedDeptCodes() {
-          var allCb = document.getElementById("comparaison-all-depts");
-          if (allCb && allCb.checked) {
-            var regionIds = getSelectedRegionIds();
-            if (regionIds.length === 0) return (geo.departements || []).map(function (d) { return typeof d === "object" ? d.code : d; });
-            var codes = [];
-            (geo.regions || []).forEach(function (r) {
-              if (regionIds.indexOf(r.id) !== -1 && r.departements) codes.push.apply(codes, r.departements);
-            });
-            return codes.filter(function (c, i, a) { return a.indexOf(c) === i; });
+          var vals = getSelectedValuesFromMulti("comparaison-dept-select");
+          if (vals.indexOf(ALL_DEPTS_SPECIAL) !== -1) {
+            return getDeptCodesForCurrentRegionFilter();
           }
-          var cbs = document.querySelectorAll(".comparaison-dept-cb:checked");
-          return Array.from(cbs).map(function (cb) { return cb.value; });
+          return vals.filter(function (v) {
+            return v !== ALL_DEPTS_SPECIAL;
+          });
         }
 
         function updateSelectedListForMode() {
           var block = document.getElementById("comparaison-selected-block");
           var ul = document.getElementById("comparaison-selected-ul");
-          if (!block || !ul) return;
+          if (!block || !ul) {
+            updateComparaisonCriteriaBlockVisibility();
+            return;
+          }
           var mode = getComparaisonMode();
           if (mode === "communes") {
             if (selectedCommunes.length === 0) {
               block.setAttribute("aria-hidden", "true");
               ul.innerHTML = "";
+              updateComparaisonCriteriaBlockVisibility();
               return;
             }
             block.removeAttribute("aria-hidden");
@@ -1150,12 +2333,18 @@
                 updateSelectedListForMode();
               });
             });
+            updateComparaisonCriteriaBlockVisibility();
             return;
           }
           if (mode === "departements") {
             var depts = getSelectedDeptCodes();
             var names = depts.map(function (code) { return code + " " + (geo.deptNomByCode[code] || ""); });
-            if (names.length === 0) { block.setAttribute("aria-hidden", "true"); ul.innerHTML = ""; return; }
+            if (names.length === 0) {
+              block.setAttribute("aria-hidden", "true");
+              ul.innerHTML = "";
+              updateComparaisonCriteriaBlockVisibility();
+              return;
+            }
             block.removeAttribute("aria-hidden");
             ul.innerHTML = depts.map(function (code) {
               var label = (code + " " + (geo.deptNomByCode[code] || "")).trim();
@@ -1164,19 +2353,23 @@
             ul.querySelectorAll("button[data-dept]").forEach(function (btn) {
               btn.addEventListener("click", function () {
                 var code = btn.getAttribute("data-dept");
-                // Si "tous les départements" est actif, on le désactive et on coche explicitement tous sauf celui retiré.
-                var allDepts = document.getElementById("comparaison-all-depts");
-                if (allDepts && allDepts.checked) {
-                  allDepts.checked = false;
-                  setAllDepts(true);
+                var sel = document.getElementById("comparaison-dept-select");
+                if (!sel) return;
+                var vals = getSelectedValuesFromMulti("comparaison-dept-select");
+                if (vals.indexOf(ALL_DEPTS_SPECIAL) !== -1) {
+                  Array.from(sel.options).forEach(function (o) {
+                    o.selected = o.value !== ALL_DEPTS_SPECIAL && o.value !== code;
+                  });
+                } else {
+                  var o = Array.from(sel.options).find(function (x) {
+                    return x.value === code;
+                  });
+                  if (o) o.selected = false;
                 }
-                var cb = Array.from(document.querySelectorAll("#comparaison-depts-checkboxes .comparaison-dept-cb"))
-                  .find(function (x) { return x.value === code; });
-                if (cb) cb.checked = false;
-                syncDeptAllCheckboxState();
                 updateSelectedListForMode();
               });
             });
+            updateComparaisonCriteriaBlockVisibility();
             return;
           }
           if (mode === "regions") {
@@ -1185,7 +2378,12 @@
               var r = (geo.regions || []).find(function (x) { return x.id === id; });
               return r ? r.nom : id;
             });
-            if (names.length === 0) { block.setAttribute("aria-hidden", "true"); ul.innerHTML = ""; return; }
+            if (names.length === 0) {
+              block.setAttribute("aria-hidden", "true");
+              ul.innerHTML = "";
+              updateComparaisonCriteriaBlockVisibility();
+              return;
+            }
             block.removeAttribute("aria-hidden");
             ul.innerHTML = ids.map(function (id) {
               var r = (geo.regions || []).find(function (x) { return x.id === id; });
@@ -1195,19 +2393,24 @@
             ul.querySelectorAll("button[data-region]").forEach(function (btn) {
               btn.addEventListener("click", function () {
                 var id = btn.getAttribute("data-region");
-                var allRegions = document.getElementById("comparaison-all-regions-regions");
-                if (allRegions && allRegions.checked) {
-                  allRegions.checked = false;
-                  setRegionsModeAllRegions(true);
+                var sel = document.getElementById("comparaison-region-select-only");
+                if (!sel) return;
+                var vals = getSelectedValuesFromMulti("comparaison-region-select-only");
+                if (vals.indexOf(ALL_REGIONS_SPECIAL) !== -1) {
+                  Array.from(sel.options).forEach(function (o) {
+                    o.selected = o.value !== ALL_REGIONS_SPECIAL && o.value !== id;
+                  });
+                } else {
+                  var o = Array.from(sel.options).find(function (x) {
+                    return x.value === id;
+                  });
+                  if (o) o.selected = false;
                 }
-                var cb = Array.from(document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb"))
-                  .find(function (x) { return x.value === id; });
-                if (cb) cb.checked = false;
-                syncRegionsAllCheckboxState();
                 updateSelectedListForMode();
               });
             });
           }
+          updateComparaisonCriteriaBlockVisibility();
         }
 
         function fillRegions() {
@@ -1278,12 +2481,89 @@
               geo.deptNomByCode = Object.fromEntries((geo.departements || []).map(function (d) { return [d.code, d.nom]; }));
               fillRegions();
               fillDepartments();
-              fillRegionsCheckboxes("comparaison-regions-checkboxes");
-              fillRegionsCheckboxes("comparaison-regions-checkboxes-regions");
+              fillRegionsMultiSelectRegionsOnly();
               initDepartementsModeSelectionState();
-              syncRegionsAllCheckboxState();
             })
             .catch(function () {});
+        }
+
+        function sortRefsByOrder(arr) {
+          return (arr || []).slice().sort(function (a, b) {
+            return (Number(a.sort_order) || 0) - (Number(b.sort_order) || 0);
+          });
+        }
+
+        function fillRefMultiSelect(selectId, rows, defaultCode) {
+          var sel = document.getElementById(selectId);
+          if (!sel) return;
+          var prevSel = Array.from(sel.selectedOptions).map(function (o) {
+            return o.value;
+          });
+          sel.innerHTML = "";
+          (rows || []).forEach(function (r) {
+            var opt = document.createElement("option");
+            opt.value = r.code;
+            opt.textContent = r.libelle || r.code;
+            sel.appendChild(opt);
+          });
+          var codes = Array.from(sel.options).map(function (o) {
+            return o.value;
+          });
+          if (prevSel.length && prevSel.every(function (v) { return codes.indexOf(v) !== -1; })) {
+            prevSel.forEach(function (v) {
+              var o = Array.from(sel.options).find(function (x) {
+                return x.value === v;
+              });
+              if (o) o.selected = true;
+            });
+          } else if (defaultCode && codes.indexOf(defaultCode) !== -1) {
+            setOnlySelected(selectId, defaultCode);
+          }
+        }
+
+        var refComparaisonControlsWired = false;
+        function wireRefComparaisonControls() {
+          if (refComparaisonControlsWired) return;
+          refComparaisonControlsWired = true;
+          bindExclusiveTousMulti("comparaison-type-logt", "TOUS", "type");
+          bindExclusiveTousMulti("comparaison-surf", "TOUTES", "surf");
+          bindExclusiveTousMulti("comparaison-pieces", "TOUS", "pieces");
+          bindExclusiveAllRegions("comparaison-region-select-dept", "regionDept");
+          bindExclusiveAllRegions("comparaison-region-select-only", "regionOnly");
+          bindExclusiveAllDepts();
+          var t = document.getElementById("comparaison-type-logt");
+          if (t) t.addEventListener("change", updateSurfPiecesVisibility);
+        }
+
+        function fillRefSelects() {
+          var types = sortRefsByOrder(refData.type_logts.length ? refData.type_logts : REF_TYPE_LOGTS_FALLBACK);
+          var surfs = sortRefsByOrder(refData.type_surf.length ? refData.type_surf : REF_TYPE_SURF_FALLBACK);
+          var pieces = sortRefsByOrder(refData.nb_pieces.length ? refData.nb_pieces : REF_NB_PIECES_FALLBACK);
+          fillRefMultiSelect("comparaison-type-logt", types, "TOUS");
+          fillRefMultiSelect("comparaison-surf", surfs, "TOUTES");
+          fillRefMultiSelect("comparaison-pieces", pieces, "TOUS");
+          wireRefComparaisonControls();
+          updateSurfPiecesVisibility();
+        }
+
+        function loadRefs() {
+          return fetch(API_BASE + "/api/refs-comparaison-logement")
+            .then(function (r) {
+              if (!r.ok) throw new Error("refs");
+              return r.json();
+            })
+            .then(function (data) {
+              refData.type_logts = data.type_logts || [];
+              refData.type_surf = data.type_surf || [];
+              refData.nb_pieces = data.nb_pieces || [];
+              fillRefSelects();
+            })
+            .catch(function () {
+              refData.type_logts = [];
+              refData.type_surf = [];
+              refData.nb_pieces = [];
+              fillRefSelects();
+            });
         }
 
         function initFromUrlParams() {
@@ -1311,44 +2591,25 @@
           radio.addEventListener("change", switchModeUI);
         });
         (function bindMultiSelectListeners() {
-          var allRegions = document.getElementById("comparaison-all-regions");
-          var allRegionsRegions = document.getElementById("comparaison-all-regions-regions");
-          var allDepts = document.getElementById("comparaison-all-depts");
-          if (allRegions) allRegions.addEventListener("change", function () {
-            if (allRegions.checked) {
-              setDeptModeAllRegions(true);
-              fillDeptsCheckboxes(false);
-            } else {
-              setDeptModeAllRegions(false);
-              fillDeptsCheckboxes(false);
-            }
-            updateSelectedListForMode();
-          });
-          if (allRegionsRegions) allRegionsRegions.addEventListener("change", function () {
-            setRegionsModeAllRegions(!!allRegionsRegions.checked);
-            updateSelectedListForMode();
-          });
-          if (allDepts) allDepts.addEventListener("change", function () {
-            setAllDepts(!!allDepts.checked);
-            updateSelectedListForMode();
-          });
-          document.getElementById("comparaison-mode-departements").addEventListener("change", function (e) {
-            if (e.target.classList.contains("comparaison-region-cb")) {
-              syncDeptRegionsAllCheckboxState();
-              fillDeptsCheckboxes(false);
+          var regDept = document.getElementById("comparaison-region-select-dept");
+          if (regDept) {
+            regDept.addEventListener("change", function () {
+              fillDeptsMultiSelect(false);
               updateSelectedListForMode();
-            }
-            if (e.target.classList.contains("comparaison-dept-cb")) {
-              syncDeptAllCheckboxState();
+            });
+          }
+          var deptSel = document.getElementById("comparaison-dept-select");
+          if (deptSel) {
+            deptSel.addEventListener("change", function () {
               updateSelectedListForMode();
-            }
-          });
-          document.getElementById("comparaison-mode-regions").addEventListener("change", function (e) {
-            if (e.target.classList.contains("comparaison-region-cb")) {
-              syncRegionsAllCheckboxState();
+            });
+          }
+          var regOnly = document.getElementById("comparaison-region-select-only");
+          if (regOnly) {
+            regOnly.addEventListener("change", function () {
               updateSelectedListForMode();
-            }
-          });
+            });
+          }
         })();
 
         // Ajout d'une commune à la liste sélectionnée (utilisé par autocomplete + select)
@@ -1379,17 +2640,14 @@
           var mode = getComparaisonMode();
           selectedCommunes.length = 0;
           if (mode === "departements") {
-            document.querySelectorAll("#comparaison-mode-departements .comparaison-region-cb, .comparaison-dept-cb").forEach(function (cb) { cb.checked = false; });
-            var allR = document.getElementById("comparaison-all-regions");
-            var allD = document.getElementById("comparaison-all-depts");
-            if (allR) allR.checked = true;
-            if (allD) allD.checked = false;
-            setDeptModeAllRegions(true);
-            fillDeptsCheckboxes(false);
+            initDepartementsModeSelectionState();
           } else if (mode === "regions") {
-            document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb").forEach(function (cb) { cb.checked = false; });
-            var allR2 = document.getElementById("comparaison-all-regions-regions");
-            if (allR2) allR2.checked = false;
+            var selOnly = document.getElementById("comparaison-region-select-only");
+            if (selOnly) {
+              Array.from(selOnly.options).forEach(function (o) {
+                o.selected = false;
+              });
+            }
           }
           updateSelectedListForMode();
         });
@@ -1415,19 +2673,72 @@
           });
         })();
 
-        function scrollToComparaisonResults() {
-          var mapWrapEl = document.getElementById("comparaison-map-wrap");
-          var tablesWrapEl = document.querySelector(".comparaison-tables-wrap");
-          var target = (mapWrapEl && !mapWrapEl.hasAttribute("aria-hidden")) ? mapWrapEl : tablesWrapEl;
-          if (!target) return;
-          target.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-
-        function scheduleScrollToComparaisonResults() {
-          // Plusieurs passes pour compenser les changements de hauteur asynchrones (cartes/GeoJSON).
-          setTimeout(scrollToComparaisonResults, 50);
-          setTimeout(scrollToComparaisonResults, 250);
-          setTimeout(scrollToComparaisonResults, 700);
+        function initComparaisonViewTabs() {
+          var tabTables = document.getElementById("comparaison-tab-tables");
+          var tabMaps = document.getElementById("comparaison-tab-maps");
+          var panelTables = document.getElementById("comparaison-panel-tables");
+          var panelMaps = document.getElementById("comparaison-panel-maps");
+          if (!tabTables || !tabMaps || !panelTables || !panelMaps) return;
+          function showTables() {
+            tabTables.classList.add("is-active");
+            tabMaps.classList.remove("is-active");
+            tabTables.setAttribute("aria-selected", "true");
+            tabMaps.setAttribute("aria-selected", "false");
+            panelTables.hidden = false;
+            panelMaps.hidden = true;
+          }
+          function showMaps() {
+            tabMaps.classList.add("is-active");
+            tabTables.classList.remove("is-active");
+            tabMaps.setAttribute("aria-selected", "true");
+            tabTables.setAttribute("aria-selected", "false");
+            panelMaps.hidden = false;
+            panelTables.hidden = true;
+            setTimeout(function () {
+              if (typeof L === "undefined") return;
+              var maps = [];
+              if (mapViz.map) maps.push(mapViz.map);
+              (mapViz.multiChoroMaps || []).forEach(function (x) {
+                if (x && x.map) maps.push(x.map);
+              });
+              (mapViz.communeMaps || []).forEach(function (x) {
+                if (x && x.map) maps.push(x.map);
+              });
+              maps.forEach(function (m) {
+                try {
+                  if (m && typeof m.invalidateSize === "function") m.invalidateSize({ animate: false });
+                } catch (e) {}
+              });
+              (mapViz.communeMaps || []).forEach(function (entry) {
+                if (!entry || !entry.map) return;
+                try {
+                  entry.map.invalidateSize({ animate: false });
+                  var b =
+                    entry.selBounds && entry.selBounds.isValid && entry.selBounds.isValid()
+                      ? entry.selBounds
+                      : entry.layer && entry.layer.getBounds && entry.layer.getBounds();
+                  var fo = entry.fitOpts || { padding: [10, 10], maxZoom: 15 };
+                  if (b && b.isValid && b.isValid()) entry.map.fitBounds(b, fo);
+                } catch (e2) {}
+              });
+            }, 100);
+            setTimeout(function () {
+              (mapViz.communeMaps || []).forEach(function (entry) {
+                if (!entry || !entry.map) return;
+                try {
+                  entry.map.invalidateSize({ animate: false });
+                  var b =
+                    entry.selBounds && entry.selBounds.isValid && entry.selBounds.isValid()
+                      ? entry.selBounds
+                      : entry.layer && entry.layer.getBounds && entry.layer.getBounds();
+                  var fo = entry.fitOpts || { padding: [10, 10], maxZoom: 15 };
+                  if (b && b.isValid && b.isValid()) entry.map.fitBounds(b, fo);
+                } catch (e3) {}
+              });
+            }, 350);
+          }
+          tabTables.addEventListener("click", showTables);
+          tabMaps.addEventListener("click", showMaps);
         }
 
         function runComparaison() {
@@ -1447,131 +2758,142 @@
             errorEl.textContent = "Ajoutez au moins une commune à la liste (recherche rapide ou sélecteur) puis cliquez sur Comparer.";
             errorEl.hidden = false;
             emptyEl.style.display = "none";
-            TABLE_BLOCKS.forEach(function (block) {
-              var blockEl = document.getElementById("comparaison-block-" + block.id);
-              if (blockEl) blockEl.setAttribute("aria-hidden", "true");
-            });
-            scrollToComparaisonResults();
+            var dynErr0 = document.getElementById("comparaison-tables-dynamic");
+            if (dynErr0) dynErr0.innerHTML = "";
             return;
           }
           if (mode === "departements" && getSelectedDeptCodes().length === 0) {
-            errorEl.textContent = "Sélectionnez au moins un département (ou cochez « Toutes les départements ») puis cliquez sur Comparer.";
+            errorEl.textContent = "Sélectionnez au moins un département (ou « Tous les départements » dans la liste) puis cliquez sur Comparer.";
             errorEl.hidden = false;
             emptyEl.style.display = "none";
-            TABLE_BLOCKS.forEach(function (block) {
-              var blockEl = document.getElementById("comparaison-block-" + block.id);
-              if (blockEl) blockEl.setAttribute("aria-hidden", "true");
-            });
-            scrollToComparaisonResults();
+            var dynErr1 = document.getElementById("comparaison-tables-dynamic");
+            if (dynErr1) dynErr1.innerHTML = "";
             return;
           }
           if (mode === "regions" && getSelectedRegionIdsForRegionsMode().length === 0) {
-            errorEl.textContent = "Sélectionnez au moins une région (ou cochez « Toutes les régions ») puis cliquez sur Comparer.";
+            errorEl.textContent = "Sélectionnez au moins une région (ou « Toutes les régions » dans la liste) puis cliquez sur Comparer.";
             errorEl.hidden = false;
             emptyEl.style.display = "none";
-            TABLE_BLOCKS.forEach(function (block) {
-              var blockEl = document.getElementById("comparaison-block-" + block.id);
-              if (blockEl) blockEl.setAttribute("aria-hidden", "true");
-            });
-            scrollToComparaisonResults();
+            var dynErr2 = document.getElementById("comparaison-tables-dynamic");
+            if (dynErr2) dynErr2.innerHTML = "";
+            return;
+          }
+          var refCritErr = validateComparaisonRefCriteria();
+          if (refCritErr) {
+            errorEl.textContent = refCritErr;
+            errorEl.hidden = false;
+            emptyEl.style.display = "none";
+            var dynRef = document.getElementById("comparaison-tables-dynamic");
+            if (dynRef) dynRef.innerHTML = "";
             return;
           }
           errorEl.hidden = true;
           emptyEl.style.display = "none";
           loadingEl.classList.add("visible");
-          TABLE_BLOCKS.forEach(function (block) {
-            var blockEl = document.getElementById("comparaison-block-" + block.id);
-            if (blockEl) blockEl.setAttribute("aria-hidden", "true");
-          });
-          scrollToComparaisonResults();
+          var dynLoading = document.getElementById("comparaison-tables-dynamic");
+          if (dynLoading) dynLoading.innerHTML = "";
 
-          var params = new URLSearchParams();
-          params.set("mode", mode);
-          params.set("score_principal", scorePrincipal);
-          params.set("n_max", String(nMax));
-          scoresSecondaires.forEach(function (s) { params.append("scores_secondaires", s); });
+          var jobs = buildMapJobs(scorePrincipal, cat);
+          var uniqueKeys = uniqueFilterKeysFromJobs(jobs);
+
+          var baseParams = new URLSearchParams();
+          baseParams.set("mode", mode);
+          baseParams.set("score_principal", scorePrincipal);
+          baseParams.set("n_max", String(nMax));
+          scoresSecondaires.forEach(function (s) {
+            baseParams.append("scores_secondaires", s);
+          });
           if (mode === "communes") {
             selectedCommunes.forEach(function (c) {
-              params.append("code_dept", c.code_dept || "");
-              params.append("code_postal", c.code_postal || "");
-              params.append("commune", c.commune || "");
+              baseParams.append("code_dept", c.code_dept || "");
+              baseParams.append("code_postal", c.code_postal || "");
+              baseParams.append("commune", c.commune || "");
             });
           } else if (mode === "departements") {
-            getSelectedDeptCodes().forEach(function (code) { params.append("code_dept", code); });
+            getSelectedDeptCodes().forEach(function (code) {
+              baseParams.append("code_dept", code);
+            });
           } else {
-            getSelectedRegionIdsForRegionsMode().forEach(function (id) { params.append("code_region", id); });
+            getSelectedRegionIdsForRegionsMode().forEach(function (id) {
+              baseParams.append("code_region", id);
+            });
           }
 
-          fetch(API_BASE + "/api/comparaison_scores?" + params.toString())
-            .then(function (r) {
-              if (!r.ok) throw new Error(r.status === 404 ? "Endpoint /api/comparaison_scores non encore implémenté." : "Erreur " + r.status);
-              return r.json();
-            })
-            .then(function (data) {
+          fetchComparaisonScoresBatch(baseParams, uniqueKeys, scorePrincipal, cat)
+            .then(function (rowsByFilterKey) {
               loadingEl.classList.remove("visible");
-              var rows = data.rows || data.lignes || data.communes || [];
-              var displayIndicators = indicators.length ? indicators : [{ key: scorePrincipal, label: CATEGORY_LABELS[cat] || getScoreLabel(scorePrincipal) }];
-              lastComparaisonRows = rows;
-              var displayMode = getDisplayModeFromRows(rows);
-              var theadPrefix = displayMode === "departements"
-                ? "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th>Département</th>"
-                : displayMode === "regions"
-                ? "<tr><th class=\"col-num\">Rang</th><th class=\"col-num\">Code région</th><th>Région</th>"
-                : "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th class=\"col-num\">Code postal</th><th>Commune</th>";
+              var displayIndicators = indicators.length
+                ? indicators
+                : [{ key: scorePrincipal, label: CATEGORY_LABELS[cat] || getScoreLabel(scorePrincipal) }];
 
-              TABLE_BLOCKS.forEach(function (block) {
-                var tableIndicators = [];
-                displayIndicators.forEach(function (ind) {
-                  var tableKey = block.keyMap[ind.key];
-                  if (tableKey != null) tableIndicators.push({ key: tableKey, label: getScoreLabel(tableKey) });
-                });
-                if (tableIndicators.length === 0 && displayIndicators.length > 0) {
-                  var k = displayIndicators[0].key;
-                  tableIndicators = [{ key: block.keyMap[k] != null ? block.keyMap[k] : k, label: getScoreLabel(block.keyMap[k] || k) }];
+              lastComparaisonJobs = jobs;
+              lastRowsByFilterKey = rowsByFilterKey;
+              var firstKeys = uniqueKeys.slice();
+              var firstRows = [];
+              for (var fi = 0; fi < firstKeys.length; fi++) {
+                var rr = rowsByFilterKey[firstKeys[fi]];
+                if (rr && rr.length) {
+                  firstRows = rr;
+                  break;
                 }
-                var theadElBloc = document.getElementById("comparaison-thead-" + block.id);
-                var tbodyElBloc = document.getElementById("comparaison-tbody-" + block.id);
-                var blockEl = document.getElementById("comparaison-block-" + block.id);
-                sortByTable[block.id] = { key: tableIndicators[0].key, desc: true };
-                var st = sortByTable[block.id];
-                var theadRow = theadPrefix;
-                tableIndicators.forEach(function (ind, i) {
-                  var label = escapeHtml(ind.label);
-                  var dir = i === 0 ? " ▼" : "";
-                  theadRow += '<th class="col-num sortable" data-sort="' + escapeHtml(ind.key) + '" data-label="' + label.replace(/"/g, "&quot;") + '">' + label + '<span class="sort-icon">' + dir + '</span></th>';
-                });
-                theadRow += "</tr>";
-                theadElBloc.innerHTML = theadRow;
-                renderTableBody(tbodyElBloc, rows, tableIndicators, st.key, st.desc, displayMode);
-                bindSortHandlers(block.id, theadElBloc, tbodyElBloc, rows, tableIndicators);
-                if (blockEl) blockEl.removeAttribute("aria-hidden");
-              });
+              }
+              lastComparaisonRows = firstRows.length ? firstRows : rowsByFilterKey[firstKeys[0]] || [];
 
-              if (rows.length === 0) {
-                emptyEl.textContent = "Aucune donnée retournée pour les communes sélectionnées.";
+              var displayMode = getDisplayModeFromRows(firstRows.length ? firstRows : lastComparaisonRows);
+              var theadPrefix =
+                displayMode === "departements"
+                  ? "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th>Département</th>"
+                  : displayMode === "regions"
+                  ? "<tr><th class=\"col-num\">Rang</th><th class=\"col-num\">Code région</th><th>Région</th>"
+                  : "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th class=\"col-num\">Code postal</th><th>Commune</th>";
+
+              var hasAnyRows = jobs.some(function (j) {
+                return (rowsByFilterKey[j.filterKey] || []).length > 0;
+              });
+              var hasRenderableTable = jobs.some(function (j) {
+                return jobHasDisplayableData(rowsByFilterKey[j.filterKey] || [], j, cat, displayIndicators);
+              });
+              var hasRenderableMapValues = jobs.some(function (j) {
+                return jobHasMapDisplayableData(rowsByFilterKey[j.filterKey] || [], j);
+              });
+              if (!hasAnyRows) {
+                emptyEl.textContent = "Aucune donnée retournée pour la sélection et les filtres demandés.";
                 emptyEl.style.display = "block";
-                TABLE_BLOCKS.forEach(function (block) {
-                  var blockEl = document.getElementById("comparaison-block-" + block.id);
-                  if (blockEl) blockEl.setAttribute("aria-hidden", "true");
-                });
+                var dynEmpty = document.getElementById("comparaison-tables-dynamic");
+                if (dynEmpty) dynEmpty.innerHTML = "";
+                clearComparaisonMap();
+              } else if (!hasRenderableTable && !hasRenderableMapValues) {
+                emptyEl.textContent =
+                  "Aucune donnée exploitable (valeurs nulles) pour les tableaux et les cartes avec les filtres demandés.";
+                emptyEl.style.display = "block";
+                var dynEmpty2 = document.getElementById("comparaison-tables-dynamic");
+                if (dynEmpty2) dynEmpty2.innerHTML = "";
                 clearComparaisonMap();
               } else {
                 emptyEl.style.display = "none";
-                renderComparaisonMap(rows, displayMode, scorePrincipal);
+                if (hasRenderableTable) {
+                  renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat, displayIndicators, theadPrefix);
+                } else {
+                  var dynNoTab = document.getElementById("comparaison-tables-dynamic");
+                  if (dynNoTab) dynNoTab.innerHTML = "";
+                }
+                if (hasRenderableMapValues) {
+                  renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePrincipal);
+                } else {
+                  clearComparaisonMap();
+                }
               }
-              scheduleScrollToComparaisonResults();
+              setMapTabVisible(hasRenderableMapValues);
             })
             .catch(function (err) {
               loadingEl.classList.remove("visible");
               errorEl.textContent = err.message || "Erreur lors du chargement.";
               errorEl.hidden = false;
               emptyEl.style.display = "none";
-              TABLE_BLOCKS.forEach(function (block) {
-                var blockEl = document.getElementById("comparaison-block-" + block.id);
-                if (blockEl) blockEl.setAttribute("aria-hidden", "true");
-              });
+              var dynCatch = document.getElementById("comparaison-tables-dynamic");
+              if (dynCatch) dynCatch.innerHTML = "";
               clearComparaisonMap();
-              scheduleScrollToComparaisonResults();
+              setMapTabVisible(false);
             });
         }
 
@@ -1589,7 +2911,6 @@
             if (selectedCommunes.length === 0) {
               errorEl.textContent = "Ajoutez au moins une commune à la liste puis cliquez sur Forcer le recalcul.";
               errorEl.hidden = false;
-              scrollToComparaisonResults();
               return;
             }
             selectedCommunes.forEach(function (c) {
@@ -1602,7 +2923,6 @@
             if (!depts.length) {
               errorEl.textContent = "Sélectionnez au moins un département puis cliquez sur Forcer le recalcul.";
               errorEl.hidden = false;
-              scrollToComparaisonResults();
               return;
             }
             depts.forEach(function (d) { params.append("code_dept", d); });
@@ -1611,16 +2931,21 @@
             if (!regs.length) {
               errorEl.textContent = "Sélectionnez au moins une région puis cliquez sur Forcer le recalcul.";
               errorEl.hidden = false;
-              scrollToComparaisonResults();
               return;
             }
             regs.forEach(function (r) { params.append("code_region", r); });
           }
 
+          var refErrForce = validateComparaisonRefCriteria();
+          if (refErrForce) {
+            errorEl.textContent = refErrForce;
+            errorEl.hidden = false;
+            return;
+          }
+
           errorEl.hidden = true;
           emptyEl.style.display = "none";
           loadingEl.classList.add("visible");
-          scrollToComparaisonResults();
 
           fetch(API_BASE + "/api/force-recalcul-indicateurs?" + params.toString(), { method: "POST" })
             .then(function (r) {
@@ -1635,7 +2960,6 @@
               loadingEl.classList.remove("visible");
               errorEl.textContent = err.message || "Erreur lors du recalcul.";
               errorEl.hidden = false;
-              scheduleScrollToComparaisonResults();
             });
         }
 
@@ -1688,15 +3012,31 @@
           });
           updateIndicatorVisibility();
 
+          ["comparaison-granularity-type", "comparaison-granularity-surf", "comparaison-granularity-pieces"].forEach(function (nm) {
+            var agg = document.querySelector('input[name="' + nm + '"][value="agg"]');
+            if (agg) agg.checked = true;
+          });
+          fillRefSelects();
+          updateSurfPiecesVisibility();
+          var pt = document.getElementById("comparaison-panel-tables");
+          var pm = document.getElementById("comparaison-panel-maps");
+          var tt = document.getElementById("comparaison-tab-tables");
+          var tm = document.getElementById("comparaison-tab-maps");
+          if (pt && pm && tt && tm) {
+            pt.hidden = false;
+            pm.hidden = true;
+            tt.classList.add("is-active");
+            tm.classList.remove("is-active");
+            tt.setAttribute("aria-selected", "true");
+            tm.setAttribute("aria-selected", "false");
+          }
+          setMapTabVisible(true);
+
           // Mode départements : toutes les régions cochées, tous les départements décochés.
           initDepartementsModeSelectionState();
 
-          // Mode régions : toutes décochées.
-          setRegionsModeAllRegions(false);
-          var allRegionsRegions = document.getElementById("comparaison-all-regions-regions");
-          if (allRegionsRegions) allRegionsRegions.checked = false;
-          document.querySelectorAll("#comparaison-mode-regions .comparaison-region-cb").forEach(function (cb) { cb.checked = false; });
-          syncRegionsAllCheckboxState();
+          // Mode régions : aucune sélection.
+          fillRegionsMultiSelectRegionsOnly();
 
           // 3) Réinitialiser affichages résultats/cartes/messages.
           resetComparaisonResultsOnModeChange("communes");
@@ -1720,24 +3060,38 @@
           }
         }
 
+        fillRefSelects();
+
         if (document.readyState === "loading") {
           document.addEventListener("DOMContentLoaded", function () {
+            initComparaisonViewTabs();
             updateIndicatorVisibility();
             switchModeUI();
-            loadGeo().then(function () {
+            loadGeo()
+              .then(function () {
+                return loadRefs();
+              })
+              .then(function () {
+                initFromUrlParams();
+                initNavFromUrl();
+                switchModeUI();
+                updateComparaisonCriteriaBlockVisibility();
+              });
+          });
+        } else {
+          initComparaisonViewTabs();
+          updateIndicatorVisibility();
+          switchModeUI();
+          loadGeo()
+            .then(function () {
+              return loadRefs();
+            })
+            .then(function () {
               initFromUrlParams();
               initNavFromUrl();
               switchModeUI();
+              updateComparaisonCriteriaBlockVisibility();
             });
-          });
-        } else {
-          updateIndicatorVisibility();
-          switchModeUI();
-          loadGeo().then(function () {
-            initFromUrlParams();
-            initNavFromUrl();
-            switchModeUI();
-          });
         }
       })();
     </script>

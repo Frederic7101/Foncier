@@ -1,0 +1,128 @@
+Rapport de vérification des communes importées avec la nouvelle source (communes_france_2025.csv) fournie par VilleDeReve
+
+-- recherche les nouvelles communes absentes de l'ancienne liste dans ref_communes
+SELECT n.nom_standard, n.code_postal, n.population
+FROM foncier.ref_communes_new AS n
+LEFT JOIN foncier.ref_communes AS o
+  ON lpad(o.code_postal::text, 5, '0') = n.code_postal::text
+WHERE o.code_postal IS NULL
+order by n.population desc;
+
+SELECT n.*
+FROM foncier.ref_communes_new AS n
+where n.nom_standard='Amiens';
+
+select o.* from foncier.ref_communes as o
+where code_postal ='80000';
+
+select o.* from foncier.ref_communes as o order by code_postal
+
+-- recherche les anciennes communes absentes de la nouvelle liste dans ref_communes_new
+SELECT o.*
+FROM foncier.ref_communes AS o
+LEFT JOIN foncier.ref_communes_new AS n
+  ON n.code_postal::text = lpad(o.code_postal::text, 5, '0')
+WHERE n.code_postal IS NULL;
+
+----------
+-- recherche des communes dans ref_communes_new dont le code_postal n'a pas de correspondance dans ref_communes
+-- et dans ce cas recherche s'il existe une correspondance entre n.nom_standard_majuscule et o.commune
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
+SELECT
+  n.nom_standard_majuscule         AS nom_commune,
+  o.code_postal          AS code_postal_ancien,
+  n.code_postal          AS code_postal_nouveau
+FROM foncier.ref_communes_new AS n
+JOIN foncier.ref_communes AS o
+  ON unaccent(lower(o.commune)) = unaccent(lower(n.nom_standard_majuscule))
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM foncier.ref_communes AS o2
+  WHERE lpad(o2.code_postal::text, 5, '0') = n.code_postal::text
+);
+-- fournit 105 lignes
+
+----------
+-- recherche des communes dans ref_communes dont le code_postal n'a pas de correspondance dans ref_communes_new
+-- et dans ce cas recherche s'il existe une correspondance entre n.nom_standard_majuscule et o.commune
+SELECT
+  o.commune      AS nom_commune,
+  o.code_postal  AS code_postal_ancien,
+  n.code_postal  AS code_postal_nouveau
+FROM foncier.ref_communes AS o
+JOIN foncier.ref_communes_new AS n
+  ON unaccent(lower(n.nom_standard)) = unaccent(lower(o.commune))
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM foncier.ref_communes_new AS n2
+  WHERE n2.code_postal::text = lpad(o.code_postal::text, 5, '0')
+);
+-- fournit 161 lignes : on y trouve plein de communes avec une variante du code_postal, car les grandes villes ont souvent plusieurs codes postaux
+
+----------
+-- recherche des communes dans ref_communes_new dont le code_postal n'a pas de correspondance dans ref_communes
+-- et pour lesquelles il n'y a pas non plus de correspondance sur le nom
+SELECT n.*
+FROM foncier.ref_communes_new AS n
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM foncier.ref_communes AS o1
+  WHERE lpad(o1.code_postal::text, 5, '0') = n.code_postal::text
+)
+AND NOT EXISTS (
+  SELECT 1
+  FROM foncier.ref_communes AS o2
+  WHERE unaccent(lower(o2.commune)) = unaccent(lower(n.nom_standard))
+);
+-- fournit 1584 lignes, exemple : HEIMSBRUNN
+
+----------
+-- recherche des communes dans ref_communes dont le code_postal n'a pas de correspondance dans ref_communes_new
+-- et pour lesquelles il n'y a pas non plus de correspondance sur le nom
+SELECT o.*
+FROM foncier.ref_communes AS o
+WHERE NOT EXISTS (
+  SELECT 1
+  FROM foncier.ref_communes_new AS n1
+  WHERE n1.code_postal::text = lpad(o.code_postal::text, 5, '0')
+)
+AND NOT EXISTS (
+  SELECT 1
+  FROM foncier.ref_communes_new AS n2
+  WHERE unaccent(lower(n2.nom_standard)) = unaccent(lower(o.commune))
+);
+-- fournit 62 lignes : ex: CLERMOND FERRAND (pas de trait d'union), PARIS 12 (n° d'arrondissement)
+
+SELECT o.*
+FROM foncier.ref_communes AS o
+WHERE NOT EXISTS (
+  -- pas de correspondance sur code postal (format normalisé côté new)
+  SELECT 1
+  FROM foncier.ref_communes_new AS n1
+  WHERE n1.code_postal::text = lpad(o.code_postal::text, 5, '0')
+)
+AND NOT EXISTS (
+  -- pas de correspondance sur le nom de commune (tolérance accents + tirets)
+  SELECT 1
+  FROM foncier.ref_communes_new AS n2
+  WHERE
+    regexp_replace(
+      unaccent(lower(n2.nom_standard)),
+      '[-\s]+',
+      ' ',
+      'g'
+    )
+    =
+    regexp_replace(
+      unaccent(lower(o.commune)),
+      '[-\s]+',
+      ' ',
+      'g'
+    )
+);
+-- fournit 50 lignes : les villes avec arrondissement (Paris, Lyon, Marseille) + PIERRE BENITE + SABLES-D'OLONNE (LES) + OREE D ANJOU(49530)
+-- mais Pierre Bénite a fusionné en 2024 avec Oullins, donc c'est normal que dans le fichier de 2025 elle n'y soit plus
+-- OREE D ANJOU : elle est présente, mais sous le nom Orée d'Anjou, donc c'est l'apostrophe qui pose problème
+-- SABLES-D'OLONNE (LES) : elle est présente, mais sous le nom Les Sables-d'Olonne, donc c'est le déterminant mis à la fin qui pose problème
+-- donc au final, toutes les communes dans ref_communes sont bien présentes dans la nouvelle ref_communes_new

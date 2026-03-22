@@ -45,6 +45,16 @@ Thumbs.db
 
 *.jsonl
 
+# Sorties locales / artefacts E2E
+webapp-foncier/backend/logs/
+webapp-foncier/test_output/
+webapp-foncier/rapport.html
+webapp-foncier/rapport.xml
+
+# Verrous LibreOffice / CSV
+.~lock.*
+**/.~lock.*
+
 # Fichiers .md (non archivés dans git : notes, résumés de session, etc.)
 *.md
 !webapp-foncier/sql/**/*.md

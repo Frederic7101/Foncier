@@ -1,0 +1,28 @@
+est-ce que Licitor.fr répertorie toutes les annonces de ventes aux enchères immobilières sur le terroire français ? ou bien faut-il consulter plusieurs sites pour pouvoir tout consulter ?
+
+Non, Licitor.fr ne couvre pas à lui seul toutes les ventes aux enchères immobilières en France.
+Pour avoir une vision la plus exhaustive possible, il faut croiser plusieurs sources.
+
+Un peu plus de détail
+Licitor.fr est un agrégateur très riche (surtout pour les ventes judiciaires, saisies immobilières, licitations, etc.), mais :
+
+il ne capte pas nécessairement toutes les ventes publiées dans chaque TGI/Cour d’appel,
+certains greffes, études de commissaires de justice / avocats, ou sites locaux ne publient pas systématiquement via Licitor.
+D’autres plates-formes importantes existent, par exemple :
+
+encheres-publiques.com (que tu scrapes) : beaucoup de ventes judiciaires, domaniales, etc.
+Domaines / DGFIP (ventes domaniales de l’État) via leurs propres portails.
+Des portails régionaux ou spécialisés, voire des pages d’études de commissaires de justice ou d’avocats qui publient leurs ventes.
+En pratique, pour une couverture quasi complète des enchères immobilières :
+
+croiser au minimum Licitor + encheres-publiques.com,
+et, si ton objectif est vraiment “exhaustif”, envisager :
+les sites officiels (ventes domaniales, parfois notaires),
+quelques grosses études/maisons de vente qui publient en direct.
+Conclusion opérationnelle pour ton projet
+Si ton but est de proposer un panorama le plus large possible des enchères immobilières :
+
+Licitor.fr seul : insuffisant.
+Stratégie raisonnable :
+Licitor.fr + encheres-publiques.com comme base,
+puis, éventuellement, ajouter au fur et à mesure des sources complémentaires (ventes domaniales, gros acteurs régionaux) si tu constates des “trous” dans les données.

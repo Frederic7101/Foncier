@@ -1,0 +1,13 @@
+# Tests E2E (Playwright) — installer en plus des deps backend.
+#
+# Sur Windows, si greenlet tente une compilation C++ : mettre pip à jour puis
+# préférer les roues binaires :
+#   python -m pip install --upgrade pip setuptools wheel
+#   pip install --prefer-binary -r requirements.txt -r requirements-e2e.txt
+#
+# Ensuite : python -m playwright install chromium
+#
+# greenlet en 3.1+ fournit en général des wheels win_amd64 (évite MSVC).
+greenlet>=3.1.0
+pytest>=8.0
+pytest-playwright>=0.4.4

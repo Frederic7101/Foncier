@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Maquette — Fiche commune investisseur</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="style.css" />
+    <style>
+      /* Overrides et styles spécifiques maquette */
+      .maquette-badge {
+        position: fixed;
+        top: 0.5rem;
+        right: 0.5rem;
+        background: #f59e0b;
+        color: #fff;
+        padding: 0.25rem 0.5rem;
+        border-radius: 0.25rem;
+        font-size: 0.75rem;
+        font-weight: 600;
+        z-index: 1000;
+      }
+      .commune-layout { max-width: 1200px; margin: 0 auto; }
+      .commune-header {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 1rem;
+        margin-bottom: 1rem;
+        padding: 0.75rem;
+        background: #fff;
+        border-radius: 0.75rem;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+      }
+      .commune-header h1 { margin: 0; font-size: 1.35rem; color: #1e3a5f; flex: 1 1 auto; }
+      .commune-header .selects { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+      .commune-header select {
+        padding: 0.35rem 0.5rem;
+        border-radius: 0.4rem;
+        border: 1px solid #d1d5db;
+        font-size: 0.9rem;
+        min-width: 140px;
+      }
+      .commune-header .period { display: flex; align-items: center; gap: 0.35rem; }
+      .commune-header .period input[type="number"] { width: 4rem; padding: 0.35rem; }
+      .commune-header nav { margin-left: auto; }
+      .commune-header nav a { color: #2563eb; text-decoration: none; font-size: 0.85rem; margin-left: 0.75rem; }
+      .commune-header nav a:hover { text-decoration: underline; }
+
+      .section-title {
+        font-size: 1.1rem;
+        font-weight: 700;
+        color: #1e3a5f;
+        margin: 1.5rem 0 0.75rem;
+        padding-bottom: 0.35rem;
+        border-bottom: 2px solid #2563eb;
+      }
+      .section-title:first-of-type { margin-top: 0; }
+
+      .panorama-global {
+        display: grid;
+        grid-template-columns: minmax(280px, 1fr) 1fr;
+        gap: 1rem;
+        margin-bottom: 1rem;
+      }
+      @media (max-width: 700px) { .panorama-global { grid-template-columns: 1fr; } }
+      .map-placeholder {
+        background: linear-gradient(145deg, #e5e7eb 0%, #d1d5db 100%);
+        border-radius: 0.75rem;
+        min-height: 220px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #6b7280;
+        font-size: 0.95rem;
+        border: 2px dashed #9ca3af;
+      }
+      .fiche-chiffres {
+        background: #fff;
+        border-radius: 0.75rem;
+        padding: 1rem;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+      }
+      .fiche-identite { margin-bottom: 1rem; }
+      .fiche-identite p { margin: 0.2rem 0; font-size: 0.9rem; color: #4b5563; }
+      .fiche-identite strong { color: #111827; }
+      .chiffres-cles {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 0.75rem;
+      }
+      .chiffre-card {
+        background: #f8fafc;
+        border-radius: 0.5rem;
+        padding: 0.75rem;
+        border-left: 4px solid #2563eb;
+      }
+      .chiffre-card .label { font-size: 0.75rem; color: #6b7280; text-transform: uppercase; letter-spacing: 0.02em; }
+      .chiffre-card .value { font-size: 1.25rem; font-weight: 700; color: #1e3a5f; }
+
+      .sub-section { margin-bottom: 1.25rem; }
+      .sub-section h3 { font-size: 1rem; color: #374151; margin: 0 0 0.5rem; }
+      .zone-content {
+        background: #fff;
+        border-radius: 0.75rem;
+        padding: 1rem;
+        box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+        margin-bottom: 0.75rem;
+      }
+      .fiscalite-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+      .fiscalite-table th, .fiscalite-table td { padding: 0.5rem; text-align: left; border-bottom: 1px solid #e5e7eb; }
+      .fiscalite-table th { background: #f3f4f6; color: #4b5563; font-weight: 600; }
+      .fiscalite-table .col-right { text-align: right; }
+
+      .vente-summary { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 1rem; }
+      .vente-summary .item { min-width: 120px; }
+      .vente-summary .item .v { font-weight: 700; color: #1e3a5f; }
+      .vente-summary .item .l { font-size: 0.8rem; color: #6b7280; }
+      .chart-placeholder {
+        background: #f8fafc;
+        border-radius: 0.5rem;
+        height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #9ca3af;
+        font-size: 0.9rem;
+        border: 1px dashed #d1d5db;
+      }
+      .location-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 0.75rem; }
+      .location-card {
+        background: #f8fafc;
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        border-left: 4px solid #059669;
+      }
+      .location-card .lbl { font-size: 0.75rem; color: #6b7280; }
+      .location-card .val { font-weight: 700; color: #065f46; }
+
+      .population-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 0.75rem; }
+      .population-card { background: #fff; border-radius: 0.5rem; padding: 1rem; box-shadow: 0 4px 12px rgba(0,0,0,0.06); border-left: 4px solid #7c3aed; }
+      .population-card .lbl { font-size: 0.75rem; color: #6b7280; }
+      .population-card .val { font-weight: 700; color: #5b21b6; }
+      .a-venir {
+        background: #fef3c7;
+        border: 1px dashed #f59e0b;
+        border-radius: 0.5rem;
+        padding: 1.5rem;
+        text-align: center;
+        color: #92400e;
+        font-size: 0.9rem;
+      }
+    </style>
+    <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
+  </head>
+  <body>
+    <div class="maquette-badge">Maquette — Données fictives</div>
+    <div id="app" class="commune-layout">
+      <header style="margin-bottom: 0.5rem;">
+        <h1 style="margin: 0; font-size: 1.5rem; color: #000080;">Fiche commune investisseur</h1>
+        <p class="subtitle" style="margin: 0.25rem 0 0; color: #4b5563; font-size: 0.9rem;">Panorama ville, logement et population</p>
+      </header>
+
+      <!-- En-tête : sélection commune + période -->
+      <div class="commune-header">
+        <h1>Fiche commune — Lyon (69001)</h1>
+        <div class="selects">
+          <select aria-label="Région"><option>— Région —</option><option selected>Auvergne-Rhône-Alpes</option></select>
+          <select aria-label="Département"><option>— Département —</option><option selected>69 Rhône</option></select>
+          <select aria-label="Commune"><option>— Commune —</option><option selected>Lyon</option></select>
+        </div>
+        <div class="period">
+          <span style="font-size: 0.85rem; color: #4b5563;">Période</span>
+          <input type="number" value="2020" min="2014" max="2025" aria-label="Année min" />
+          <span>–</span>
+          <input type="number" value="2024" min="2014" max="2025" aria-label="Année max" />
+        </div>
+        <nav>
+          <a href="recherche_ventes.html">Recherche par adresse</a>
+          <a href="stats_ventes.html">Statistiques par zone</a>
+        </nav>
+      </div>
+
+      <!-- Panorama global -->
+      <h2 class="section-title">Panorama global sur la ville</h2>
+      <div class="panorama-global">
+        <div class="map-placeholder">Carte (centroïde commune + marqueur)</div>
+        <div class="fiche-chiffres">
+          <div class="fiche-identite">
+            <p><strong>Lyon</strong> — 69001</p>
+            <p>Département : Rhône (69) · Région : Auvergne-Rhône-Alpes</p>
+            <p>EPCI : Métropole de Lyon (si disponible)</p>
+          </div>
+          <div class="chiffres-cles">
+            <div class="chiffre-card"><span class="label">Ventes (période)</span><div class="value">2 847</div></div>
+            <div class="chiffre-card"><span class="label">Prix médian</span><div class="value">285 000 €</div></div>
+            <div class="chiffre-card"><span class="label">Loyer médian / m²</span><div class="value">13,20 €</div></div>
+            <div class="chiffre-card"><span class="label">Ménages avec aide logt</span><div class="value">32 %</div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Panorama logement -->
+      <h2 class="section-title">Panorama logement</h2>
+
+      <div class="sub-section">
+        <h3>Fiscalité locale</h3>
+        <div class="zone-content">
+          <table class="fiscalite-table">
+            <thead>
+              <tr><th>Année</th><th class="col-right">TFNB</th><th class="col-right">TFB</th><th class="col-right">TEOM</th><th class="col-right">TH</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>2022</td><td class="col-right">12,45 %</td><td class="col-right">22,18 %</td><td class="col-right">9,12 %</td><td class="col-right">—</td></tr>
+              <tr><td>2023</td><td class="col-right">12,52 %</td><td class="col-right">22,31 %</td><td class="col-right">9,18 %</td><td class="col-right">—</td></tr>
+              <tr><td>2024</td><td class="col-right">12,48 %</td><td class="col-right">22,25 %</td><td class="col-right">9,15 %</td><td class="col-right">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="sub-section">
+        <h3>Vente</h3>
+        <div class="zone-content">
+          <div class="vente-summary">
+            <div class="item"><span class="v">2 847</span><br><span class="l">Ventes</span></div>
+            <div class="item"><span class="v">285 000 €</span><br><span class="l">Prix médian</span></div>
+            <div class="item"><span class="v">4 120 €/m²</span><br><span class="l">Prix médian / m²</span></div>
+            <div class="item"><span class="v">68 m²</span><br><span class="l">Surface médiane</span></div>
+            <div class="item"><span class="l">Type</span><br><span class="v">Tous · Appart. · Maison</span></div>
+          </div>
+          <div class="chart-placeholder">Évolution prix médian (€) — courbe par année</div>
+          <div style="margin-top: 0.5rem; font-size: 0.85rem; color: #6b7280;">Répartition : Appartement 78 % · Maison 22 %</div>
+        </div>
+      </div>
+
+      <div class="sub-section">
+        <h3>Location</h3>
+        <div class="zone-content">
+          <div class="location-grid">
+            <div class="location-card"><span class="lbl">Loyer/m² (appart.)</span><div class="val">13,20 €</div><span class="lbl">[12,10 – 14,30]</span></div>
+            <div class="location-card"><span class="lbl">Loyer/m² (maison)</span><div class="val">10,80 €</div><span class="lbl">[9,50 – 12,10]</span></div>
+            <div class="location-card"><span class="lbl">Part APL</span><div class="val">28 %</div></div>
+            <div class="location-card"><span class="lbl">Autre aide logt</span><div class="val">12 %</div></div>
+          </div>
+          <div class="chart-placeholder" style="margin-top: 0.75rem;">Évolution loyer au m² (€) — courbe par année</div>
+        </div>
+      </div>
+
+      <!-- Panorama population -->
+      <h2 class="section-title">Panorama population</h2>
+      <div class="zone-content">
+        <div class="population-grid">
+          <div class="population-card"><span class="lbl">Logements (RPLs)</span><div class="val">~ 185 000</div></div>
+          <div class="population-card"><span class="lbl">Répart. 1–2 pièces</span><div class="val">42 %</div></div>
+          <div class="population-card"><span class="lbl">Répart. 3+ pièces</span><div class="val">58 %</div></div>
+          <div class="population-card"><span class="lbl">Logts &lt; 1990</span><div class="val">35 %</div></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-top: 1rem;">
+          <div class="a-venir"><strong>Population</strong><br>Effectifs, pyramide des âges — données à venir (Insee)</div>
+          <div class="a-venir"><strong>Revenus & emploi</strong><br>Revenu médian, chômage, CSP — données à venir (Insee)</div>
+        </div>
+      </div>
+
+      <p style="margin-top: 2rem; font-size: 0.8rem; color: #9ca3af;">Maquette graphique · Fiche commune investisseur · webapp-foncier</p>
+    </div>
+  </body>
+</html>
