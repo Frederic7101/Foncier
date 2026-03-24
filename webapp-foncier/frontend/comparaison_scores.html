@@ -197,6 +197,11 @@
       .comparaison-tables-dynamic { display: flex; flex-direction: column; gap: 1.25rem; }
       .comparaison-table-criteria { margin: 0 0 0.5rem; font-size: 0.8rem; color: #6b7280; }
       .comparaison-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+      .comparaison-pagination { display: flex; align-items: center; gap: 0.5rem; padding: 0.5rem 0.25rem; font-size: 0.88rem; color: #374151; flex-wrap: wrap; }
+      .comparaison-pagination button { padding: 0.25rem 0.7rem; border: 1px solid #d1d5db; border-radius: 0.3rem; background: #fff; cursor: pointer; font-size: 0.88rem; }
+      .comparaison-pagination button:disabled { opacity: 0.4; cursor: not-allowed; }
+      .comparaison-pagination button:not(:disabled):hover { background: #f3f4f6; }
+      .comparaison-pagination .pag-info { color: #6b7280; }
       .comparaison-table th.sortable:hover { background: #e2e8f0; }
       .comparaison-table th.sortable .sort-icon { font-size: 0.7em; margin-left: 0.2rem; opacity: 0.7; }
       #comparaison-empty, #comparaison-loading, #comparaison-error { padding: 1.5rem; text-align: center; color: #6b7280; font-size: 0.9rem; }
@@ -1146,6 +1151,8 @@
         var lastComparaisonRows = [];
         var lastComparaisonJobs = [];
         var lastRowsByFilterKey = {};
+        // "dept" | "region" | "france" | null — mémorise si la sélection en masse a eu lieu
+        var selectionMassMode = null;
         var lastTableConfigs = [];
         var sortByTable = {};
         var mapViz = {
@@ -1262,11 +1269,13 @@
           return "communes";
         }
 
-        function renderTableBody(tbodyEl, rows, indicators, sortKey, sortDesc, displayMode) {
-          displayMode = displayMode || (rows.length ? getDisplayModeFromRows(rows) : "communes");
-          var sorted = (sortKey && rows.length) ? sortRows(rows, sortKey, sortDesc) : rows;
-          tbodyEl.innerHTML = sorted.map(function (row, idx) {
-            var rank = idx + 1;
+        var TABLE_PAGE_SIZE = 200; // lignes affichées par page
+
+        function renderTablePage(tbodyEl, sorted, indicators, displayMode, page) {
+          var start = page * TABLE_PAGE_SIZE;
+          var pageRows = sorted.slice(start, start + TABLE_PAGE_SIZE);
+          tbodyEl.innerHTML = pageRows.map(function (row, j) {
+            var rank = start + j + 1;
             var region = row.region || row.reg_nom || "—";
             var cells = indicators.map(function (ind) {
               var v = row[ind.key];
@@ -1295,6 +1304,54 @@
             var cellCommune = link !== "#" ? "<a class=\"commune-link\" href=\"" + escapeHtml(link) + "\">" + escapeHtml(commune) + "</a>" : escapeHtml(commune);
             return "<tr><td class=\"col-num\">" + rank + "</td><td>" + escapeHtml(region) + "</td><td class=\"col-num\">" + escapeHtml(codeDeptR) + "</td><td class=\"col-num\">" + escapeHtml(codePostalR) + "</td><td>" + cellCommune + "</td>" + cells.join("") + "</tr>";
           }).join("");
+        }
+
+        function renderPaginationBar(pagBarEl, sorted, page, onPageChange) {
+          var total = sorted.length;
+          var nbPages = Math.ceil(total / TABLE_PAGE_SIZE);
+          if (nbPages <= 1) { pagBarEl.hidden = true; return; }
+          pagBarEl.hidden = false;
+          var start = page * TABLE_PAGE_SIZE + 1;
+          var end = Math.min((page + 1) * TABLE_PAGE_SIZE, total);
+          pagBarEl.innerHTML =
+            "<button data-p=\"prev\" " + (page === 0 ? "disabled" : "") + ">&#8592; Préc.</button>" +
+            "<span class=\"pag-info\">" + start + "–" + end + " sur " + total + " (page " + (page + 1) + "/" + nbPages + ")</span>" +
+            "<button data-p=\"next\" " + (page >= nbPages - 1 ? "disabled" : "") + ">Suiv. &#8594;</button>";
+          pagBarEl.onclick = function (e) {
+            var btn = e.target.closest("button[data-p]");
+            if (!btn || btn.disabled) return;
+            var newPage = btn.getAttribute("data-p") === "prev" ? page - 1 : page + 1;
+            onPageChange(newPage);
+          };
+        }
+
+        function renderTableBody(tbodyEl, rows, indicators, sortKey, sortDesc, displayMode) {
+          displayMode = displayMode || (rows.length ? getDisplayModeFromRows(rows) : "communes");
+          var sorted = (sortKey && rows.length) ? sortRows(rows, sortKey, sortDesc) : rows;
+
+          // Trouver ou créer la barre de pagination (insérée après le tableau parent)
+          var tableEl = tbodyEl.closest("table");
+          var wrapEl = tableEl ? tableEl.parentElement : null;
+          var pagBarId = tbodyEl.id + "-pag";
+          var pagBarEl = document.getElementById(pagBarId);
+          if (!pagBarEl && wrapEl) {
+            pagBarEl = document.createElement("div");
+            pagBarEl.id = pagBarId;
+            pagBarEl.className = "comparaison-pagination";
+            wrapEl.parentElement && wrapEl.parentElement.insertBefore(pagBarEl, wrapEl.nextSibling);
+          }
+
+          var currentPage = 0;
+
+          function goToPage(p) {
+            currentPage = p;
+            renderTablePage(tbodyEl, sorted, indicators, displayMode, currentPage);
+            if (pagBarEl) renderPaginationBar(pagBarEl, sorted, currentPage, goToPage);
+            // Scroll vers le haut du tableau
+            if (tableEl) tableEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+
+          goToPage(0);
         }
 
         function bindSortHandlers(blockId, theadEl, tbodyEl, rows, indicators) {
@@ -1330,7 +1387,7 @@
           });
           return out;
         }
-
+        /* ancien code : Cursor
         function fetchComparaisonScoresBatch(baseParams, uniqueKeys, scorePrincipal, cat) {
           if (!uniqueKeys.length) return Promise.resolve({});
           return Promise.all(
@@ -1344,6 +1401,58 @@
               p.set("score_principal", sk);
               return fetch(API_BASE + "/api/comparaison_scores?" + p.toString())
                 .then(function (r) {
+                  if (!r.ok) {
+                    throw new Error(
+                      r.status === 404 ? "Endpoint /api/comparaison_scores non encore implémenté." : "Erreur " + r.status
+                    );
+                  }
+                  return r.json();
+                })
+                .then(function (data) {
+                  return { fk: fk, rows: data.rows || data.lignes || data.communes || [] };
+                });
+            })
+          ).then(function (pairs) {
+            var out = {};
+            pairs.forEach(function (x) {
+              out[x.fk] = x.rows;
+            });
+            return out;
+          });
+        }
+        */
+        // nouveau code (Claude.ia) : réécriture pour remplacer le GET par un POST (pour contourner la limite de taille des URL GET)
+        function fetchComparaisonScoresBatch(baseParams, uniqueKeys, scorePrincipal, cat) {
+          if (!uniqueKeys.length) return Promise.resolve({});
+
+          // Extraire les listes de communes/depts/regions depuis baseParams
+          // pour les envoyer en POST (body JSON) et contourner la limite de taille des URL GET.
+          var baseObj = {};
+          baseParams.forEach(function (v, k) {
+            if (k === "code_dept" || k === "code_postal" || k === "commune" || k === "code_region" || k === "scores_secondaires") {
+              if (!baseObj[k]) baseObj[k] = [];
+              baseObj[k].push(v);
+            } else {
+              baseObj[k] = v;
+            }
+          });
+
+          return Promise.all(
+            uniqueKeys.map(function (fk) {
+              var parts = fk.split(FILTER_KEY_SEP);
+              var sk = resolveFullRentabiliteScoreKey(scorePrincipal, parts[0], parts[1], parts[2], cat);
+              var body = Object.assign({}, baseObj, {
+                type_logt: parts[0] != null ? parts[0] : "",
+                type_surf: parts[1] != null ? parts[1] : "",
+                nb_pieces: parts[2] != null ? parts[2] : "",
+                score_principal: sk
+              });
+              return fetch(API_BASE + "/api/comparaison_scores", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body)
+              })
+              .then(function (r) {
                   if (!r.ok) {
                     throw new Error(
                       r.status === 404 ? "Endpoint /api/comparaison_scores non encore implémenté." : "Erreur " + r.status
@@ -2026,6 +2135,107 @@
          * Cadrage : zoom/centrage **par carte** sur les communes sélectionnées **dans ce département** (pas de vue globale commune).
          * Pas de liaison zoom/pan entre cartes (réservé aux modes départements / régions).
          */
+        /**
+         * Carte unique France/région/département pour une sélection en masse.
+         * Affiche toutes les communes sur une seule carte choroplèthe au lieu d'une grille par département.
+         */
+        function renderCommunesMassMap(jobs, rowsByFilterKey, min, max, massMode) {
+          var status = document.getElementById("comparaison-map-status");
+          var singleMap = document.getElementById("comparaison-score-map-single");
+          var grid = document.getElementById("comparaison-communes-maps-grid");
+          if (!grid) return;
+
+          clearCommuneMaps();
+          if (singleMap) singleMap.style.display = "none";
+
+          // On utilise la 1ère grille mais avec une seule grande carte
+          grid.hidden = false;
+
+          ensureCommunesGeoJsonAll()
+            .then(function (allGeoJson) {
+              if (typeof L === "undefined") throw new Error("Librairie cartographique indisponible.");
+              if (status) status.textContent = "";
+
+              var job = jobs[0];
+              var rows = rowsByFilterKey[job.filterKey] || [];
+              var scoreKey = job.scoreKey;
+
+              // Construire un index score par nom normalisé de commune
+              var valuesByCommune = aggregateCommuneScoresFromRows(
+                rows.map(function (r) {
+                  return { communeNorm: normalizeCommuneNameForMapMatch(r.commune || ""), communeRaw: r.commune || "", score: numericScoreFromRow(r, scoreKey) };
+                })
+              );
+
+              // Filtrer le GeoJSON selon le mode
+              var features = allGeoJson.features;
+              if (massMode === "region" || massMode === "dept") {
+                // Garder seulement les communes présentes dans les données
+                var presentDepts = new Set(rows.map(function (r) { return String(r.code_dept || "").toUpperCase(); }));
+                features = features.filter(function (f) {
+                  var props = (f && f.properties) || {};
+                  var code = String(props.code || "").trim();
+                  return presentDepts.has(deptCodeFromInsee(code));
+                });
+              }
+              var filteredGeoJson = { type: "FeatureCollection", features: features };
+
+              var jobWrap = document.createElement("div");
+              jobWrap.className = "comparaison-communes-maps-job";
+              var innerGrid = document.createElement("div");
+              innerGrid.className = "comparaison-communes-maps-grid-inner";
+              jobWrap.appendChild(innerGrid);
+              grid.appendChild(jobWrap);
+
+              communeMapSeq += 1;
+              var mapId = "comparaison-commune-map-" + communeMapSeq;
+              var card = document.createElement("div");
+              card.className = "comparaison-commune-map-card";
+              card.style.width = "100%";
+              card.innerHTML = '<div id="' + escapeHtml(mapId) + '" class="comparaison-commune-map" style="height:520px"></div>';
+              innerGrid.appendChild(card);
+
+              var map = L.map(mapId, { zoomControl: true, scrollWheelZoom: true, minZoom: 4, maxZoom: 13 });
+              attachPreferredBaseLayer(map);
+
+              var layer = L.geoJSON(filteredGeoJson, {
+                style: function (feature) {
+                  var props = (feature && feature.properties) || {};
+                  var n = normalizeCommuneNameForMapMatch(props.nom || props.name || "");
+                  var found = valuesByCommune[n];
+                  var scoreVal = found && found.score != null && Number.isFinite(Number(found.score)) ? Number(found.score) : null;
+                  if (found == null) {
+                    return { color: "#ca8a04", weight: 0.3, fillColor: "#fef9c3", fillOpacity: 0.5 };
+                  }
+                  return {
+                    color: "#374151",
+                    weight: 0.3,
+                    fillColor: scoreVal != null ? scoreColor(scoreVal, min, max) : "#d1d5db",
+                    fillOpacity: scoreVal != null ? 0.85 : 0.3
+                  };
+                },
+                onEachFeature: function (feature, fLayer) {
+                  var props = (feature && feature.properties) || {};
+                  var nom = props.nom || props.name || "";
+                  var n = normalizeCommuneNameForMapMatch(nom);
+                  var found = valuesByCommune[n];
+                  var scoreVal = found && found.score != null ? Number(found.score) : null;
+                  var scoreStr = Number.isFinite(scoreVal) ? formatPct(scoreVal) : "—";
+                  fLayer.bindTooltip(escapeHtml(nom) + " : " + scoreStr, { sticky: true });
+                }
+              });
+
+              layer.addTo(map);
+              try { map.fitBounds(layer.getBounds(), { padding: [10, 10] }); } catch (e) {}
+
+              mapViz.communeMaps = mapViz.communeMaps || [];
+              mapViz.communeMaps.push({ map: map, layer: layer, job: job });
+            })
+            .catch(function (err) {
+              if (status) status.textContent = "Erreur carte : " + (err.message || err);
+            });
+        }
+
         function renderCommuneDeptMapsMulti(jobs, rowsByFilterKey, min, max) {
           var status = document.getElementById("comparaison-map-status");
           var singleMap = document.getElementById("comparaison-score-map-single");
@@ -2290,7 +2500,12 @@
             }
             var communeHintPre = document.getElementById("comparaison-map-commune-legend-hint");
             if (communeHintPre) communeHintPre.hidden = true;
-            renderCommuneDeptMapsMulti(mapJobs, rowsByFilterKey, min, max);
+            // Sélection en masse → carte globale (France ou région) au lieu de la grille par département
+            if (selectionMassMode === "france" || selectionMassMode === "region" || selectionMassMode === "dept") {
+              renderCommunesMassMap(mapJobs, rowsByFilterKey, min, max, selectionMassMode);
+            } else {
+              renderCommuneDeptMapsMulti(mapJobs, rowsByFilterKey, min, max);
+            }
             mapViz.mode = "communes";
             return;
           }
@@ -2898,6 +3113,7 @@
           if (deptSelect) deptSelect.value = code_dept;
           fillCommunes();
           addSelectedCommuneItem({ code_dept: code_dept, code_postal: code_postal, commune: commune });
+          renderSelectedList();
           if (searchInput) searchInput.value = code_postal + " " + commune;
         }
 
@@ -2966,6 +3182,7 @@
             minChars: 2,
             onSelect: function (item) {
               addSelectedCommuneItem(item);
+              renderSelectedList();
             }
           });
         })();
@@ -2977,6 +3194,7 @@
         document.getElementById("comparaison-vider-liste").addEventListener("click", function () {
           var mode = getComparaisonMode();
           selectedCommunes.length = 0;
+          selectionMassMode = null;
           if (mode === "departements") {
             initDepartementsModeSelectionState();
           } else if (mode === "regions") {
@@ -3002,19 +3220,25 @@
             // si sélection en masse (Toutes les communes du département, Toutes les communes de la région, Toutes les communes de France)
             if (v === "__ALL_DEPT__" || v === "__ALL_REGION__" || v === "__ALL_FRANCE__") {
               console.log("(initCommuneSelect) sélection en masse");
+              // Mémoriser le mode de sélection en masse pour orienter le rendu cartographique
+              if (v === "__ALL_FRANCE__") selectionMassMode = "france";
+              else if (v === "__ALL_REGION__") selectionMassMode = "region";
+              else selectionMassMode = "dept";
               // Remplir la liste avec toutes les communes sélectionnées en masse
               (listCommunes || []).forEach(function (c) { addSelectedCommuneItem(c); });
-              renderSelectedList(); // ← une seule fois après la boucle (optimisation conseillée par Claude.ia)
+              renderSelectedList(); // ← une seule fois après la boucle
               sel.value = "";
               return;
             }
             else {
               console.log("(initCommuneSelect) sélection individuelle");
+              selectionMassMode = null; // sélection manuelle → cartes par département
             }
             try {
               const c = JSON.parse(v);
               console.log("(initCommuneSelect) c : ", c);
               addSelectedCommuneItem(c);
+              renderSelectedList();
             } catch (e) {}
             sel.value = "";
           });
@@ -3342,6 +3566,7 @@
 
           // 2) Réinitialiser les états métier / sélections.
           selectedCommunes.length = 0;
+          selectionMassMode = null;
           listCommunes = [];
 
           // Mode par défaut: communes.

@@ -2654,88 +2654,98 @@ def _compute_one_commune_indicators(stats: dict, fiche: dict, c_dept: str, c_pos
     return out_cc
 
 
+_RESOLVE_CHUNK_SIZE = 5000  # 5000 communes x 3 params = 15000 < limite PostgreSQL de 32767
+
 def _resolve_communes_to_ref(cur, communes: List[tuple]) -> List[dict]:
-    """Pour une liste de (code_dept, code_postal, commune), retourne les lignes ref_communes (code_insee, code_dept, code_postal, commune, reg_nom, dep_nom, population)."""
+    """Pour une liste de (code_dept, code_postal, commune), retourne les lignes ref_communes.
+    Traite par chunks de _RESOLVE_CHUNK_SIZE pour rester sous la limite PostgreSQL de 32767 parametres."""
     if not communes:
         return []
-    try:
-        placeholders = ", ".join(
-            "(%s, %s, %s)" for _ in communes
-        )
-        params = []
-        for (d, p, n) in communes:
-            params.extend([d, p, _normalize_name_canonical(n)])
-        sql = (
-            "SELECT c.code_insee, c.dep_code AS code_dept, c.code_postal, c.nom_standard AS commune, "
-            "r.nom_region AS reg_nom, d.nom_dept AS dep_nom, "
-            "GREATEST(COALESCE(c.population, 0)::int, 1) AS population "
-            "FROM foncier.ref_communes c "
-            "LEFT JOIN foncier.ref_departements d ON d.code_dept = c.dep_code "
-            "LEFT JOIN foncier.ref_regions r ON r.code_region = d.code_region "
-            "WHERE (c.dep_code, c.code_postal, " + _sql_norm_name_canonical("nom_standard_majuscule") + ") IN (" + placeholders + ")"
-        )
-        cur.execute(sql, params)
-        return [dict(r) for r in cur.fetchall()]
-    except psycopg2.Error:
-        return []
+    out: List[dict] = []
+    for i in range(0, len(communes), _RESOLVE_CHUNK_SIZE):
+        chunk = communes[i: i + _RESOLVE_CHUNK_SIZE]
+        try:
+            placeholders = ", ".join("(%s, %s, %s)" for _ in chunk)
+            params = []
+            for (d, p, n) in chunk:
+                params.extend([d, p, _normalize_name_canonical(n)])
+            sql = (
+                "SELECT c.code_insee, c.dep_code AS code_dept, c.code_postal, c.nom_standard AS commune, "
+                "r.nom_region AS reg_nom, d.nom_dept AS dep_nom, "
+                "GREATEST(COALESCE(c.population, 0)::int, 1) AS population "
+                "FROM foncier.ref_communes c "
+                "LEFT JOIN foncier.ref_departements d ON d.code_dept = c.dep_code "
+                "LEFT JOIN foncier.ref_regions r ON r.code_region = d.code_region "
+                "WHERE (c.dep_code, c.code_postal, " + _sql_norm_name_canonical("nom_standard_majuscule") + ") IN (" + placeholders + ")"
+            )
+            cur.execute(sql, params)
+            out.extend(dict(r) for r in cur.fetchall())
+        except psycopg2.Error:
+            pass  # on continue les chunks suivants meme en cas d erreur partielle
+    return out
 
+
+_READ_INDIC_CHUNK_SIZE = 10000  # 10000 codes INSEE x 1 param = 10000 < limite PostgreSQL de 32767
 
 def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
-    """Retourne un dict code_insee -> ligne (champs pour comparaison_scores)."""
+    """Retourne un dict code_insee -> ligne (champs pour comparaison_scores).
+    Traite par chunks de _READ_INDIC_CHUNK_SIZE pour rester sous la limite PostgreSQL de 32767 parametres."""
     if not code_insee_list:
         return {}
-    try:
-        placeholders = ",".join(["%s"] * len(code_insee_list))
-        cur.execute(
-            "SELECT code_insee, code_dept, code_postal, commune, reg_nom, dep_nom, population, nb_locaux, nb_ventes_dvf, indicateurs_par_periode, "
-            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
-            "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
-            "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
-            + ", ".join(TRANCHE_RENTA_COLS)
-            + ", taux_tfb, taux_teom FROM foncier.indicateurs_communes WHERE code_insee IN (" + placeholders + ")",
-            code_insee_list,
-        )
-        rows = cur.fetchall()
-        out = {}
-        for r in rows:
-            ci = r.get("code_insee")
-            if ci:
-                ipp = r.get("indicateurs_par_periode")
-                if isinstance(ipp, str):
-                    try:
-                        ipp = json.loads(ipp)
-                    except (TypeError, ValueError):
-                        ipp = None
-                row_d = {
-                    "code_dept": r.get("code_dept"),
-                    "code_postal": r.get("code_postal"),
-                    "commune": r.get("commune"),
-                    "region": r.get("reg_nom") or "",
-                    "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
-                    "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
-                    "indicateurs_par_periode": ipp if isinstance(ipp, dict) else None,
-                    "renta_brute": float(r["renta_brute"]) if r.get("renta_brute") is not None else None,
-                    "renta_nette": float(r["renta_nette"]) if r.get("renta_nette") is not None else None,
-                    "renta_brute_maisons": float(r["renta_brute_maisons"]) if r.get("renta_brute_maisons") is not None else None,
-                    "renta_nette_maisons": float(r["renta_nette_maisons"]) if r.get("renta_nette_maisons") is not None else None,
-                    "renta_brute_appts": float(r["renta_brute_appts"]) if r.get("renta_brute_appts") is not None else None,
-                    "renta_nette_appts": float(r["renta_nette_appts"]) if r.get("renta_nette_appts") is not None else None,
-                    "renta_brute_parking": float(r["renta_brute_parking"]) if r.get("renta_brute_parking") is not None else None,
-                    "renta_nette_parking": float(r["renta_nette_parking"]) if r.get("renta_nette_parking") is not None else None,
-                    "renta_brute_local_indus": float(r["renta_brute_local_indus"]) if r.get("renta_brute_local_indus") is not None else None,
-                    "renta_nette_local_indus": float(r["renta_nette_local_indus"]) if r.get("renta_nette_local_indus") is not None else None,
-                    "renta_brute_terrain": float(r["renta_brute_terrain"]) if r.get("renta_brute_terrain") is not None else None,
-                    "renta_nette_terrain": float(r["renta_nette_terrain"]) if r.get("renta_nette_terrain") is not None else None,
-                    "renta_brute_immeuble": float(r["renta_brute_immeuble"]) if r.get("renta_brute_immeuble") is not None else None,
-                    "renta_nette_immeuble": float(r["renta_nette_immeuble"]) if r.get("renta_nette_immeuble") is not None else None,
-                    "taux_tfb": float(r["taux_tfb"]) if r.get("taux_tfb") is not None else None,
-                    "taux_teom": float(r["taux_teom"]) if r.get("taux_teom") is not None else None,
-                }
-                _append_tranche_floats_from_db_row(r, row_d)
-                out[ci] = row_d
-        return out
-    except psycopg2.Error:
-        return {}
+    out: dict = {}
+    select_sql = (
+        "SELECT code_insee, code_dept, code_postal, commune, reg_nom, dep_nom, population, nb_locaux, nb_ventes_dvf, indicateurs_par_periode, "
+        "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
+        "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
+        "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
+        + ", ".join(TRANCHE_RENTA_COLS)
+        + ", taux_tfb, taux_teom FROM foncier.indicateurs_communes WHERE code_insee IN "
+    )
+    for i in range(0, len(code_insee_list), _READ_INDIC_CHUNK_SIZE):
+        chunk = code_insee_list[i: i + _READ_INDIC_CHUNK_SIZE]
+        try:
+            placeholders = ",".join(["%s"] * len(chunk))
+            cur.execute(select_sql + "(" + placeholders + ")", chunk)
+            rows = cur.fetchall()
+            for r in rows:
+                ci = r.get("code_insee")
+                if ci:
+                    ipp = r.get("indicateurs_par_periode")
+                    if isinstance(ipp, str):
+                        try:
+                            ipp = json.loads(ipp)
+                        except (TypeError, ValueError):
+                            ipp = None
+                    row_d = {
+                        "code_dept": r.get("code_dept"),
+                        "code_postal": r.get("code_postal"),
+                        "commune": r.get("commune"),
+                        "region": r.get("reg_nom") or "",
+                        "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
+                        "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
+                        "indicateurs_par_periode": ipp if isinstance(ipp, dict) else None,
+                        "renta_brute": float(r["renta_brute"]) if r.get("renta_brute") is not None else None,
+                        "renta_nette": float(r["renta_nette"]) if r.get("renta_nette") is not None else None,
+                        "renta_brute_maisons": float(r["renta_brute_maisons"]) if r.get("renta_brute_maisons") is not None else None,
+                        "renta_nette_maisons": float(r["renta_nette_maisons"]) if r.get("renta_nette_maisons") is not None else None,
+                        "renta_brute_appts": float(r["renta_brute_appts"]) if r.get("renta_brute_appts") is not None else None,
+                        "renta_nette_appts": float(r["renta_nette_appts"]) if r.get("renta_nette_appts") is not None else None,
+                        "renta_brute_parking": float(r["renta_brute_parking"]) if r.get("renta_brute_parking") is not None else None,
+                        "renta_nette_parking": float(r["renta_nette_parking"]) if r.get("renta_nette_parking") is not None else None,
+                        "renta_brute_local_indus": float(r["renta_brute_local_indus"]) if r.get("renta_brute_local_indus") is not None else None,
+                        "renta_nette_local_indus": float(r["renta_nette_local_indus"]) if r.get("renta_nette_local_indus") is not None else None,
+                        "renta_brute_terrain": float(r["renta_brute_terrain"]) if r.get("renta_brute_terrain") is not None else None,
+                        "renta_nette_terrain": float(r["renta_nette_terrain"]) if r.get("renta_nette_terrain") is not None else None,
+                        "renta_brute_immeuble": float(r["renta_brute_immeuble"]) if r.get("renta_brute_immeuble") is not None else None,
+                        "renta_nette_immeuble": float(r["renta_nette_immeuble"]) if r.get("renta_nette_immeuble") is not None else None,
+                        "taux_tfb": float(r["taux_tfb"]) if r.get("taux_tfb") is not None else None,
+                        "taux_teom": float(r["taux_teom"]) if r.get("taux_teom") is not None else None,
+                    }
+                    _append_tranche_floats_from_db_row(r, row_d)
+                    out[ci] = row_d
+        except psycopg2.Error:
+            pass  # on continue les chunks suivants meme en cas d erreur partielle
+    return out
 
 
 def _upsert_indicateurs_communes(conn, cur, row: dict, commit: bool = True) -> Tuple[bool, Optional[str]]:
@@ -3337,6 +3347,45 @@ def get_comparaison_scores(
     _debug_log("[comparaison_scores] sortie: %s ligne(s) retournée(s)", len(rows))
     return {"rows": rows}
 
+# nouvelle version (Claude.ia) : ajout de la validation du body JSON
+class ComparaisonScoresBody(BaseModel):
+    mode: str = "communes"
+    code_dept: Optional[List[str]] = None
+    code_postal: Optional[List[str]] = None
+    commune: Optional[List[str]] = None
+    code_region: Optional[List[str]] = None
+    score_principal: str = "renta_nette"
+    n_max: int = 50000 # maximum de 50000 communes
+    nb_locaux_min: Optional[int] = None
+    periode_annees: int = 1
+    scores_secondaires: Optional[List[str]] = None
+    type_logt: Optional[str] = None
+    type_surf: Optional[str] = None
+    nb_pieces: Optional[str] = None
+
+
+@app.post("/api/comparaison_scores")
+def post_comparaison_scores(body: ComparaisonScoresBody):
+    """Version POST de /api/comparaison_scores — identique mais accepte un body JSON.
+    Nécessaire pour les sélections dépassant ~800 communes (limite URL GET).
+    """
+    return get_comparaison_scores(
+        mode=body.mode,
+        code_dept=body.code_dept,
+        code_postal=body.code_postal,
+        commune=body.commune,
+        code_region=body.code_region,
+        score_principal=body.score_principal,
+        n_max=max(1, min(body.n_max, 50000)),
+        nb_locaux_min=body.nb_locaux_min,
+        periode_annees=body.periode_annees,
+        scores_secondaires=body.scores_secondaires,
+        type_logt=body.type_logt,
+        type_surf=body.type_surf,
+        nb_pieces=body.nb_pieces,
+    )
+
+
 
 # Noms de paramètres connus pour refresh-indicateurs (pour détecter les typos)
 _REFRESH_INDICATEURS_KNOWN_PARAMS = {"code_insee_list", "limit", "batch_commit", "workers"}
@@ -3847,5 +3896,6 @@ if os.path.isdir(_frontend_dir):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True,
+                  h11_max_incomplete_event_size=20_000_000)  # 20 Mo — nécessaire pour les sélections >7000 communes
 
