@@ -411,17 +411,54 @@
       .comparaison-map-legend-bar {
         width: 100%;
         height: 14px;
-        border-radius: 999px;
+        border-radius: 3px;
         border: 1px solid #d1d5db;
         background: linear-gradient(90deg, #f0fdf4 0%, #bbf7d0 25%, #4ade80 50%, #16a34a 75%, #14532d 100%);
+        position: relative;
+      }
+      .comparaison-map-legend-ticks {
+        position: relative;
+        height: 18px;
+        margin-top: 1px;
+      }
+      .comparaison-map-legend-ticks .tick {
+        position: absolute;
+        transform: translateX(-50%);
+        font-size: 0.7rem;
+        color: #6b7280;
+        white-space: nowrap;
+      }
+      .comparaison-map-legend-ticks .tick::before {
+        content: "";
+        display: block;
+        width: 1px;
+        height: 5px;
+        background: #9ca3af;
+        margin: 0 auto 1px;
       }
       .comparaison-map-legend-labels {
-        margin-top: 0.35rem;
+        margin-top: 0.15rem;
         display: flex;
         justify-content: space-between;
         font-size: 0.8rem;
         color: #4b5563;
       }
+      .comparaison-map-legend-controls {
+        display: flex;
+        align-items: center;
+        gap: 0.4rem;
+        margin-top: 0.5rem;
+        font-size: 0.8rem;
+        color: #374151;
+        flex-wrap: wrap;
+      }
+      .comparaison-map-legend-controls input[type=number] {
+        font-size: 0.8rem;
+        padding: 0.15rem 0.3rem;
+        border: 1px solid #d1d5db;
+        border-radius: 0.25rem;
+      }
+      .comparaison-map-legend-controls input[type=range] { cursor: pointer; }
       #comparaison-map-commune-legend-hint[hidden] { display: none; }
       .comparaison-map-commune-legend-hint {
         margin-top: 0.5rem;
@@ -654,10 +691,18 @@
           <div id="comparaison-communes-maps-grid" hidden></div>
           <div id="comparaison-map-status"></div>
           <div id="comparaison-map-legend" hidden>
-            <div class="comparaison-map-legend-bar"></div>
+            <div class="comparaison-map-legend-bar" id="comparaison-map-legend-bar"></div>
+            <div class="comparaison-map-legend-ticks" id="comparaison-map-legend-ticks"></div>
             <div class="comparaison-map-legend-labels">
               <span id="comparaison-map-legend-min">Min</span>
               <span id="comparaison-map-legend-max">Max</span>
+            </div>
+            <div class="comparaison-map-legend-controls">
+              <label>Min&nbsp;<input type="number" id="legend-input-min" step="0.1" style="width:5.5rem"></label>
+              <input type="range" id="legend-range-min" min="0" max="100" step="0.1" style="width:6rem">
+              <span style="flex:1"></span>
+              <input type="range" id="legend-range-max" min="0" max="100" step="0.1" style="width:6rem">
+              <label><input type="number" id="legend-input-max" step="0.1" style="width:5.5rem">&nbsp;Max</label>
             </div>
             <div id="comparaison-map-commune-legend-hint" class="comparaison-map-commune-legend-hint" hidden>
               <span class="legend-item"><span class="commune-legend-swatch" style="background:#fde047;border-color:#ca8a04"></span> Pas de correspondance (données / nom)</span>
@@ -1153,6 +1198,9 @@
         var lastRowsByFilterKey = {};
         // "dept" | "region" | "france" | null — mémorise si la sélection en masse a eu lieu
         var selectionMassMode = null;
+        // Bornes personnalisées de la légende (null = auto)
+        var legendCustomMin = null;
+        var legendCustomMax = null;
         var lastTableConfigs = [];
         var sortByTable = {};
         var mapViz = {
@@ -1735,6 +1783,103 @@
           return "";
         }
 
+        /** Met à jour la barre de dégradé + les ticks de graduation selon les bornes actives. */
+        function updateLegendGradient(rawMin, rawMax) {
+          var lo = legendCustomMin !== null ? legendCustomMin : rawMin;
+          var hi = legendCustomMax !== null ? legendCustomMax : rawMax;
+          var minEl  = document.getElementById("comparaison-map-legend-min");
+          var maxEl  = document.getElementById("comparaison-map-legend-max");
+          var ticks  = document.getElementById("comparaison-map-legend-ticks");
+          if (minEl) minEl.textContent = "Min : " + formatLegendValue(lo);
+          if (maxEl) maxEl.textContent = "Max : " + formatLegendValue(hi);
+          // Graduation : 5 ticks à 0 % / 25 % / 50 % / 75 % / 100 %
+          if (ticks) {
+            var steps = [0, 0.25, 0.5, 0.75, 1];
+            ticks.innerHTML = steps.map(function (t) {
+              var val = lo + t * (hi - lo);
+              return '<span class="tick" style="left:' + (t * 100) + '%">' + formatLegendValue(val) + '</span>';
+            }).join("");
+          }
+          // Sync des inputs
+          var inMin = document.getElementById("legend-input-min");
+          var inMax = document.getElementById("legend-input-max");
+          var rMin  = document.getElementById("legend-range-min");
+          var rMax  = document.getElementById("legend-range-max");
+          if (inMin) inMin.value = formatLegendValue(lo);
+          if (inMax) inMax.value = formatLegendValue(hi);
+          if (rMin)  { rMin.min = rawMin; rMin.max = rawMax; rMin.value = lo; }
+          if (rMax)  { rMax.min = rawMin; rMax.max = rawMax; rMax.value = hi; }
+        }
+
+        /** Recolorie toutes les cartes visibles avec les nouvelles bornes min/max. */
+        function recolorAllMaps() {
+          var rawMin = parseFloat(document.getElementById("legend-input-min")?._rawMin ?? 0);
+          var rawMax = parseFloat(document.getElementById("legend-input-max")?._rawMax ?? 100);
+          var lo = legendCustomMin !== null ? legendCustomMin : rawMin;
+          var hi = legendCustomMax !== null ? legendCustomMax : rawMax;
+          // Cartes choroplèthes (département / région)
+          (mapViz.multiChoroMaps || []).forEach(function (entry) {
+            if (!entry || !entry.layer) return;
+            entry.layer.setStyle(function (feature) {
+              var props = (feature && feature.properties) || {};
+              var code = getFeatureCode(props, entry.mode || "departements");
+              var row = entry.rowByCode && entry.rowByCode[code];
+              var v = row ? numericScoreFromRow(row, entry.scoreKey) : null;
+              return {
+                fillColor: (v != null && Number.isFinite(v)) ? scoreColor(v, lo, hi) : "#d1d5db",
+                fillOpacity: (v != null) ? 0.8 : 0.3,
+                color: "#374151", weight: 0.8
+              };
+            });
+          });
+          // Cartes communes
+          (mapViz.communeMaps || []).forEach(function (entry) {
+            if (!entry || !entry.layer) return;
+            entry.layer.setStyle(function (feature) {
+              var props = (feature && feature.properties) || {};
+              var n = normalizeCommuneNameForMapMatch(props.nom || props.name || "");
+              var found = entry.valuesByCommune && entry.valuesByCommune[n];
+              var sv = found && found.score != null ? Number(found.score) : null;
+              if (!found) return { color: "#ca8a04", weight: 0.3, fillColor: "#fef9c3", fillOpacity: 0.5 };
+              return {
+                color: "#374151", weight: 0.3,
+                fillColor: (sv != null && Number.isFinite(sv)) ? scoreColor(sv, lo, hi) : "#d1d5db",
+                fillOpacity: (sv != null) ? 0.85 : 0.3
+              };
+            });
+          });
+        }
+
+        /** Branche les contrôles min/max sur la légende. Appelé une fois après init. */
+        function initLegendControls(rawMin, rawMax) {
+          var inMin = document.getElementById("legend-input-min");
+          var inMax = document.getElementById("legend-input-max");
+          var rMin  = document.getElementById("legend-range-min");
+          var rMax  = document.getElementById("legend-range-max");
+          // Stocker les vraies bornes dans les éléments pour recolorAllMaps
+          if (inMin) inMin._rawMin = rawMin;
+          if (inMax) inMax._rawMax = rawMax;
+
+          function applyMin(v) {
+            var val = parseFloat(v);
+            if (!Number.isFinite(val)) return;
+            legendCustomMin = val;
+            updateLegendGradient(rawMin, rawMax);
+            recolorAllMaps();
+          }
+          function applyMax(v) {
+            var val = parseFloat(v);
+            if (!Number.isFinite(val)) return;
+            legendCustomMax = val;
+            updateLegendGradient(rawMin, rawMax);
+            recolorAllMaps();
+          }
+          if (inMin) { inMin.addEventListener("change", function () { applyMin(this.value); }); }
+          if (inMax) { inMax.addEventListener("change", function () { applyMax(this.value); }); }
+          if (rMin)  { rMin.addEventListener("input",  function () { applyMin(this.value); if (inMin) inMin.value = formatLegendValue(legendCustomMin); }); }
+          if (rMax)  { rMax.addEventListener("input",  function () { applyMax(this.value); if (inMax) inMax.value = formatLegendValue(legendCustomMax); }); }
+        }
+
         function scoreColor(value, min, max) {
           var v = Number(value);
           if (!Number.isFinite(v)) return "#d1d5db";
@@ -2034,7 +2179,13 @@
                 lyr.bindTooltip(content, { sticky: true });
               }
             }).addTo(map);
-            mapViz.multiChoroMaps.push({ map: map, layer: layer });
+            // Stocker rowByCode/scoreKey/mode pour permettre le recoloriage via les contrôles min/max
+            var rowByCode = {};
+            rows.forEach(function (r) {
+              var code = mapMode === "regions" ? String(r.code_region || "").trim() : String(r.code_dept || "").trim();
+              if (code) rowByCode[code] = r;
+            });
+            mapViz.multiChoroMaps.push({ map: map, layer: layer, rowByCode: rowByCode, scoreKey: scoreKey, mode: mapMode });
           });
         }
 
@@ -2095,9 +2246,11 @@
           var deptEntries = Object.keys(byDept).map(function (code) {
             return { code: code, rows: byDept[code] };
           });
+          // Tri par code département (numérique si possible, sinon alpha)
           deptEntries.sort(function (a, b) {
-            if (b.rows.length !== a.rows.length) return b.rows.length - a.rows.length;
-            return a.code.localeCompare(b.code);
+            var na = parseInt(a.code, 10), nb = parseInt(b.code, 10);
+            if (!isNaN(na) && !isNaN(nb)) return na - nb;
+            return a.code.localeCompare(b.code, "fr");
           });
           var limited = deptEntries.slice(0, 12);
           return { byDept: byDept, limited: limited, deptEntriesTotal: deptEntries };
@@ -2229,7 +2382,7 @@
               try { map.fitBounds(layer.getBounds(), { padding: [10, 10] }); } catch (e) {}
 
               mapViz.communeMaps = mapViz.communeMaps || [];
-              mapViz.communeMaps.push({ map: map, layer: layer, job: job });
+              mapViz.communeMaps.push({ map: map, layer: layer, job: job, valuesByCommune: valuesByCommune });
             })
             .catch(function (err) {
               if (status) status.textContent = "Erreur carte : " + (err.message || err);
@@ -2484,9 +2637,12 @@
           }
           var min = Math.min.apply(null, allValues);
           var max = Math.max.apply(null, allValues);
-          minEl.textContent = "Min : " + formatLegendValue(min);
-          maxEl.textContent = "Max : " + formatLegendValue(max);
+          // Réinitialiser les bornes custom à chaque nouveau rendu
+          legendCustomMin = null;
+          legendCustomMax = null;
           legend.hidden = false;
+          updateLegendGradient(min, max);
+          initLegendControls(min, max);
 
           var rowsMerged = mergeRowsForBounds(rowsByFilterKey, mapJobs);
 
@@ -2500,18 +2656,25 @@
             }
             var communeHintPre = document.getElementById("comparaison-map-commune-legend-hint");
             if (communeHintPre) communeHintPre.hidden = true;
-            // Sélection en masse → carte globale (France ou région) au lieu de la grille par département
-            if (selectionMassMode === "france" || selectionMassMode === "region" || selectionMassMode === "dept") {
-              renderCommunesMassMap(mapJobs, rowsByFilterKey, min, max, selectionMassMode);
-            } else {
-              renderCommuneDeptMapsMulti(mapJobs, rowsByFilterKey, min, max);
-            }
+            renderCommuneDeptMapsMulti(mapJobs, rowsByFilterKey, min, max);
             mapViz.mode = "communes";
             return;
           }
 
           var communeHintOff = document.getElementById("comparaison-map-commune-legend-hint");
           if (communeHintOff) communeHintOff.hidden = true;
+          // Trier les rows de chaque job par code (région ou département) avant rendu
+          mapJobs.forEach(function (job) {
+            var rows = rowsByFilterKey[job.filterKey];
+            if (!rows) return;
+            rows.sort(function (a, b) {
+              var ca = displayMode === "regions" ? String(a.code_region || "") : String(a.code_dept || "");
+              var cb = displayMode === "regions" ? String(b.code_region || "") : String(b.code_dept || "");
+              var na = parseInt(ca, 10), nb = parseInt(cb, 10);
+              if (!isNaN(na) && !isNaN(nb)) return na - nb;
+              return ca.localeCompare(cb, "fr");
+            });
+          });
           var entries = mapJobs.map(function (job) {
             return { job: job, mapId: "comparaison-choro-" + choroMapSeq++ };
           });
@@ -2576,6 +2739,11 @@
               var fitOpts = { padding: [12, 12], maxZoom: 11 };
               if (b && b.isValid()) {
                 applySameBoundsToMaps(maps, b, fitOpts);
+                // Stocker bounds+fitOpts dans chaque entrée pour showMaps
+                (mapViz.multiChoroMaps || []).forEach(function (entry) {
+                  entry.savedBounds = b;
+                  entry.fitOpts = fitOpts;
+                });
               }
               bindLinkedLeafletMaps(maps);
               invalidateMapsSoon(maps, 120);
@@ -3194,7 +3362,6 @@
         document.getElementById("comparaison-vider-liste").addEventListener("click", function () {
           var mode = getComparaisonMode();
           selectedCommunes.length = 0;
-          selectionMassMode = null;
           if (mode === "departements") {
             initDepartementsModeSelectionState();
           } else if (mode === "regions") {
@@ -3226,13 +3393,12 @@
               else selectionMassMode = "dept";
               // Remplir la liste avec toutes les communes sélectionnées en masse
               (listCommunes || []).forEach(function (c) { addSelectedCommuneItem(c); });
-              renderSelectedList(); // ← une seule fois après la boucle
+              renderSelectedList(); // ← une seule fois après la boucle (optimisation conseillée par Claude.ia)
               sel.value = "";
               return;
             }
             else {
               console.log("(initCommuneSelect) sélection individuelle");
-              selectionMassMode = null; // sélection manuelle → cartes par département
             }
             try {
               const c = JSON.parse(v);
@@ -3266,48 +3432,53 @@
             tabTables.setAttribute("aria-selected", "false");
             panelMaps.hidden = false;
             panelTables.hidden = true;
-            setTimeout(function () {
+
+            // Fonction unique qui invalide et refait le fitBounds pour TOUS les types de carte
+            function _refitAllMaps() {
               if (typeof L === "undefined") return;
-              var maps = [];
-              if (mapViz.map) maps.push(mapViz.map);
-              (mapViz.multiChoroMaps || []).forEach(function (x) {
-                if (x && x.map) maps.push(x.map);
+
+              // 1. Cartes choroplèthes (mode département / région)
+              var choroMaps = (mapViz.multiChoroMaps || []).map(function (x) { return x.map; }).filter(Boolean);
+              choroMaps.forEach(function (m) {
+                try { m.invalidateSize({ animate: false }); } catch (e) {}
               });
-              (mapViz.communeMaps || []).forEach(function (x) {
-                if (x && x.map) maps.push(x.map);
-              });
-              maps.forEach(function (m) {
+              (mapViz.multiChoroMaps || []).forEach(function (entry) {
+                if (!entry || !entry.map) return;
                 try {
-                  if (m && typeof m.invalidateSize === "function") m.invalidateSize({ animate: false });
+                  entry.map.invalidateSize({ animate: false });
+                  var b = entry.savedBounds;
+                  if (!b || !b.isValid || !b.isValid()) {
+                    b = entry.layer && entry.layer.getBounds ? entry.layer.getBounds() : null;
+                  }
+                  var fo = entry.fitOpts || { padding: [12, 12], maxZoom: 11 };
+                  if (b && b.isValid && b.isValid()) entry.map.fitBounds(b, fo);
                 } catch (e) {}
               });
+
+              // 2. Cartes communes (mode commune, par département)
               (mapViz.communeMaps || []).forEach(function (entry) {
                 if (!entry || !entry.map) return;
                 try {
                   entry.map.invalidateSize({ animate: false });
-                  var b =
-                    entry.selBounds && entry.selBounds.isValid && entry.selBounds.isValid()
-                      ? entry.selBounds
-                      : entry.layer && entry.layer.getBounds && entry.layer.getBounds();
+                  var b = (entry.selBounds && entry.selBounds.isValid && entry.selBounds.isValid())
+                    ? entry.selBounds
+                    : (entry.layer && entry.layer.getBounds ? entry.layer.getBounds() : null);
                   var fo = entry.fitOpts || { padding: [10, 10], maxZoom: 15 };
                   if (b && b.isValid && b.isValid()) entry.map.fitBounds(b, fo);
-                } catch (e2) {}
+                } catch (e) {}
               });
-            }, 100);
-            setTimeout(function () {
-              (mapViz.communeMaps || []).forEach(function (entry) {
-                if (!entry || !entry.map) return;
-                try {
-                  entry.map.invalidateSize({ animate: false });
-                  var b =
-                    entry.selBounds && entry.selBounds.isValid && entry.selBounds.isValid()
-                      ? entry.selBounds
-                      : entry.layer && entry.layer.getBounds && entry.layer.getBounds();
-                  var fo = entry.fitOpts || { padding: [10, 10], maxZoom: 15 };
-                  if (b && b.isValid && b.isValid()) entry.map.fitBounds(b, fo);
-                } catch (e3) {}
-              });
-            }, 350);
+
+              // 3. Carte principale unique (mapViz.map)
+              if (mapViz.map) {
+                try { mapViz.map.invalidateSize({ animate: false }); } catch (e) {}
+              }
+            }
+
+            // 3 passes progressives : le navigateur a besoin de temps pour calculer
+            // les dimensions du panneau après hidden=false
+            setTimeout(_refitAllMaps, 80);
+            setTimeout(_refitAllMaps, 300);
+            setTimeout(_refitAllMaps, 700);
           }
           tabTables.addEventListener("click", showTables);
           tabMaps.addEventListener("click", showMaps);
@@ -3471,6 +3642,25 @@
                 }
                 if (hasRenderableMapValues) {
                   renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePrincipal);
+                  // Si l'onglet cartes est déjà actif, invalider la taille immédiatement
+                  var _tabMaps = document.getElementById("comparaison-tab-maps");
+                  if (_tabMaps && _tabMaps.classList.contains("is-active")) {
+                    [150, 500, 1000].forEach(function (d) {
+                      setTimeout(function () {
+                        (mapViz.communeMaps || []).concat(mapViz.multiChoroMaps || []).forEach(function (e) {
+                          if (e && e.map) {
+                            try { e.map.invalidateSize({ animate: false }); } catch (_) {}
+                            if (e.layer) {
+                              try {
+                                var b = e.layer.getBounds();
+                                if (b && b.isValid()) e.map.fitBounds(b, { padding: [10, 10] });
+                              } catch (_) {}
+                            }
+                          }
+                        });
+                      }, d);
+                    });
+                  }
                 } else {
                   clearComparaisonMap();
                 }
@@ -3566,7 +3756,6 @@
 
           // 2) Réinitialiser les états métier / sélections.
           selectedCommunes.length = 0;
-          selectionMassMode = null;
           listCommunes = [];
 
           // Mode par défaut: communes.

@@ -292,6 +292,17 @@ def _normalize_code_postal_for_vf(code_postal: Optional[str]) -> str:
         return s.lstrip("0") or "0"  # "01500" → "1500", "00000" → "0"
     return s
 
+def _normalize_code_postal_for_ref_communes(code_postal: Optional[str]) -> str:
+    """Pour les requêtes vers ref_communes : code_postal y est stocké avec zéro en tête s'il ne contient que 4 chiffres
+    (ex. 1500 → "01500"). On ajoute un zéro en tête pour matcher."""
+    if not code_postal:
+        return ""
+    s = str(code_postal).strip()
+    if not s:
+        return s
+    if s.isdigit():
+        return s.zfill(5)
+    return s
 
 def _sql_norm_name_canonical(column_sql: str) -> str:
     """Expression SQL : forme canonique pour comparaison de noms (communes).
@@ -2662,13 +2673,16 @@ def _resolve_communes_to_ref(cur, communes: List[tuple]) -> List[dict]:
     if not communes:
         return []
     out: List[dict] = []
+    #_debug_log("[_resolve_communes_to_ref] nb communes : %s dans communes", len(communes))
+    #_debug_log("[_resolve_communes_to_ref] communes[0] : %s", communes[0])
     for i in range(0, len(communes), _RESOLVE_CHUNK_SIZE):
         chunk = communes[i: i + _RESOLVE_CHUNK_SIZE]
         try:
             placeholders = ", ".join("(%s, %s, %s)" for _ in chunk)
             params = []
             for (d, p, n) in chunk:
-                params.extend([d, p, _normalize_name_canonical(n)])
+                params.extend([d, _normalize_code_postal_for_ref_communes(p), _normalize_name_canonical(n)])
+            #_debug_log("[_resolve_communes_to_ref] params : %s", params)
             sql = (
                 "SELECT c.code_insee, c.dep_code AS code_dept, c.code_postal, c.nom_standard AS commune, "
                 "r.nom_region AS reg_nom, d.nom_dept AS dep_nom, "
@@ -2682,6 +2696,7 @@ def _resolve_communes_to_ref(cur, communes: List[tuple]) -> List[dict]:
             out.extend(dict(r) for r in cur.fetchall())
         except psycopg2.Error:
             pass  # on continue les chunks suivants meme en cas d erreur partielle
+    #_debug_log("[_resolve_communes_to_ref] out : %s", out)
     return out
 
 
@@ -3317,17 +3332,21 @@ def get_comparaison_scores(
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
         ref_list = _resolve_communes_to_ref(cur, communes)
+        _debug_log("[comparaison_scores] nb communes : %s dans communes, %s dans ref_list", len(communes), len(ref_list))
         ref_by_key = {}
         for r in ref_list:
             k = (r.get("code_dept"), r.get("code_postal"), _normalize_name_canonical(r.get("commune") or ""))
             ref_by_key[k] = r
         code_insee_list = [r["code_insee"] for r in ref_list if r.get("code_insee")]
         indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
-
+        #_debug_log("[comparaison_scores] nb communes : %s dans indic_by_insee", len(indic_by_insee))
         for c_dept, c_postal, c_commune in communes:
-            key = (c_dept, c_postal, _normalize_name_canonical(c_commune))
+            key = (c_dept, _normalize_code_postal_for_ref_communes(c_postal), _normalize_name_canonical(c_commune))
+            #_debug_log("[comparaison_scores] key=%s %s %s %s", key, c_dept, _normalize_code_postal_for_ref_communes(c_postal), _normalize_name_canonical(c_commune))
             ref = ref_by_key.get(key)
+            #_debug_log("[comparaison_scores] ref=%s", ref)
             code_insee = ref.get("code_insee") if ref else None
+            #_debug_log("[comparaison_scores] code_insee=%s", code_insee)
             if code_insee and code_insee in indic_by_insee:
                 cached_row = indic_by_insee[code_insee]
                 if _is_valid_rentability_row(cached_row):
@@ -3337,7 +3356,9 @@ def get_comparaison_scores(
         if conn is not None:
             conn.close()
 
+    _debug_log("[comparaison_scores] nb communes : %s dans rows", len(rows))
     rows = [_merge_periode_into_row(dict(r), periode_annees) for r in rows]
+    #_debug_log("[comparaison_scores] nb communes : %s dans rows", len(rows))
 
     if nb_locaux_min is not None:
         rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
