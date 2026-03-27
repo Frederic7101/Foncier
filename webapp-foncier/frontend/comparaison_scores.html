@@ -1475,9 +1475,11 @@
 
           // Extraire les listes de communes/depts/regions depuis baseParams
           // pour les envoyer en POST (body JSON) et contourner la limite de taille des URL GET.
+          var arrayKeys = ["code_dept", "code_postal", "commune", "code_region", "code_insee",
+                          "exclude_code_insee", "exclude_code_dept", "scores_secondaires"];
           var baseObj = {};
           baseParams.forEach(function (v, k) {
-            if (k === "code_dept" || k === "code_postal" || k === "commune" || k === "code_region" || k === "scores_secondaires") {
+            if (arrayKeys.indexOf(k) !== -1) {
               if (!baseObj[k]) baseObj[k] = [];
               baseObj[k].push(v);
             } else {
@@ -3093,14 +3095,12 @@
               .then(function (r) { return r.json(); })
               .then(function (data) {
                 listCommunes = Array.isArray(data) ? data : [];
-                console.log("(fillCommunes) listCommunes : ", listCommunes);
                 listCommunes.forEach(function (c) {
                   const opt = document.createElement("option");
-                  opt.value = JSON.stringify({ code_dept: c.code_dept || "", code_postal: c.code_postal || "", commune: c.commune || "" });
+                  opt.value = JSON.stringify({ code_dept: c.code_dept || "", code_postal: c.code_postal || "", commune: c.commune || "", code_insee: c.code_insee || "" });
                   opt.textContent = (c.commune || "") + " (" + (c.code_postal || "") + ")";
                   communeSelect.appendChild(opt);
                 });
-                console.log("(fillCommunes) listCommunes : ", listCommunes);
               })
               .catch(function () { listCommunes = []; });
           }
@@ -3116,14 +3116,12 @@
               .then(function (r) { return r.json(); })
               .then(function (data) {
                 listCommunes = Array.isArray(data) ? data : [];
-                console.log("(fillCommunes) listCommunes : ", listCommunes);
                 listCommunes.forEach(function (c) {
                   const opt = document.createElement("option");
-                  opt.value = JSON.stringify({ code_region: c.code_region || "", code_postal: c.code_postal || "", commune: c.commune || "" });
+                  opt.value = JSON.stringify({ code_dept: c.code_dept || "", code_postal: c.code_postal || "", commune: c.commune || "", code_insee: c.code_insee || "" });
                   opt.textContent = (c.commune || "") + " (" + (c.code_postal || "") + ")";
                   communeSelect.appendChild(opt);
                 });
-                console.log("(fillCommunes) listCommunes : ", listCommunes);
               })
               .catch(function () { listCommunes = []; });
           }
@@ -3139,28 +3137,12 @@
               .then(function (r) { return r.json(); })
               .then(function (data) {
                 listCommunes = Array.isArray(data) ? data : [];
-                console.log("(fillCommunes) listCommunes : ", listCommunes);
-                
-                // ancienne version (avec reflow à chaque insertion) qui apparemment serait ce qui prend beaucoup de temps lorsqu'il y a beaucoup de communes > 500
                 listCommunes.forEach(function (c) {
                   const opt = document.createElement("option");
-                  opt.value = JSON.stringify({ code_postal: c.code_postal || "", commune: c.commune || "" });
+                  opt.value = JSON.stringify({ code_dept: c.code_dept || "", code_postal: c.code_postal || "", commune: c.commune || "", code_insee: c.code_insee || "" });
                   opt.textContent = (c.commune || "") + " (" + (c.code_postal || "") + ")";
                   communeSelect.appendChild(opt);
                 });
-                /*
-                // nouvelle version (avec un fragment et un seul reflow) (conseillé par Claude.ia) : 3 secondes pour charger les communes et 90 secondes pour sélectionner les 4381 communes pour Nouvelle Aquitaine
-                const fragment = document.createDocumentFragment();
-                listCommunes.forEach(function (c) {
-                  const opt = document.createElement("option");
-                  opt.value = JSON.stringify({ code_postal: c.code_postal || "", commune: c.commune || "" });
-                  opt.textContent = (c.commune || "") + " (" + (c.code_postal || "") + ")";
-                  fragment.appendChild(opt);  // pas de reflow à chaque insertion
-                });
-                communeSelect.appendChild(fragment); // un seul reflow
-                */
-
-                console.log("(fillCommunes) listCommunes : ", listCommunes);
               })
               .catch(function () { listCommunes = []; });
           }
@@ -3329,14 +3311,15 @@
 
         function addSelectedCommuneItem(item) {
           const key = (item.code_dept || "") + "|" + (item.code_postal || "") + "|" + (item.commune || "");
-          
+
           if (selectedCommunesSet.has(key)) return; // O(1) au lieu de O(n)
-          
+
           selectedCommunesSet.add(key);
           selectedCommunes.push({
             code_dept: item.code_dept || "",
             code_postal: item.code_postal || "",
-            commune: item.commune || ""
+            commune: item.commune || "",
+            code_insee: item.code_insee || ""
           });
           // Ne pas appeler renderSelectedList() ici
         }
@@ -3558,11 +3541,33 @@
             baseParams.append("scores_secondaires", s);
           });
           if (mode === "communes") {
-            selectedCommunes.forEach(function (c) {
-              baseParams.append("code_dept", c.code_dept || "");
-              baseParams.append("code_postal", c.code_postal || "");
-              baseParams.append("commune", c.commune || "");
-            });
+            // S1 : Chemin rapide par scope pour les sélections en masse
+            if (selectionMassMode === "france") {
+              baseParams.set("scope", "all_france");
+            } else if (selectionMassMode === "dept") {
+              baseParams.set("scope", "department");
+              // Envoyer le code_dept du sélecteur de département
+              var deptVal = document.getElementById("comparaison-dept").value;
+              if (deptVal) baseParams.append("code_dept", deptVal);
+            } else if (selectionMassMode === "region") {
+              baseParams.set("scope", "region");
+              // Envoyer le code_region du sélecteur de région
+              var regVal = document.getElementById("comparaison-region").value;
+              if (regVal) baseParams.append("code_region", regVal);
+            } else if (selectedCommunes.length > 0 && selectedCommunes[0].code_insee) {
+              // Sélection manuelle avec code_insee disponible
+              baseParams.set("scope", "communes");
+              selectedCommunes.forEach(function (c) {
+                baseParams.append("code_insee", c.code_insee);
+              });
+            } else {
+              // Chemin legacy : triplets (rétrocompatibilité)
+              selectedCommunes.forEach(function (c) {
+                baseParams.append("code_dept", c.code_dept || "");
+                baseParams.append("code_postal", c.code_postal || "");
+                baseParams.append("commune", c.commune || "");
+              });
+            }
           } else if (mode === "departements") {
             getSelectedDeptCodes().forEach(function (code) {
               baseParams.append("code_dept", code);

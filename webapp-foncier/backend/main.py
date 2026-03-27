@@ -3,6 +3,7 @@ import json
 import math
 import os
 import re
+import time as _time
 import unicodedata
 import urllib.error
 import urllib.request
@@ -623,7 +624,7 @@ def get_communes(
                 try:
                     cur.execute(
                         """
-                        SELECT dep_code AS code_dept, code_postal, nom_standard_majuscule AS commune
+                        SELECT dep_code AS code_dept, code_postal, nom_standard_majuscule AS commune, code_insee
                         FROM foncier.ref_communes
                         WHERE code_postal::text LIKE %s
                         ORDER BY code_postal, nom_standard_majuscule
@@ -634,7 +635,7 @@ def get_communes(
                 except psycopg2.Error:
                     cur.execute(
                         """
-                        SELECT DISTINCT code_dept, code_postal, commune
+                        SELECT DISTINCT code_dept, code_postal, commune, NULL AS code_insee
                         FROM foncier.vf_communes
                         WHERE code_postal::text LIKE %s
                         ORDER BY code_postal, commune
@@ -663,7 +664,7 @@ def get_communes(
                 try:
                     cur.execute(
                         """
-                        SELECT dep_code AS code_dept, code_postal, nom_standard_majuscule AS commune
+                        SELECT dep_code AS code_dept, code_postal, nom_standard_majuscule AS commune, code_insee
                         FROM foncier.ref_communes
                         WHERE """ + _sql_norm_name_canonical("nom_standard_majuscule") + """ LIKE %s
                            OR code_postal::text LIKE %s
@@ -675,7 +676,7 @@ def get_communes(
                 except psycopg2.Error:
                     cur.execute(
                         """
-                        SELECT DISTINCT code_dept, code_postal, commune
+                        SELECT DISTINCT code_dept, code_postal, commune, NULL AS code_insee
                         FROM foncier.vf_communes
                         WHERE """ + _sql_norm_name_canonical_commune_vf("commune") + """ LIKE %s
                            OR code_postal::text LIKE %s
@@ -688,10 +689,13 @@ def get_communes(
             code_dept_vf = _normalize_code_dept_for_vf(code_dept.strip())
             cur.execute(
                 """
-                SELECT DISTINCT code_dept, code_postal, commune
-                FROM foncier.vf_communes
-                WHERE code_dept = %s
-                ORDER BY commune, code_postal
+                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
+                FROM foncier.vf_communes v
+                LEFT JOIN foncier.ref_communes rc
+                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
+                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
+                WHERE v.code_dept = %s
+                ORDER BY v.commune, v.code_postal
                 """,
                 (code_dept_vf,),
             )
@@ -699,24 +703,30 @@ def get_communes(
             code_region_vf = code_region.strip()
             cur.execute(
                 """
-                SELECT DISTINCT code_dept, code_postal, commune
-                FROM foncier.vf_communes
-                WHERE code_dept IN (SELECT code_dept FROM foncier.ref_departements WHERE code_region = %s)
-                ORDER BY commune, code_postal
+                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
+                FROM foncier.vf_communes v
+                LEFT JOIN foncier.ref_communes rc
+                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
+                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
+                WHERE v.code_dept IN (SELECT code_dept FROM foncier.ref_departements WHERE code_region = %s)
+                ORDER BY v.commune, v.code_postal
                 """,
                 (code_region_vf,),
             )
         elif all_France:
             cur.execute(
                 """
-                SELECT DISTINCT code_dept, code_postal, commune
-                FROM foncier.vf_communes
-                ORDER BY commune, code_postal
+                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
+                FROM foncier.vf_communes v
+                LEFT JOIN foncier.ref_communes rc
+                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
+                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
+                ORDER BY v.commune, v.code_postal
                 """
             )
         else:
             raise HTTPException(status_code=400, detail="Aucun paramètre de filtre valide fourni")
-        rows = [{"code_dept": r[0], "code_postal": r[1], "commune": r[2]} for r in cur.fetchall()]
+        rows = [{"code_dept": r[0], "code_postal": r[1], "commune": r[2], "code_insee": r[3]} for r in cur.fetchall()]
         cur.close()
         return rows
     except psycopg2.Error as e:
@@ -2763,6 +2773,178 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
     return out
 
 
+_INDIC_IDENTITY_COLS = ("code_insee", "code_dept", "code_postal", "commune", "reg_nom", "dep_nom", "population", "nb_locaux", "nb_ventes_dvf")
+_INDIC_RENTA_BASE_COLS = (
+    "renta_brute", "renta_nette",
+    "renta_brute_maisons", "renta_nette_maisons", "renta_brute_appts", "renta_nette_appts",
+    "renta_brute_parking", "renta_nette_parking", "renta_brute_local_indus", "renta_nette_local_indus",
+    "renta_brute_terrain", "renta_nette_terrain", "renta_brute_immeuble", "renta_nette_immeuble",
+    "taux_tfb", "taux_teom",
+)
+_INDIC_ALL_SCORE_COLS = _INDIC_RENTA_BASE_COLS + TRANCHE_RENTA_COLS
+
+
+def _compute_needed_columns(score_principal: str, scores_secondaires: Optional[List[str]], periode_annees: int) -> Tuple[List[str], bool]:
+    """Calcule les colonnes SQL nécessaires à partir des scores demandés.
+    Retourne (liste_colonnes_score, need_indicateurs_par_periode)."""
+    needed = set()
+    needed.add(score_principal)
+    needed.add("nb_locaux")  # toujours utile pour filtrage nb_locaux_min
+    if scores_secondaires:
+        needed.update(scores_secondaires)
+    # Toujours inclure taux_tfb/taux_teom si demandés via scores_secondaires
+    # Filtrer pour ne garder que les colonnes qui existent dans la table
+    all_valid = set(_INDIC_ALL_SCORE_COLS)
+    score_cols = [c for c in _INDIC_ALL_SCORE_COLS if c in needed]
+    # Si un score demandé n'est pas dans les colonnes connues, inclure toutes les colonnes
+    # (sécurité pour ne pas casser un appel avec un score inconnu)
+    unknown = needed - all_valid - {"nb_locaux"}
+    if unknown:
+        score_cols = list(_INDIC_ALL_SCORE_COLS)
+    need_periode = (periode_annees != 1)
+    return score_cols, need_periode
+
+
+def _read_indicateurs_by_scope(
+    cur,
+    scope: str,
+    code_dept_list: Optional[List[str]] = None,
+    code_region_list: Optional[List[str]] = None,
+    code_insee_list: Optional[List[str]] = None,
+    exclude_code_insee: Optional[List[str]] = None,
+    exclude_code_dept: Optional[List[str]] = None,
+    score_cols: Optional[List[str]] = None,
+    need_periode: bool = True,
+) -> dict:
+    """Lecture directe depuis indicateurs_communes par scope géographique.
+    Retourne un dict code_insee -> row (même format que _read_indicateurs_communes).
+
+    scope:
+      - 'all_france' : toutes les communes
+      - 'department' : filtre par code_dept IN (code_dept_list)
+      - 'region'     : filtre par code_dept IN (SELECT code_dept FROM ref_departements WHERE code_region IN (...))
+      - 'communes'   : filtre par code_insee IN (code_insee_list)
+    """
+    t0 = _time.monotonic()
+
+    # Colonnes à sélectionner
+    id_cols = list(_INDIC_IDENTITY_COLS)
+    data_cols = list(score_cols) if score_cols else list(_INDIC_ALL_SCORE_COLS)
+    if need_periode:
+        all_cols = id_cols + ["indicateurs_par_periode"] + data_cols
+    else:
+        all_cols = id_cols + data_cols
+    select_sql = "SELECT " + ", ".join(all_cols) + " FROM foncier.indicateurs_communes"
+
+    # Construire WHERE
+    where_parts: List[str] = []
+    params: List[Any] = []
+
+    if scope == "all_france":
+        pass  # pas de WHERE
+    elif scope == "department":
+        if not code_dept_list:
+            return {}
+        placeholders = ",".join(["%s"] * len(code_dept_list))
+        where_parts.append(f"code_dept IN ({placeholders})")
+        params.extend(code_dept_list)
+    elif scope == "region":
+        if not code_region_list:
+            return {}
+        placeholders = ",".join(["%s"] * len(code_region_list))
+        where_parts.append(f"code_dept IN (SELECT code_dept FROM foncier.ref_departements WHERE code_region IN ({placeholders}))")
+        params.extend(code_region_list)
+    elif scope == "communes":
+        if not code_insee_list:
+            return {}
+        # Chunking pour rester sous la limite PostgreSQL
+        pass  # traité ci-dessous
+    else:
+        return {}
+
+    # Exclusions
+    if exclude_code_insee:
+        ph = ",".join(["%s"] * len(exclude_code_insee))
+        where_parts.append(f"code_insee NOT IN ({ph})")
+        params.extend(exclude_code_insee)
+    if exclude_code_dept:
+        ph = ",".join(["%s"] * len(exclude_code_dept))
+        where_parts.append(f"code_dept NOT IN ({ph})")
+        params.extend(exclude_code_dept)
+
+    out: dict = {}
+
+    if scope == "communes" and code_insee_list:
+        # Chunked read par code_insee (comme _read_indicateurs_communes)
+        base_where = " AND ".join(where_parts) if where_parts else ""
+        base_params = list(params)
+        for i in range(0, len(code_insee_list), _READ_INDIC_CHUNK_SIZE):
+            chunk = code_insee_list[i: i + _READ_INDIC_CHUNK_SIZE]
+            ph = ",".join(["%s"] * len(chunk))
+            chunk_where = f"code_insee IN ({ph})"
+            if base_where:
+                full_where = base_where + " AND " + chunk_where
+            else:
+                full_where = chunk_where
+            sql = select_sql + " WHERE " + full_where
+            try:
+                cur.execute(sql, base_params + chunk)
+                rows = cur.fetchall()
+                for r in rows:
+                    ci = r.get("code_insee")
+                    if ci:
+                        out[ci] = _build_indicateur_row_from_db(r, data_cols, need_periode)
+            except psycopg2.Error:
+                pass
+    else:
+        # Requête unique (all_france, department, region)
+        if where_parts:
+            sql = select_sql + " WHERE " + " AND ".join(where_parts)
+        else:
+            sql = select_sql
+        try:
+            cur.execute(sql, params if params else None)
+            rows = cur.fetchall()
+            t_query = _time.monotonic()
+            _debug_log("[comparaison_scores] _read_indicateurs_by_scope SQL: %.3fs, %d lignes", t_query - t0, len(rows))
+            for r in rows:
+                ci = r.get("code_insee")
+                if ci:
+                    out[ci] = _build_indicateur_row_from_db(r, data_cols, need_periode)
+            t_build = _time.monotonic()
+            _debug_log("[comparaison_scores] _read_indicateurs_by_scope build dicts: %.3fs", t_build - t_query)
+        except psycopg2.Error as e:
+            _debug_log("[comparaison_scores] _read_indicateurs_by_scope erreur SQL: %s", e)
+
+    t_end = _time.monotonic()
+    _debug_log("[comparaison_scores] _read_indicateurs_by_scope total: %.3fs, %d résultats (scope=%s)", t_end - t0, len(out), scope)
+    return out
+
+
+def _build_indicateur_row_from_db(r: dict, data_cols: List[str], need_periode: bool) -> dict:
+    """Construit un dict indicateur depuis une ligne DB, ne convertissant que les colonnes demandées."""
+    row_d = {
+        "code_dept": r.get("code_dept"),
+        "code_postal": r.get("code_postal"),
+        "commune": r.get("commune"),
+        "region": r.get("reg_nom") or "",
+        "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
+        "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
+    }
+    if need_periode:
+        ipp = r.get("indicateurs_par_periode")
+        if isinstance(ipp, str):
+            try:
+                ipp = json.loads(ipp)
+            except (TypeError, ValueError):
+                ipp = None
+        row_d["indicateurs_par_periode"] = ipp if isinstance(ipp, dict) else None
+    for col in data_cols:
+        val = r.get(col)
+        row_d[col] = float(val) if val is not None else None
+    return row_d
+
+
 def _upsert_indicateurs_communes(conn, cur, row: dict, commit: bool = True) -> Tuple[bool, Optional[str]]:
     """Insère ou met à jour une ligne dans indicateurs_communes. Retourne (ok, erreur)."""
     sp_name = _UPSERT_INDICATEURS_COMMUNES_SAVEPOINT
@@ -3219,10 +3401,14 @@ def _row_matches_nb_locaux_min(row: dict, nb_min: int) -> bool:
 @app.get("/api/comparaison_scores")
 def get_comparaison_scores(
     mode: str = Query("communes", description="Mode: communes, departements, regions"),
+    scope: Optional[str] = Query(None, description="Scope géographique: communes (défaut), department, region, all_france"),
     code_dept: Optional[List[str]] = Query(None, description="Code département (répété pour chaque commune ou liste de depts)"),
     code_postal: Optional[List[str]] = Query(None, description="Code postal (répété pour chaque commune)"),
     commune: Optional[List[str]] = Query(None, description="Nom commune (répété pour chaque commune)"),
     code_region: Optional[List[str]] = Query(None, description="Code région (pour mode=regions, répété)"),
+    code_insee: Optional[List[str]] = Query(None, description="Code INSEE (répété) — bypass la résolution triplets"),
+    exclude_code_insee: Optional[List[str]] = Query(None, description="Codes INSEE à exclure"),
+    exclude_code_dept: Optional[List[str]] = Query(None, description="Codes département à exclure"),
     score_principal: str = Query(
         "renta_nette",
         description="Clé de tri / colonne indicateur (renta_brute, renta_nette, colonnes tranches s1–s5 / t1–t5, etc.)",
@@ -3311,7 +3497,77 @@ def get_comparaison_scores(
             if conn:
                 conn.close()
 
-    # mode=communes : lecture seule depuis indicateurs_communes (aucun recalcul dans le GET)
+    # mode=communes : lecture depuis indicateurs_communes
+    t_start = _time.monotonic()
+
+    # Déterminer le scope effectif
+    effective_scope = (scope or "").strip().lower() if scope else None
+    # Nettoyage des listes d'exclusion
+    excl_insee = [str(x).strip() for x in (exclude_code_insee or []) if str(x or "").strip()]
+    excl_dept = [str(x).strip() for x in (exclude_code_dept or []) if str(x or "").strip()]
+    # Nettoyage code_insee direct
+    direct_insee = [str(x).strip() for x in (code_insee or []) if str(x or "").strip()]
+
+    # S1 : Chemin rapide par scope (bypass _resolve_communes_to_ref)
+    if effective_scope in ("all_france", "department", "region") or direct_insee:
+        score_cols, need_periode = _compute_needed_columns(score_key, scores_secondaires, periode_annees)
+        _debug_log("[comparaison_scores] chemin scope=%s, %d score_cols, need_periode=%s",
+                   effective_scope or "communes(code_insee)", len(score_cols), need_periode)
+
+        conn = None
+        rows = []
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            t_conn = _time.monotonic()
+            _debug_log("[comparaison_scores] connexion DB: %.3fs", t_conn - t_start)
+
+            if direct_insee:
+                # code_insee fournis directement → scope=communes par code_insee
+                indic_by_insee = _read_indicateurs_by_scope(
+                    cur, scope="communes", code_insee_list=direct_insee,
+                    exclude_code_insee=excl_insee or None, exclude_code_dept=excl_dept or None,
+                    score_cols=score_cols, need_periode=need_periode,
+                )
+            else:
+                # Préparer les listes selon le scope
+                scope_dept_list = [str(x or "").strip() for x in (code_dept or []) if str(x or "").strip()] if effective_scope == "department" else None
+                scope_region_list = [str(x or "").strip() for x in (code_region or []) if str(x or "").strip()] if effective_scope == "region" else None
+                indic_by_insee = _read_indicateurs_by_scope(
+                    cur, scope=effective_scope,
+                    code_dept_list=scope_dept_list, code_region_list=scope_region_list,
+                    exclude_code_insee=excl_insee or None, exclude_code_dept=excl_dept or None,
+                    score_cols=score_cols, need_periode=need_periode,
+                )
+
+            t_read = _time.monotonic()
+            _debug_log("[comparaison_scores] lecture indicateurs: %.3fs, %d communes", t_read - t_conn, len(indic_by_insee))
+
+            for ci, cached_row in indic_by_insee.items():
+                if _is_valid_rentability_row(cached_row):
+                    rows.append(cached_row)
+            cur.close()
+        finally:
+            if conn is not None:
+                conn.close()
+
+        t_filter_start = _time.monotonic()
+        _debug_log("[comparaison_scores] nb communes valides: %s dans rows", len(rows))
+        rows = [_merge_periode_into_row(dict(r), periode_annees) for r in rows]
+        t_merge = _time.monotonic()
+        _debug_log("[comparaison_scores] merge_periode: %.3fs", t_merge - t_filter_start)
+
+        if nb_locaux_min is not None:
+            rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
+        rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
+        if n_max and len(rows) > n_max:
+            rows = rows[:n_max]
+        t_end = _time.monotonic()
+        _debug_log("[comparaison_scores] tri+filtrage: %.3fs, sortie: %s ligne(s) retournée(s), total: %.3fs",
+                   t_end - t_merge, len(rows), t_end - t_start)
+        return {"rows": rows}
+
+    # Chemin legacy : résolution par triplets (code_dept, code_postal, commune)
     depts = [str(x or "").strip() for x in (code_dept or [])]
     postals = [str(x or "").strip() for x in (code_postal or [])]
     noms = [str(x or "").strip() for x in (commune or [])]
@@ -3324,31 +3580,33 @@ def get_comparaison_scores(
         noms.append("")
     communes = [(depts[i], postals[i], noms[i]) for i in range(n) if depts[i] and postals[i] and noms[i]]
     if not communes:
-        raise HTTPException(status_code=400, detail="Au moins une commune est requise (code_dept, code_postal, commune pour chaque).")
+        raise HTTPException(status_code=400, detail="Au moins une commune est requise (code_dept, code_postal, commune pour chaque, ou utiliser scope/code_insee).")
 
     conn = None
     rows = []
     try:
         conn = get_db_connection()
         cur = conn.cursor(cursor_factory=RealDictCursor)
+        t_conn = _time.monotonic()
+        _debug_log("[comparaison_scores] chemin legacy, %d communes, connexion DB: %.3fs", len(communes), t_conn - t_start)
         ref_list = _resolve_communes_to_ref(cur, communes)
-        _debug_log("[comparaison_scores] nb communes : %s dans communes, %s dans ref_list", len(communes), len(ref_list))
+        t_resolve = _time.monotonic()
+        _debug_log("[comparaison_scores] _resolve_communes_to_ref: %.3fs, %s dans communes, %s dans ref_list",
+                   t_resolve - t_conn, len(communes), len(ref_list))
         ref_by_key = {}
         for r in ref_list:
             k = (r.get("code_dept"), r.get("code_postal"), _normalize_name_canonical(r.get("commune") or ""))
             ref_by_key[k] = r
         code_insee_list = [r["code_insee"] for r in ref_list if r.get("code_insee")]
         indic_by_insee = _read_indicateurs_communes(cur, code_insee_list)
-        #_debug_log("[comparaison_scores] nb communes : %s dans indic_by_insee", len(indic_by_insee))
+        t_read = _time.monotonic()
+        _debug_log("[comparaison_scores] _read_indicateurs_communes: %.3fs, %d indicateurs", t_read - t_resolve, len(indic_by_insee))
         for c_dept, c_postal, c_commune in communes:
             key = (c_dept, _normalize_code_postal_for_ref_communes(c_postal), _normalize_name_canonical(c_commune))
-            #_debug_log("[comparaison_scores] key=%s %s %s %s", key, c_dept, _normalize_code_postal_for_ref_communes(c_postal), _normalize_name_canonical(c_commune))
             ref = ref_by_key.get(key)
-            #_debug_log("[comparaison_scores] ref=%s", ref)
-            code_insee = ref.get("code_insee") if ref else None
-            #_debug_log("[comparaison_scores] code_insee=%s", code_insee)
-            if code_insee and code_insee in indic_by_insee:
-                cached_row = indic_by_insee[code_insee]
+            code_insee_val = ref.get("code_insee") if ref else None
+            if code_insee_val and code_insee_val in indic_by_insee:
+                cached_row = indic_by_insee[code_insee_val]
                 if _is_valid_rentability_row(cached_row):
                     rows.append(cached_row)
         cur.close()
@@ -3356,25 +3614,30 @@ def get_comparaison_scores(
         if conn is not None:
             conn.close()
 
+    t_filter_start = _time.monotonic()
     _debug_log("[comparaison_scores] nb communes : %s dans rows", len(rows))
     rows = [_merge_periode_into_row(dict(r), periode_annees) for r in rows]
-    #_debug_log("[comparaison_scores] nb communes : %s dans rows", len(rows))
 
     if nb_locaux_min is not None:
         rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
     rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
     if n_max and len(rows) > n_max:
         rows = rows[:n_max]
-    _debug_log("[comparaison_scores] sortie: %s ligne(s) retournée(s)", len(rows))
+    t_end = _time.monotonic()
+    _debug_log("[comparaison_scores] sortie: %s ligne(s) retournée(s), total: %.3fs", len(rows), t_end - t_start)
     return {"rows": rows}
 
 # nouvelle version (Claude.ia) : ajout de la validation du body JSON
 class ComparaisonScoresBody(BaseModel):
     mode: str = "communes"
+    scope: Optional[str] = None  # communes, department, region, all_france
     code_dept: Optional[List[str]] = None
     code_postal: Optional[List[str]] = None
     commune: Optional[List[str]] = None
     code_region: Optional[List[str]] = None
+    code_insee: Optional[List[str]] = None  # bypass résolution triplets
+    exclude_code_insee: Optional[List[str]] = None
+    exclude_code_dept: Optional[List[str]] = None
     score_principal: str = "renta_nette"
     n_max: int = 50000 # maximum de 50000 communes
     nb_locaux_min: Optional[int] = None
@@ -3392,10 +3655,14 @@ def post_comparaison_scores(body: ComparaisonScoresBody):
     """
     return get_comparaison_scores(
         mode=body.mode,
+        scope=body.scope,
         code_dept=body.code_dept,
         code_postal=body.code_postal,
         commune=body.commune,
         code_region=body.code_region,
+        code_insee=body.code_insee,
+        exclude_code_insee=body.exclude_code_insee,
+        exclude_code_dept=body.exclude_code_dept,
         score_principal=body.score_principal,
         n_max=max(1, min(body.n_max, 50000)),
         nb_locaux_min=body.nb_locaux_min,
