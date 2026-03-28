@@ -1198,6 +1198,8 @@
         var lastRowsByFilterKey = {};
         // "dept" | "region" | "france" | null — mémorise si la sélection en masse a eu lieu
         var selectionMassMode = null;
+        // Communes retirées d'une sélection en masse (pour envoyer exclude_code_insee au backend)
+        var excludedCommunes = [];
         // Bornes personnalisées de la légende (null = auto)
         var legendCustomMin = null;
         var legendCustomMax = null;
@@ -1317,7 +1319,7 @@
           return "communes";
         }
 
-        var TABLE_PAGE_SIZE = 200; // lignes affichées par page
+        var TABLE_PAGE_SIZE = 50; // lignes affichées par page
 
         function renderTablePage(tbodyEl, sorted, indicators, displayMode, page) {
           var start = page * TABLE_PAGE_SIZE;
@@ -1361,14 +1363,30 @@
           pagBarEl.hidden = false;
           var start = page * TABLE_PAGE_SIZE + 1;
           var end = Math.min((page + 1) * TABLE_PAGE_SIZE, total);
-          pagBarEl.innerHTML =
-            "<button data-p=\"prev\" " + (page === 0 ? "disabled" : "") + ">&#8592; Préc.</button>" +
-            "<span class=\"pag-info\">" + start + "–" + end + " sur " + total + " (page " + (page + 1) + "/" + nbPages + ")</span>" +
-            "<button data-p=\"next\" " + (page >= nbPages - 1 ? "disabled" : "") + ">Suiv. &#8594;</button>";
+          var html = "";
+          if (nbPages > 2) {
+            html += "<button data-p=\"first\" " + (page === 0 ? "disabled" : "") + ">Page\u00a01</button>";
+            html += "<button data-p=\"back10\" " + (page < 10 ? "disabled" : "") + ">&laquo;</button>";
+          }
+          html += "<button data-p=\"prev\" " + (page === 0 ? "disabled" : "") + ">&#8592; Préc.</button>";
+          html += "<span class=\"pag-info\">" + start + "–" + end + " sur " + total + " (page " + (page + 1) + "/" + nbPages + ")</span>";
+          html += "<button data-p=\"next\" " + (page >= nbPages - 1 ? "disabled" : "") + ">Suiv. &#8594;</button>";
+          if (nbPages > 2) {
+            html += "<button data-p=\"fwd10\" " + (page >= nbPages - 10 ? "disabled" : "") + ">&raquo;</button>";
+            html += "<button data-p=\"last\" " + (page >= nbPages - 1 ? "disabled" : "") + ">Page\u00a0" + nbPages + "</button>";
+          }
+          pagBarEl.innerHTML = html;
           pagBarEl.onclick = function (e) {
             var btn = e.target.closest("button[data-p]");
             if (!btn || btn.disabled) return;
-            var newPage = btn.getAttribute("data-p") === "prev" ? page - 1 : page + 1;
+            var action = btn.getAttribute("data-p");
+            var newPage = page;
+            if (action === "first") newPage = 0;
+            else if (action === "back10") newPage = Math.max(0, page - 10);
+            else if (action === "prev") newPage = page - 1;
+            else if (action === "next") newPage = page + 1;
+            else if (action === "fwd10") newPage = Math.min(nbPages - 1, page + 10);
+            else if (action === "last") newPage = nbPages - 1;
             onPageChange(newPage);
           };
         }
@@ -1570,8 +1588,10 @@
             });
             theadRow += "</tr>";
 
+            var nbZones = rows.length;
+            var zoneLabel = displayMode === "departements" ? "départements" : displayMode === "regions" ? "régions" : "communes";
             var titleHtml =
-              "<strong>" + escapeHtml(job.groupTitle) + "</strong> — " + escapeHtml(job.cardTitle);
+              "<strong>" + escapeHtml(job.groupTitle) + "</strong> (" + nbZones + " " + zoneLabel + ") — " + escapeHtml(job.cardTitle);
             var crit = job.criteriaLine
               ? '<p class="comparaison-table-criteria">' + escapeHtml(job.criteriaLine) + "</p>"
               : "";
@@ -2650,6 +2670,15 @@
 
           if (displayMode === "communes") {
             if (mapsZone) mapsZone.innerHTML = "";
+            // Compter les départements uniques dans les données pour décider du mode carte
+            var deptSet = new Set();
+            mapJobs.forEach(function (job) {
+              (rowsByFilterKey[job.filterKey] || []).forEach(function (r) {
+                var d = String(r.code_dept || "").trim();
+                if (d) deptSet.add(d);
+              });
+            });
+            var useMassMap = selectionMassMode === "france" || deptSet.size > 12;
             if (titleEl) {
               titleEl.textContent =
                 mapJobs.length > 1
@@ -2658,7 +2687,11 @@
             }
             var communeHintPre = document.getElementById("comparaison-map-commune-legend-hint");
             if (communeHintPre) communeHintPre.hidden = true;
-            renderCommuneDeptMapsMulti(mapJobs, rowsByFilterKey, min, max);
+            if (useMassMap) {
+              renderCommunesMassMap(mapJobs, rowsByFilterKey, min, max, selectionMassMode || "france");
+            } else {
+              renderCommuneDeptMapsMulti(mapJobs, rowsByFilterKey, min, max);
+            }
             mapViz.mode = "communes";
             return;
           }
@@ -2957,7 +2990,10 @@
             ul.querySelectorAll("button").forEach(function (btn) {
               btn.addEventListener("click", function () {
                 var i = parseInt(btn.getAttribute("data-i"), 10);
-                selectedCommunes.splice(i, 1);
+                var removed = selectedCommunes.splice(i, 1)[0];
+                if (selectionMassMode && removed && removed.code_insee) {
+                  excludedCommunes.push(removed);
+                }
                 updateSelectedListForMode();
               });
             });
@@ -3374,6 +3410,7 @@
               if (v === "__ALL_FRANCE__") selectionMassMode = "france";
               else if (v === "__ALL_REGION__") selectionMassMode = "region";
               else selectionMassMode = "dept";
+              excludedCommunes = []; // Reset des exclusions pour la nouvelle sélection
               // Remplir la liste avec toutes les communes sélectionnées en masse
               (listCommunes || []).forEach(function (c) { addSelectedCommuneItem(c); });
               renderSelectedList(); // ← une seule fois après la boucle (optimisation conseillée par Claude.ia)
@@ -3544,16 +3581,25 @@
             // S1 : Chemin rapide par scope pour les sélections en masse
             if (selectionMassMode === "france") {
               baseParams.set("scope", "all_france");
+              excludedCommunes.forEach(function (c) {
+                if (c.code_insee) baseParams.append("exclude_code_insee", c.code_insee);
+              });
             } else if (selectionMassMode === "dept") {
               baseParams.set("scope", "department");
               // Envoyer le code_dept du sélecteur de département
               var deptVal = document.getElementById("comparaison-dept").value;
               if (deptVal) baseParams.append("code_dept", deptVal);
+              excludedCommunes.forEach(function (c) {
+                if (c.code_insee) baseParams.append("exclude_code_insee", c.code_insee);
+              });
             } else if (selectionMassMode === "region") {
               baseParams.set("scope", "region");
               // Envoyer le code_region du sélecteur de région
               var regVal = document.getElementById("comparaison-region").value;
               if (regVal) baseParams.append("code_region", regVal);
+              excludedCommunes.forEach(function (c) {
+                if (c.code_insee) baseParams.append("exclude_code_insee", c.code_insee);
+              });
             } else if (selectedCommunes.length > 0 && selectedCommunes[0].code_insee) {
               // Sélection manuelle avec code_insee disponible
               baseParams.set("scope", "communes");
@@ -3610,10 +3656,10 @@
               // nouveau code : Claude.ia
               var theadPrefix =
                 displayMode === "departements"
-                  ? "<tr><th class=\"col-num\">Rang</th><th class=\"sortable\" data-sort=\"reg_nom\">Région<span class=\"sort-icon\"></span></th><th class=\"col-num sortable\" data-sort=\"code_dept\">Code dépt<span class=\"sort-icon\"></span></th><th class=\"sortable\" data-sort=\"dep_nom\">Département<span class=\"sort-icon\"></span></th>"
+                  ? "<tr><th class=\"col-num\">Rang</th><th class=\"sortable\" data-sort=\"region\">Région<span class=\"sort-icon\"></span></th><th class=\"col-num sortable\" data-sort=\"code_dept\">Code dépt<span class=\"sort-icon\"></span></th><th class=\"sortable\" data-sort=\"dep_nom\">Département<span class=\"sort-icon\"></span></th>"
                   : displayMode === "regions"
-                  ? "<tr><th class=\"col-num\">Rang</th><th class=\"col-num sortable\" data-sort=\"code_region\">Code région<span class=\"sort-icon\"></span></th><th class=\"sortable\" data-sort=\"reg_nom\">Région<span class=\"sort-icon\"></span></th>"
-                  : "<tr><th class=\"col-num\">Rang</th><th class=\"sortable\" data-sort=\"reg_nom\">Région<span class=\"sort-icon\"></span></th><th class=\"col-num sortable\" data-sort=\"code_dept\">Code dépt<span class=\"sort-icon\"></span></th><th class=\"col-num sortable\" data-sort=\"code_postal\">Code postal<span class=\"sort-icon\"></span></th><th class=\"sortable\" data-sort=\"commune\">Commune<span class=\"sort-icon\"></span></th>";
+                  ? "<tr><th class=\"col-num\">Rang</th><th class=\"col-num sortable\" data-sort=\"code_region\">Code région<span class=\"sort-icon\"></span></th><th class=\"sortable\" data-sort=\"region\">Région<span class=\"sort-icon\"></span></th>"
+                  : "<tr><th class=\"col-num\">Rang</th><th class=\"sortable\" data-sort=\"region\">Région<span class=\"sort-icon\"></span></th><th class=\"col-num sortable\" data-sort=\"code_dept\">Code dépt<span class=\"sort-icon\"></span></th><th class=\"col-num sortable\" data-sort=\"code_postal\">Code postal<span class=\"sort-icon\"></span></th><th class=\"sortable\" data-sort=\"commune\">Commune<span class=\"sort-icon\"></span></th>";
               // fin nouveau code : Claude.ia
               var hasAnyRows = jobs.some(function (j) {
                 return (rowsByFilterKey[j.filterKey] || []).length > 0;
