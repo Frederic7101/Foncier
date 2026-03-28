@@ -701,11 +701,11 @@
               <span id="comparaison-map-legend-max">Max</span>
             </div>
             <div class="comparaison-map-legend-controls">
-              <label>Min&nbsp;<input type="number" id="legend-input-min" step="0.1" style="width:5.5rem"></label>
+              <label>Min&nbsp;<input type="text" id="legend-input-min" style="width:5.5rem" readonly></label>
               <input type="range" id="legend-range-min" min="0" max="100" step="0.1" style="width:6rem">
               <span style="flex:1"></span>
               <input type="range" id="legend-range-max" min="0" max="100" step="0.1" style="width:6rem">
-              <label><input type="number" id="legend-input-max" step="0.1" style="width:5.5rem">&nbsp;Max</label>
+              <label><input type="text" id="legend-input-max" style="width:5.5rem" readonly>&nbsp;Max</label>
             </div>
             <div id="comparaison-map-commune-legend-hint" class="comparaison-map-commune-legend-hint" hidden>
               <span class="legend-item"><span class="commune-legend-swatch" style="background:#fde047;border-color:#ca8a04"></span> Pas de correspondance (données / nom)</span>
@@ -2003,8 +2003,7 @@
             updateLegendGradient(rawMin, rawMax);
             recolorAllMaps();
           }
-          if (inMin) { inMin.addEventListener("change", function () { applyMin(this.value); }); }
-          if (inMax) { inMax.addEventListener("change", function () { applyMax(this.value); }); }
+          // Les inputs sont readonly, seuls les sliders peuvent les modifier
           if (rMin)  { rMin.addEventListener("input",  function () { applyMin(this.value); if (inMin) inMin.value = formatLegendValue(legendCustomMin); }); }
           if (rMax)  { rMax.addEventListener("input",  function () { applyMax(this.value); if (inMax) inMax.value = formatLegendValue(legendCustomMax); }); }
         }
@@ -2694,7 +2693,8 @@
                     mapId: mapId,
                     deptCode: deptEntry.code,
                     selBounds: selBounds,
-                    fitOpts: fitOpts
+                    fitOpts: fitOpts,
+                    valuesByCommune: valuesByCommune  // Fix 1.2 : nécessaire pour recolorAllMaps()
                   });
                   allMaps.push(map);
                 });
@@ -4006,7 +4006,7 @@
                   var dynNoTab = document.getElementById("comparaison-tables-dynamic");
                   if (dynNoTab) dynNoTab.innerHTML = "";
                 }
-                if (hasRenderableMapValues && !isCacheHit) {
+                if (hasRenderableMapValues) {
                   tlog("renderComparaisonMap START");
                   renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePrincipal);
                   // Si l'onglet cartes est déjà actif, invalider la taille immédiatement
