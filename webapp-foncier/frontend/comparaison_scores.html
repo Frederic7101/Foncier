@@ -729,6 +729,15 @@
         const selectedCommunes = []; // { code_dept, code_postal, commune }
         var lastComparaisonMode = "communes"; // communes | departements | regions
 
+        // ── Logs horodatées pour mesurer les performances ──
+        var _tlogStart = performance.now();
+        function tlog(msg) {
+          var now = performance.now();
+          var elapsed = ((now - _tlogStart) / 1000).toFixed(3);
+          var ts = new Date().toISOString().slice(11, 23);
+          console.log("[comparaison " + ts + " +" + elapsed + "s] " + msg);
+        }
+
         function escapeHtml(s) {
           if (s == null) return "";
           const div = document.createElement("div");
@@ -1200,11 +1209,13 @@
         var selectionMassMode = null;
         // Communes retirées d'une sélection en masse (pour envoyer exclude_code_insee au backend)
         var excludedCommunes = [];
+        var _massExpandedView = false; // true quand l'utilisateur a cliqué "Détailler" en mode mass
+        var _massExpandPage = 0; // page courante de l'expand (0-based)
         // Cache des résultats de comparaison pour éviter les appels API redondants
-        // Structure multi-période : rowsByPeriod[periode] = [rows]
+        // Cache : rawRows = données brutes (période 1 + indicateurs_par_periode), merge période côté client
         // Le fingerprint ne contient que scope+mode+géographie (pas indicateurs/période/n_max)
         var comparaisonCache = {
-          rowsByPeriod: null,      // { 1: [...], 3: [...], 5: [...] } — lignes brutes par période
+          rawRows: null,           // Lignes brutes (période 1 + indicateurs_par_periode) — 1 seul fetch
           fingerprint: null,       // Empreinte structurelle (mode + scope + géographie)
           communeInseeSet: null    // Set des code_insee présents dans le cache
         };
@@ -1451,6 +1462,26 @@
         }
 
         /**
+         * Applique le snapshot indicateurs_par_periode[period] sur une row (côté client).
+         * Équivalent JS de _merge_periode_into_row côté backend.
+         * Pour période 1, retourne la row telle quelle.
+         */
+        function mergePeriodIntoRow(row, periodAnnees) {
+          if (periodAnnees === 1) return row;
+          var jp = row.indicateurs_par_periode;
+          if (!jp || typeof jp !== "object") return row;
+          var snap = jp[String(periodAnnees)];
+          if (!snap || typeof snap !== "object") return row;
+          var out = Object.assign({}, row);
+          for (var k in snap) {
+            if (snap.hasOwnProperty(k) && snap[k] !== null && snap[k] !== undefined) {
+              out[k] = snap[k];
+            }
+          }
+          return out;
+        }
+
+        /**
          * Calcule une empreinte structurelle du scope géographique.
          * N'inclut PAS : indicateurs, période, n_max, nb_locaux_min
          * (ces filtres sont appliqués côté client depuis le cache).
@@ -1465,18 +1496,16 @@
         }
 
         /**
-         * Tente de résoudre la comparaison depuis le cache.
+         * Tente de résoudre la comparaison depuis le cache (rawRows = données brutes toutes périodes).
          * Retourne :
-         *   { hit: true, rows: [...] } si le cache suffit pour cette période,
+         *   { hit: true, rows: [...] } si le cache suffit (rows = rawRows filtrées),
          *   { hit: false, fetchMode: "full" } si le cache est invalide,
-         *   { hit: false, fetchMode: "incremental", newInsee: [...], keepInsee: Set } si ajout de communes,
-         *   { hit: false, fetchMode: "period", baseRows: [...] } si seule la période manque.
+         *   { hit: false, fetchMode: "incremental", newInsee: [...], keepInsee: Set } si ajout de communes.
          */
-        function tryCacheResolve(fingerprint, periodeDvf, currentExcludedInsee, currentSelectedInsee, scope) {
-          if (!comparaisonCache.rowsByPeriod || !comparaisonCache.fingerprint) {
+        function tryCacheResolve(fingerprint, currentExcludedInsee, currentSelectedInsee, scope) {
+          if (!comparaisonCache.rawRows || !comparaisonCache.fingerprint) {
             return { hit: false, fetchMode: "full" };
           }
-          // Si le scope géographique a changé → full refetch
           if (comparaisonCache.fingerprint !== fingerprint) {
             return { hit: false, fetchMode: "full" };
           }
@@ -1484,39 +1513,25 @@
           if (!cachedInseeSet) {
             return { hit: false, fetchMode: "full" };
           }
-
-          // Vérifier si on a cette période en cache
-          var periodKey = String(periodeDvf || 1);
-          var cachedRows = comparaisonCache.rowsByPeriod[periodKey];
+          var cachedRows = comparaisonCache.rawRows;
 
           // En mode communes individuelles : détecter ajouts
           if (scope === "communes" && currentSelectedInsee && currentSelectedInsee.length > 0) {
-            var currentSet = new Set(currentSelectedInsee);
-            var newInsee = currentSelectedInsee.filter(function (c) { return !cachedInseeSet.has(c); });
+            var currentSet = new Set(currentSelectedInsee.map(String));
+            var newInsee = currentSelectedInsee.filter(function (c) { return !cachedInseeSet.has(String(c)); });
             if (newInsee.length > 0) {
-              // Ajouts détectés → fetch incrémental (pour TOUTES les périodes en cache + cette période)
               return { hit: false, fetchMode: "incremental", newInsee: newInsee, keepInsee: currentSet };
             }
-            // Seulement des retraits : filtrer
-            if (cachedRows) {
-              var filtered = cachedRows.filter(function (r) { return currentSet.has(r.code_insee); });
-              return { hit: true, rows: filtered };
-            }
-            // Période manquante mais scope OK → fetch de la période seulement
-            return { hit: false, fetchMode: "period" };
+            var filtered = cachedRows.filter(function (r) { return currentSet.has(String(r.code_insee || "")); });
+            return { hit: true, rows: filtered };
           }
 
           // En mode scope (all_france, department, region) :
-          if (cachedRows) {
-            var excludeSet = new Set(currentExcludedInsee || []);
-            var filtered2 = excludeSet.size > 0
-              ? cachedRows.filter(function (r) { return !excludeSet.has(r.code_insee); })
-              : cachedRows;
-            return { hit: true, rows: filtered2 };
-          }
-
-          // Période manquante → fetch uniquement cette période
-          return { hit: false, fetchMode: "period" };
+          var excludeSet = new Set((currentExcludedInsee || []).map(String));
+          var filtered2 = excludeSet.size > 0
+            ? cachedRows.filter(function (r) { return !excludeSet.has(String(r.code_insee || "")); })
+            : cachedRows;
+          return { hit: true, rows: filtered2 };
         }
 
         function uniqueFilterKeysFromJobs(jobs) {
@@ -1604,12 +1619,15 @@
             scores_secondaires: mergedSecondaires
           });
 
+          tlog("fetchBatch POST — période=" + (body.periode_annees || 1) + " scope=" + (body.scope || "?") + " scores=" + mergedSecondaires.length);
+          var _fetchT0 = performance.now();
           return fetch(API_BASE + "/api/comparaison_scores", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body)
           })
           .then(function (r) {
+            tlog("fetchBatch réponse HTTP " + r.status + " en " + ((performance.now() - _fetchT0) / 1000).toFixed(2) + "s");
             if (!r.ok) {
               throw new Error(
                 r.status === 404 ? "Endpoint /api/comparaison_scores non encore implémenté." : "Erreur " + r.status
@@ -1619,6 +1637,7 @@
           })
           .then(function (data) {
             var allRows = data.rows || data.lignes || data.communes || [];
+            tlog("fetchBatch JSON parsé — " + allRows.length + " lignes reçues (total " + ((performance.now() - _fetchT0) / 1000).toFixed(2) + "s)");
             // Distribuer les mêmes lignes à chaque filterKey (les données sont identiques,
             // seul le scoreKey diffère — chaque job lira row[job.scoreKey] pour sa valeur)
             var out = {};
@@ -3063,15 +3082,7 @@
               : mode === "departements"
                 ? "Départements sélectionnés"
                 : "Régions sélectionnées";
-          // En mode masse sans communes individuelles, afficher le mode
-          if (mode === "communes" && n === 0 && selectionMassMode) {
-            var massDesc = selectionMassMode === "france" ? "France entière"
-              : selectionMassMode === "region" ? "Région entière"
-              : "Département entier";
-            titleEl.textContent = base + " — " + massDesc;
-          } else {
-            titleEl.textContent = base + " (" + n + ")";
-          }
+          titleEl.textContent = base + " (" + n + ")";
         }
 
         function updateSelectedListForMode() {
@@ -3084,7 +3095,7 @@
           }
           var mode = getComparaisonMode();
           if (mode === "communes") {
-            if (selectedCommunes.length === 0 && !selectionMassMode) {
+            if (selectedCommunes.length === 0) {
               block.setAttribute("aria-hidden", "true");
               ul.innerHTML = "";
               updateSelectedPlacesTitle();
@@ -3092,42 +3103,62 @@
               return;
             }
             block.removeAttribute("aria-hidden");
-            // Si sélection en masse sans communes individuelles dans selectedCommunes
-            if (selectedCommunes.length === 0 && selectionMassMode) {
-              var massLabel = selectionMassMode === "france" ? "Toutes les communes de France"
-                : selectionMassMode === "region" ? "Toutes les communes de la région"
-                : "Toutes les communes du département";
-              var listReady = listCommunes && listCommunes.length > 0;
-              var expandHtml = listReady
-                ? ' <button type="button" class="expand-mass-btn" title="Afficher la liste des communes">▶ Détailler (' + listCommunes.length + ' communes)</button>'
-                : ' <span class="mass-loading-hint">(chargement de la liste en cours…)</span>';
-              ul.innerHTML = "<li><em>" + escapeHtml(massLabel) + "</em>" + expandHtml + "</li>";
-              var expandBtn = ul.querySelector(".expand-mass-btn");
-              if (expandBtn) {
-                expandBtn.addEventListener("click", function () {
-                  // Expand : remplir selectedCommunes avec listCommunes et ré-afficher
-                  (listCommunes || []).forEach(function (c) { addSelectedCommuneItem(c); });
-                  updateSelectedListForMode();
-                });
-              }
-              updateSelectedPlacesTitle();
-              updateComparaisonCriteriaBlockVisibility();
-              return;
+            // Toujours afficher la liste paginée (selectedCommunes contient tout)
+            var EXPAND_PAGE_SIZE = 200;
+            var displayList = selectedCommunes;
+            var isMassExpand = false;
+            var totalCount = displayList.length;
+            var startIdx = _massExpandPage * EXPAND_PAGE_SIZE;
+            if (startIdx >= totalCount) { _massExpandPage = 0; startIdx = 0; }
+            var endIdx = Math.min(startIdx + EXPAND_PAGE_SIZE, totalCount);
+            var visibleSlice = displayList.slice(startIdx, endIdx);
+            // Boutons navigation (affichés dès que la liste dépasse une page)
+            var needsPagination = totalCount > EXPAND_PAGE_SIZE;
+            var navBtns = "";
+            if (needsPagination) {
+              if (startIdx > 0)
+                navBtns += ' <button type="button" class="expand-mass-btn" id="expand-prev-page">◀ Page précédente</button>';
+              if (endIdx < totalCount)
+                navBtns += ' <button type="button" class="expand-mass-btn" id="expand-next-page">Page suivante ▶</button>';
             }
-            ul.innerHTML = selectedCommunes.map(function (c, i) {
+            var pageInfo = needsPagination
+              ? " — page " + (_massExpandPage + 1) + "/" + Math.ceil(totalCount / EXPAND_PAGE_SIZE)
+              : "";
+            var headerHtml = needsPagination
+              ? "<li style=\"margin-bottom:0.3rem\"><em>" + totalCount + " communes" + pageInfo + "</em>" + navBtns + "</li>"
+              : "";
+            ul.innerHTML = headerHtml + visibleSlice.map(function (c, visIdx) {
+              var absIdx = startIdx + visIdx; // index absolu dans selectedCommunes
               var label = escapeHtml(c.commune) + " (" + escapeHtml(c.code_postal) + ")";
-              return "<li>" + label + " <button type=\"button\" data-i=\"" + i + "\" aria-label=\"Retirer\">×</button></li>";
+              return "<li>" + label + " <button type=\"button\" data-abs=\"" + absIdx + "\" aria-label=\"Retirer\">×</button></li>";
             }).join("");
-            ul.querySelectorAll("button").forEach(function (btn) {
+            // Boutons navigation listeners
+            var prevPageBtn = document.getElementById("expand-prev-page");
+            if (prevPageBtn) {
+              prevPageBtn.addEventListener("click", function () {
+                _massExpandPage = Math.max(0, _massExpandPage - 1);
+                updateSelectedListForMode();
+              });
+            }
+            var nextPageBtn = document.getElementById("expand-next-page");
+            if (nextPageBtn) {
+              nextPageBtn.addEventListener("click", function () {
+                _massExpandPage = _massExpandPage + 1;
+                updateSelectedListForMode();
+              });
+            }
+            // Boutons × pour retirer une commune
+            ul.querySelectorAll("button[data-abs]").forEach(function (btn) {
               btn.addEventListener("click", function () {
-                var i = parseInt(btn.getAttribute("data-i"), 10);
-                var removed = selectedCommunes.splice(i, 1)[0];
-                if (selectionMassMode && removed && removed.code_insee) {
-                  excludedCommunes.push(removed);
+                var absIdx = parseInt(btn.getAttribute("data-abs"), 10);
+                var removed = selectedCommunes.splice(absIdx, 1)[0];
+                if (removed) {
+                  // Retirer aussi du Set de dédoublonnage
+                  var key = (removed.code_dept || "") + "|" + (removed.code_postal || "") + "|" + (removed.commune || "");
+                  selectedCommunesSet.delete(key);
+                  tlog("Commune retirée : " + removed.commune + " code_insee=" + (removed.code_insee || "?") + " — selectedCommunes.length=" + selectedCommunes.length);
                 }
                 updateSelectedListForMode();
-                // Auto-refresh depuis le cache si des résultats sont déjà affichés
-                if (comparaisonCache.rowsByPeriod) runComparaison();
               });
             });
             updateSelectedPlacesTitle();
@@ -3243,12 +3274,15 @@
           deptSelect.dispatchEvent(new Event("change"));
         }
 
+        var _fillCommunesGen = 0; // compteur anti race-condition
         function fillCommunes() {
+          var gen = ++_fillCommunesGen; // capturer la génération courante
           const codeDept = document.getElementById("comparaison-dept").value;
           const codeRegion = document.getElementById("comparaison-region").value;
           const communeSelect = document.getElementById("comparaison-commune");
           if (!communeSelect) return;
-          console.log("(fillCommunes)");
+          console.log("(fillCommunes) gen=" + gen + " dept=" + codeDept + " region=" + codeRegion);
+          listCommunes = []; // reset immédiat pour éviter les données obsolètes
           // 1ère ligne : libellé neutre
           communeSelect.innerHTML = "<option value=''>— Choisir une commune —</option>";
 
@@ -3263,6 +3297,7 @@
             fetch(API_BASE + "/api/communes?code_dept=" + encodeURIComponent(codeDept))
               .then(function (r) { return r.json(); })
               .then(function (data) {
+                if (gen !== _fillCommunesGen) return; // fetch obsolète, ignorer
                 listCommunes = Array.isArray(data) ? data : [];
                 listCommunes.forEach(function (c) {
                   const opt = document.createElement("option");
@@ -3271,7 +3306,7 @@
                   communeSelect.appendChild(opt);
                 });
               })
-              .catch(function () { listCommunes = []; });
+              .catch(function () { if (gen === _fillCommunesGen) listCommunes = []; });
           }
           // Sinon, récupérer les communes de la région si une région est sélectionnée
           else if (codeRegion){
@@ -3284,6 +3319,7 @@
             fetch(API_BASE + "/api/communes?code_region=" + encodeURIComponent(codeRegion))
               .then(function (r) { return r.json(); })
               .then(function (data) {
+                if (gen !== _fillCommunesGen) return; // fetch obsolète, ignorer
                 listCommunes = Array.isArray(data) ? data : [];
                 listCommunes.forEach(function (c) {
                   const opt = document.createElement("option");
@@ -3292,7 +3328,7 @@
                   communeSelect.appendChild(opt);
                 });
               })
-              .catch(function () { listCommunes = []; });
+              .catch(function () { if (gen === _fillCommunesGen) listCommunes = []; });
           }
           // Sinon (ni département ni région sélectionnés), proposer l'option France entière
           // immédiatement et charger les communes individuelles en tâche de fond
@@ -3307,6 +3343,7 @@
             fetch(API_BASE + "/api/communes?all_France=true")
               .then(function (r) { return r.json(); })
               .then(function (data) {
+                if (gen !== _fillCommunesGen) return; // fetch obsolète, ignorer
                 listCommunes = Array.isArray(data) ? data : [];
                 listCommunes.forEach(function (c) {
                   const opt = document.createElement("option");
@@ -3314,13 +3351,19 @@
                   opt.textContent = (c.commune || "") + " (" + (c.code_postal || "") + ")";
                   communeSelect.appendChild(opt);
                 });
-                // Si l'utilisateur a déjà sélectionné "Toutes les communes" et que le placeholder
-                // est affiché, mettre à jour l'UI pour permettre l'expansion
-                if (selectionMassMode && selectedCommunes.length === 0) {
+                // Si l'utilisateur a déjà cliqué "France entière" mais que listCommunes
+                // n'était pas encore chargé, ajouter les communes maintenant
+                if (selectionMassMode === "france" && listCommunes.length > 0) {
+                  var beforeCount = selectedCommunes.length;
+                  listCommunes.forEach(function (c) { addSelectedCommuneItem(c); });
+                  var added = selectedCommunes.length - beforeCount;
+                  if (added > 0) {
+                    console.log("(fillCommunes background) +" + added + " communes France ajoutées en différé (total: " + selectedCommunes.length + ")");
+                  }
                   updateSelectedListForMode();
                 }
               })
-              .catch(function () { listCommunes = []; });
+              .catch(function () { if (gen === _fillCommunesGen) listCommunes = []; });
           }
         }
         
@@ -3521,9 +3564,12 @@
         document.getElementById("comparaison-vider-liste").addEventListener("click", function () {
           var mode = getComparaisonMode();
           selectedCommunes.length = 0;
+          selectedCommunesSet.clear();
           selectionMassMode = null;
+          _massExpandedView = false;
+          _massExpandPage = 0;
           excludedCommunes = [];
-          comparaisonCache.rowsByPeriod = null;
+          comparaisonCache.rawRows = null;
           comparaisonCache.fingerprint = null;
           comparaisonCache.communeInseeSet = null;
           if (mode === "departements") {
@@ -3550,19 +3596,19 @@
             console.log("(initCommuneSelect) listCommunes : ", listCommunes);
             // si sélection en masse (Toutes les communes du département, Toutes les communes de la région, Toutes les communes de France)
             if (v === "__ALL_DEPT__" || v === "__ALL_REGION__" || v === "__ALL_FRANCE__") {
-              console.log("(initCommuneSelect) sélection en masse");
-              // Mémoriser le mode de sélection en masse pour orienter le rendu cartographique
+              console.log("(initCommuneSelect) sélection en masse cumulative");
+              // Mémoriser qu'il y a eu au moins une sélection de masse (pour carte/affichage)
               if (v === "__ALL_FRANCE__") selectionMassMode = "france";
-              else if (v === "__ALL_REGION__") selectionMassMode = "region";
-              else selectionMassMode = "dept";
-              excludedCommunes = []; // Reset des exclusions pour la nouvelle sélection
-              selectedCommunes.length = 0; // Reset pour éviter les doublons
-              comparaisonCache.rowsByPeriod = null; comparaisonCache.fingerprint = null; comparaisonCache.communeInseeSet = null; // Invalider le cache
-              // Pour France entière, pas besoin de charger les communes individuellement
-              // (scope=all_france côté backend). Pour dept/region, on charge la liste.
-              if (v !== "__ALL_FRANCE__" || (listCommunes && listCommunes.length > 0)) {
-                (listCommunes || []).forEach(function (c) { addSelectedCommuneItem(c); });
-              }
+              else if (!selectionMassMode) selectionMassMode = (v === "__ALL_REGION__") ? "region" : "dept";
+              // Ne PAS remettre à zéro selectedCommunes — sélection cumulative !
+              _massExpandedView = false;
+              _massExpandPage = 0;
+              comparaisonCache.rawRows = null; comparaisonCache.fingerprint = null; comparaisonCache.communeInseeSet = null; // Invalider le cache
+              // Ajouter les communes de la liste (dédoublonnage géré par addSelectedCommuneItem)
+              var beforeCount = selectedCommunes.length;
+              (listCommunes || []).forEach(function (c) { addSelectedCommuneItem(c); });
+              var added = selectedCommunes.length - beforeCount;
+              console.log("(initCommuneSelect) +" + added + " communes ajoutées (total: " + selectedCommunes.length + ")");
               renderSelectedList();
               sel.value = "";
               return;
@@ -3655,6 +3701,8 @@
         }
 
         function runComparaison() {
+          _tlogStart = performance.now(); // Reset le chrono à chaque comparaison
+          tlog("=== runComparaison START ===");
           var mode = getComparaisonMode();
           var cat = document.getElementById("comparaison-categorie").value;
           var indicators = getSelectedIndicators();
@@ -3667,7 +3715,7 @@
           var loadingEl = document.getElementById("comparaison-loading");
           var errorEl = document.getElementById("comparaison-error");
 
-          if (mode === "communes" && selectedCommunes.length === 0 && !selectionMassMode) {
+          if (mode === "communes" && selectedCommunes.length === 0 && selectionMassMode !== "france") {
             errorEl.textContent = "Ajoutez au moins une commune à la liste (recherche rapide ou sélecteur) puis cliquez sur Comparer.";
             errorEl.hidden = false;
             emptyEl.style.display = "none";
@@ -3723,40 +3771,39 @@
           var currentExcludedInsee = [];
           var currentSelectedInsee = [];
           if (mode === "communes") {
-            if (selectionMassMode === "france") {
+            currentExcludedInsee = excludedCommunes.map(function (c) { return c.code_insee; }).filter(Boolean);
+            if (selectedCommunes.length > 500 || selectionMassMode === "france") {
+              // Beaucoup de communes ou France entière : fetch scope=all_france, filtrage client-side
               scope = "all_france";
-              currentExcludedInsee = excludedCommunes.map(function (c) { return c.code_insee; }).filter(Boolean);
-            } else if (selectionMassMode === "dept") {
-              scope = "department";
-              geoCodeDept = document.getElementById("comparaison-dept").value || "";
-              currentExcludedInsee = excludedCommunes.map(function (c) { return c.code_insee; }).filter(Boolean);
-            } else if (selectionMassMode === "region") {
-              scope = "region";
-              geoCodeRegion = document.getElementById("comparaison-region").value || "";
-              currentExcludedInsee = excludedCommunes.map(function (c) { return c.code_insee; }).filter(Boolean);
+              // Si ce n'est PAS "toute la France", on filtre côté client
+              if (selectionMassMode !== "france") {
+                currentSelectedInsee = selectedCommunes.map(function (c) { return c.code_insee; }).filter(Boolean);
+              }
             } else if (selectedCommunes.length > 0 && selectedCommunes[0].code_insee) {
               scope = "communes";
               currentSelectedInsee = selectedCommunes.map(function (c) { return c.code_insee; }).filter(Boolean);
             }
           }
 
+          tlog("scope=" + scope + " selectionMassMode=" + selectionMassMode + " selectedCommunes=" + selectedCommunes.length + " excludedCommunes=" + excludedCommunes.length + " currentExcludedInsee=" + currentExcludedInsee.length + " currentSelectedInsee=" + currentSelectedInsee.length);
           // Fingerprint structurelle : seulement mode + scope + géographie
           // N'inclut PAS : indicateurs, période, n_max, nb_locaux_min
           var fingerprint = computeCacheFingerprint(mode, scope, geoCodeDept, geoCodeRegion);
 
           // Tenter de résoudre depuis le cache
-          var cacheResult = tryCacheResolve(fingerprint, periodeDvf, currentExcludedInsee, currentSelectedInsee, scope);
+          tlog("tryCacheResolve — fingerprint=" + fingerprint + " période=" + periodeDvf);
+          var cacheResult = tryCacheResolve(fingerprint, currentExcludedInsee, currentSelectedInsee, scope);
+          tlog("tryCacheResolve → hit=" + cacheResult.hit + (cacheResult.fetchMode ? " fetchMode=" + cacheResult.fetchMode : ""));
 
-          /** Construit les URLSearchParams de base pour un appel backend. */
-          function buildBaseParams(forPeriod) {
+          /** Construit les URLSearchParams de base pour un appel backend.
+           *  Toujours periode_annees=1 pour obtenir les données brutes + indicateurs_par_periode.
+           *  Le merge de période est fait côté client via mergePeriodIntoRow(). */
+          function buildBaseParams() {
             var bp = new URLSearchParams();
             bp.set("mode", mode);
             bp.set("score_principal", scorePrincipal);
-            bp.set("n_max", "50000"); // Récupérer tout pour le cache — n_max appliqué côté client
-            if (forPeriod !== 1) bp.set("periode_annees", String(forPeriod));
-            // Ne PAS envoyer nb_locaux_min au backend — filtré côté client
-            // Ne PAS restreindre les colonnes : demander TOUTES les colonnes pour le cache
-            // (envoyer un nom inconnu force le backend à retourner toutes les colonnes)
+            bp.set("n_max", "50000");
+            // periode_annees=1 → données brutes ; __ALL_COLUMNS__ force indicateurs_par_periode inclus
             bp.append("scores_secondaires", "__ALL_COLUMNS__");
             return bp;
           }
@@ -3764,18 +3811,12 @@
           /** Ajoute les paramètres géographiques scope à des URLSearchParams. */
           function addGeoParams(bp) {
             if (mode === "communes") {
-              if (selectionMassMode === "france") {
+              if (scope === "all_france") {
                 bp.set("scope", "all_france");
-              } else if (selectionMassMode === "dept") {
-                bp.set("scope", "department");
-                if (geoCodeDept) bp.append("code_dept", geoCodeDept);
-              } else if (selectionMassMode === "region") {
-                bp.set("scope", "region");
-                if (geoCodeRegion) bp.append("code_region", geoCodeRegion);
-              } else if (selectedCommunes.length > 0 && selectedCommunes[0].code_insee) {
+              } else if (scope === "communes" && currentSelectedInsee.length > 0) {
                 bp.set("scope", "communes");
-                selectedCommunes.forEach(function (c) {
-                  bp.append("code_insee", c.code_insee);
+                currentSelectedInsee.forEach(function (ci) {
+                  bp.append("code_insee", ci);
                 });
               } else {
                 selectedCommunes.forEach(function (c) {
@@ -3795,99 +3836,100 @@
             }
           }
 
-          /** Filtre les lignes par exclusions, nb_locaux_min, et n_max (côté client). */
-          function applyClientFilters(rows) {
-            var result = rows;
-            // Exclusions
-            if (currentExcludedInsee.length > 0) {
-              var exclSet = new Set(currentExcludedInsee);
-              result = result.filter(function (r) { return !exclSet.has(r.code_insee); });
+          /** Filtre les lignes brutes : merge période + exclusions + nb_locaux_min + n_max (côté client). */
+          function applyClientFilters(rawRows) {
+            var result = rawRows;
+            // 1. Merge de période côté client
+            if (periodeDvf !== 1) {
+              result = result.map(function (r) { return mergePeriodIntoRow(r, periodeDvf); });
             }
-            // nb_locaux_min
+            // 1b. Filtrage par communes sélectionnées (quand scope=all_france mais sélection partielle)
+            if (currentSelectedInsee.length > 0 && scope === "all_france") {
+              var selSet = new Set(currentSelectedInsee.map(String));
+              var beforeSel = result.length;
+              result = result.filter(function (r) { return selSet.has(String(r.code_insee || "")); });
+              tlog("applyClientFilters sélection: " + currentSelectedInsee.length + " communes retenues, " + beforeSel + " → " + result.length + " lignes");
+            }
+            // 2. Exclusions
+            if (currentExcludedInsee.length > 0) {
+              var exclSet = new Set(currentExcludedInsee.map(String));
+              var before = result.length;
+              result = result.filter(function (r) { return !exclSet.has(String(r.code_insee || "")); });
+              tlog("applyClientFilters exclusions: " + currentExcludedInsee.length + " exclus, " + before + " → " + result.length + " lignes");
+            }
+            // 3. nb_locaux_min
             if (nbLocauxMin > 0) {
               result = result.filter(function (r) {
                 var nb = r.nb_locaux != null ? Number(r.nb_locaux) : NaN;
                 return Number.isFinite(nb) && nb >= nbLocauxMin;
               });
             }
-            // n_max (affichage)
+            // 4. n_max (affichage)
             if (nMax && result.length > nMax) {
               result = result.slice(0, nMax);
             }
             return result;
           }
 
-          /** Stocke les lignes dans le cache pour la période donnée. */
-          function updateCache(allRows, period) {
-            if (!comparaisonCache.rowsByPeriod) comparaisonCache.rowsByPeriod = {};
-            comparaisonCache.rowsByPeriod[String(period)] = allRows;
+          /** Stocke les lignes brutes dans le cache (toutes périodes incluses). */
+          function updateCache(rawRows) {
+            comparaisonCache.rawRows = rawRows;
             comparaisonCache.fingerprint = fingerprint;
-            if (!comparaisonCache.communeInseeSet) comparaisonCache.communeInseeSet = new Set();
-            allRows.forEach(function (r) {
-              if (r.code_insee) comparaisonCache.communeInseeSet.add(r.code_insee);
+            comparaisonCache.communeInseeSet = new Set();
+            rawRows.forEach(function (r) {
+              if (r.code_insee) comparaisonCache.communeInseeSet.add(String(r.code_insee));
             });
           }
 
           var dataPromise;
+          var isCacheHit = false; // Flag pour éviter le re-rendu coûteux des cartes sur cache hit
           if (cacheResult.hit) {
             // Cache hit : résultat immédiat, pas d'appel API
+            isCacheHit = true;
             var filteredRows = applyClientFilters(cacheResult.rows);
-            console.log("[comparaison_scores] Cache HIT — " + filteredRows.length + " lignes (depuis " + cacheResult.rows.length + " en cache)");
+            tlog("Cache HIT — " + filteredRows.length + " lignes (depuis " + cacheResult.rows.length + " en cache, période " + periodeDvf + " mergée côté client)");
             var cachedByKey = {};
             uniqueKeys.forEach(function (fk) { cachedByKey[fk] = filteredRows; });
-            dataPromise = Promise.resolve(cachedByKey);
+            // Utiliser setTimeout(0) pour laisser le navigateur afficher le spinner avant le rendu
+            dataPromise = new Promise(function (resolve) {
+              setTimeout(function () { resolve(cachedByKey); }, 0);
+            });
           } else if (cacheResult.fetchMode === "incremental" && cacheResult.newInsee && cacheResult.newInsee.length > 0) {
             // Fetch incrémental : seulement les nouvelles communes
-            console.log("[comparaison_scores] Cache INCREMENTAL — fetch de " + cacheResult.newInsee.length + " nouvelles communes");
-            var incParams = buildBaseParams(periodeDvf);
+            tlog("Cache INCREMENTAL — fetch de " + cacheResult.newInsee.length + " nouvelles communes");
+            var incParams = buildBaseParams();
             incParams.set("scope", "communes");
             cacheResult.newInsee.forEach(function (ci) { incParams.append("code_insee", ci); });
 
             dataPromise = fetchComparaisonScoresBatch(incParams, uniqueKeys, scorePrincipal, cat)
               .then(function (newByKey) {
                 var newRows = newByKey[uniqueKeys[0]] || [];
-                // Fusionner dans le cache pour CHAQUE période existante
-                var periodKey = String(periodeDvf);
-                var existing = (comparaisonCache.rowsByPeriod && comparaisonCache.rowsByPeriod[periodKey]) || [];
-                var mergedRows = existing.concat(newRows);
-                updateCache(mergedRows, periodeDvf);
+                var existing = comparaisonCache.rawRows || [];
+                var mergedRaw = existing.concat(newRows);
+                updateCache(mergedRaw);
                 // Filtrer pour garder seulement la sélection actuelle
                 var keepSet = cacheResult.keepInsee;
-                var keptRows = mergedRows.filter(function (r) { return keepSet.has(r.code_insee); });
-                var filtered = applyClientFilters(keptRows);
-                var out = {};
-                uniqueKeys.forEach(function (fk) { out[fk] = filtered; });
-                return out;
-              });
-          } else if (cacheResult.fetchMode === "period") {
-            // Scope OK mais période manquante → fetch cette période
-            console.log("[comparaison_scores] Cache PERIOD MISS — fetch période " + periodeDvf);
-            var perParams = buildBaseParams(periodeDvf);
-            addGeoParams(perParams);
-
-            dataPromise = fetchComparaisonScoresBatch(perParams, uniqueKeys, scorePrincipal, cat)
-              .then(function (byKey) {
-                var allRows = byKey[uniqueKeys[0]] || [];
-                updateCache(allRows, periodeDvf);
-                var filtered = applyClientFilters(allRows);
+                var keptRaw = mergedRaw.filter(function (r) { return keepSet.has(String(r.code_insee || "")); });
+                var filtered = applyClientFilters(keptRaw);
                 var out = {};
                 uniqueKeys.forEach(function (fk) { out[fk] = filtered; });
                 return out;
               });
           } else {
-            // Full fetch
-            console.log("[comparaison_scores] Cache MISS — full fetch");
-            var baseParams = buildBaseParams(periodeDvf);
-            addGeoParams(baseParams);
+            // Full fetch — 1 SEUL appel API (période 1 + indicateurs_par_periode pour toutes les périodes)
+            tlog("Cache MISS — full fetch (1 appel, toutes périodes en cache)");
+            comparaisonCache.rawRows = null;
+            comparaisonCache.communeInseeSet = null;
 
-            dataPromise = fetchComparaisonScoresBatch(baseParams, uniqueKeys, scorePrincipal, cat)
+            var fullParams = buildBaseParams();
+            addGeoParams(fullParams);
+
+            dataPromise = fetchComparaisonScoresBatch(fullParams, uniqueKeys, scorePrincipal, cat)
               .then(function (byKey) {
-                var allRows = byKey[uniqueKeys[0]] || [];
-                // Réinitialiser le cache avec le nouveau scope
-                comparaisonCache.rowsByPeriod = {};
-                comparaisonCache.communeInseeSet = null;
-                updateCache(allRows, periodeDvf);
-                var filtered = applyClientFilters(allRows);
+                var rawRows = byKey[uniqueKeys[0]] || [];
+                updateCache(rawRows);
+                tlog("Cache stocké — " + rawRows.length + " lignes brutes (toutes périodes)");
+                var filtered = applyClientFilters(rawRows);
                 var out = {};
                 uniqueKeys.forEach(function (fk) { out[fk] = filtered; });
                 return out;
@@ -3896,6 +3938,7 @@
 
           dataPromise
             .then(function (rowsByFilterKey) {
+              tlog("dataPromise resolved — début du rendu");
               loadingEl.classList.remove("visible");
               var displayIndicators = indicators.length
                 ? indicators
@@ -3956,12 +3999,15 @@
               } else {
                 emptyEl.style.display = "none";
                 if (hasRenderableTable) {
+                  tlog("renderComparaisonTables START");
                   renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat, displayIndicators, theadPrefix);
+                  tlog("renderComparaisonTables END");
                 } else {
                   var dynNoTab = document.getElementById("comparaison-tables-dynamic");
                   if (dynNoTab) dynNoTab.innerHTML = "";
                 }
-                if (hasRenderableMapValues) {
+                if (hasRenderableMapValues && !isCacheHit) {
+                  tlog("renderComparaisonMap START");
                   renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePrincipal);
                   // Si l'onglet cartes est déjà actif, invalider la taille immédiatement
                   var _tabMaps = document.getElementById("comparaison-tab-maps");
@@ -3982,11 +4028,13 @@
                       }, d);
                     });
                   }
+                  tlog("renderComparaisonMap END");
                 } else {
                   clearComparaisonMap();
                 }
               }
               setMapTabVisible(hasRenderableMapValues);
+              tlog("=== runComparaison DONE ===");
             })
             .catch(function (err) {
               loadingEl.classList.remove("visible");
@@ -4077,7 +4125,15 @@
 
           // 2) Réinitialiser les états métier / sélections.
           selectedCommunes.length = 0;
+          selectedCommunesSet.clear();
           listCommunes = [];
+          excludedCommunes = [];
+          selectionMassMode = null;
+          _massExpandedView = false;
+          _massExpandPage = 0;
+          comparaisonCache.rawRows = null;
+          comparaisonCache.fingerprint = null;
+          comparaisonCache.communeInseeSet = null;
 
           // Mode par défaut: communes.
           var modeDefault = document.querySelector('input[name="comparaison-mode"][value="communes"]');

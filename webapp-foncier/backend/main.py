@@ -3,6 +3,10 @@ import json
 import math
 import os
 import re
+try:
+    import orjson as _orjson
+except ImportError:
+    _orjson = None
 import time as _time
 import unicodedata
 import urllib.error
@@ -17,6 +21,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import FastAPI, Query, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
+# from starlette.middleware.gzip import GZipMiddleware  # Utile en production (réseau), contre-productif en localhost
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -427,6 +432,17 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# GZip : utile en production (réseau distant), contre-productif en localhost (CPU > gain transfert)
+# app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+
+def _fast_json_response(data: dict) -> Response:
+    """Sérialise un dict en JSON via orjson (5-10x plus rapide que json standard).
+    Fallback sur json.dumps si orjson n'est pas disponible."""
+    if _orjson:
+        content = _orjson.dumps(data)
+        return Response(content=content, media_type="application/json")
+    return data  # FastAPI sérialisera avec json standard
 
 
 @app.get("/api/period")
@@ -2742,10 +2758,13 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
                         except (TypeError, ValueError):
                             ipp = None
                     row_d = {
+                        "code_insee": ci,
                         "code_dept": r.get("code_dept"),
                         "code_postal": r.get("code_postal"),
                         "commune": r.get("commune"),
                         "region": r.get("reg_nom") or "",
+                        "dep_nom": r.get("dep_nom") or "",
+                        "population": int(r["population"]) if r.get("population") is not None else None,
                         "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
                         "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
                         "indicateurs_par_periode": ipp if isinstance(ipp, dict) else None,
@@ -2801,7 +2820,9 @@ def _compute_needed_columns(score_principal: str, scores_secondaires: Optional[L
     unknown = needed - all_valid - {"nb_locaux"}
     if unknown:
         score_cols = list(_INDIC_ALL_SCORE_COLS)
-    need_periode = (periode_annees != 1)
+    # Si colonnes inconnues (ex: __ALL_COLUMNS__), toujours inclure indicateurs_par_periode
+    # pour que le frontend puisse faire le merge de période côté client
+    need_periode = (periode_annees != 1) or bool(unknown)
     return score_cols, need_periode
 
 
@@ -2924,10 +2945,13 @@ def _read_indicateurs_by_scope(
 def _build_indicateur_row_from_db(r: dict, data_cols: List[str], need_periode: bool) -> dict:
     """Construit un dict indicateur depuis une ligne DB, ne convertissant que les colonnes demandées."""
     row_d = {
+        "code_insee": r.get("code_insee"),
         "code_dept": r.get("code_dept"),
         "code_postal": r.get("code_postal"),
         "commune": r.get("commune"),
         "region": r.get("reg_nom") or "",
+        "dep_nom": r.get("dep_nom") or "",
+        "population": int(r["population"]) if r.get("population") is not None else None,
         "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
         "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
     }
@@ -3466,7 +3490,7 @@ def get_comparaison_scores(
             rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
             if n_max and len(rows) > n_max:
                 rows = rows[:n_max]
-            return {"rows": rows}
+            return _fast_json_response({"rows": rows})
         finally:
             if conn:
                 conn.close()
@@ -3492,7 +3516,7 @@ def get_comparaison_scores(
             rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
             if n_max and len(rows) > n_max:
                 rows = rows[:n_max]
-            return {"rows": rows}
+            return _fast_json_response({"rows": rows})
         finally:
             if conn:
                 conn.close()
@@ -3565,7 +3589,7 @@ def get_comparaison_scores(
         t_end = _time.monotonic()
         _debug_log("[comparaison_scores] tri+filtrage: %.3fs, sortie: %s ligne(s) retournée(s), total: %.3fs",
                    t_end - t_merge, len(rows), t_end - t_start)
-        return {"rows": rows}
+        return _fast_json_response({"rows": rows})
 
     # Chemin legacy : résolution par triplets (code_dept, code_postal, commune)
     depts = [str(x or "").strip() for x in (code_dept or [])]
@@ -3625,7 +3649,7 @@ def get_comparaison_scores(
         rows = rows[:n_max]
     t_end = _time.monotonic()
     _debug_log("[comparaison_scores] sortie: %s ligne(s) retournée(s), total: %.3fs", len(rows), t_end - t_start)
-    return {"rows": rows}
+    return _fast_json_response({"rows": rows})
 
 # nouvelle version (Claude.ia) : ajout de la validation du body JSON
 class ComparaisonScoresBody(BaseModel):
