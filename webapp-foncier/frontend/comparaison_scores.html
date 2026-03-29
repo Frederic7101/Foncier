@@ -365,6 +365,52 @@
         border: 1px solid #d1d5db;
         background: #eef2ff;
       }
+      /* Bouton × fermeture de carte */
+      .comparaison-map-card-choro,
+      .comparaison-commune-map-card { position: relative; }
+      .map-close-btn {
+        position: absolute;
+        top: 0.3rem;
+        right: 0.3rem;
+        width: 1.5rem;
+        height: 1.5rem;
+        border: none;
+        background: rgba(0,0,0,0.08);
+        border-radius: 50%;
+        cursor: pointer;
+        font-size: 1rem;
+        line-height: 1;
+        color: #6b7280;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        padding: 0;
+      }
+      .map-close-btn:hover { background: rgba(220,50,50,0.18); color: #dc2626; }
+      /* Poignée de redimensionnement (carte unique) */
+      .map-resize-handle {
+        width: 100%;
+        height: 8px;
+        background: #e5e7eb;
+        border: 1px solid #d1d5db;
+        border-top: none;
+        border-radius: 0 0 4px 4px;
+        cursor: ns-resize;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+      }
+      .map-resize-handle::after {
+        content: '';
+        width: 28px;
+        height: 3px;
+        background: #9ca3af;
+        border-radius: 2px;
+      }
+      .map-resize-handle:hover { background: #d1d5db; }
+      .map-resize-handle:hover::after { background: #6b7280; }
       #comparaison-communes-maps-grid {
         display: flex;
         flex-direction: column;
@@ -723,8 +769,9 @@
             <div class="comparaison-scores-row" id="comparaison-indicators-row">
               <span style="font-size: 0.85rem; color: #6b7280;">Indicateurs (colonnes du tableau) :</span>
               <div class="score-secondary" id="indicators-rentabilite">
-                <label><input type="checkbox" id="ind-renta-brute" value="renta_brute" checked /> Renta. brute</label>
+                <label><input type="checkbox" id="ind-renta-brute" value="renta_brute" /> Renta. brute</label>
                 <label><input type="checkbox" id="ind-renta-nette" value="renta_nette" checked /> Renta. nette</label>
+                <label><input type="checkbox" id="ind-nb-locaux" value="nb_locaux" checked /> Nb ventes</label>
               </div>
               <div class="score-secondary" id="indicators-taxes" style="display: none;">
                 <label><input type="checkbox" id="ind-taux-tfb" value="taux_tfb" checked /> Taux TF</label>
@@ -942,7 +989,7 @@
         function formatNbLocaux(value) { return formatInt(value); }
 
         function getScoreLabel(key) {
-          var labels = { renta_brute: "Renta. brute", renta_nette: "Renta. nette", renta_brute_maisons: "Renta. brute", renta_nette_maisons: "Renta. nette", renta_brute_appts: "Renta. brute", renta_nette_appts: "Renta. nette", taux_tfb: "Taux TF", taux_teom: "Taux TEOM" };
+          var labels = { renta_brute: "Renta. brute", renta_nette: "Renta. nette", renta_brute_maisons: "Renta. brute", renta_nette_maisons: "Renta. nette", renta_brute_appts: "Renta. brute", renta_nette_appts: "Renta. nette", taux_tfb: "Taux TF", taux_teom: "Taux TEOM", nb_locaux: "Nb ventes" };
           return labels[key] || key;
         }
 
@@ -950,7 +997,7 @@
           return String(typeLogt || "") + FILTER_KEY_SEP + String(typeSurf || "") + FILTER_KEY_SEP + String(nbPieces || "");
         }
 
-        var CATEGORY_INDICATORS = { rentabilite: ["renta_brute", "renta_nette"], taxes: ["taux_tfb", "taux_teom"] };
+        var CATEGORY_INDICATORS = { rentabilite: ["renta_brute", "renta_nette", "nb_locaux"], taxes: ["taux_tfb", "taux_teom"] };
         var CATEGORY_LABELS = { rentabilite: "Rentabilité", taxes: "Taxes" };
         var TABLE_BLOCKS = [
           { id: "all", keyMap: { renta_brute: "renta_brute", renta_nette: "renta_nette", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
@@ -979,40 +1026,34 @@
         var RENTA_UNAVAILABLE_KEY = "__indicateur_non_calcule__";
 
         function getTableKeyMapForTypeCode(typeCode, cat, typeSurf, nbPieces) {
-          if (cat !== "rentabilite") return TABLE_BLOCKS[0].keyMap;
-          var surf = String(typeSurf || "TOUTES").toUpperCase();
-          var pie = String(nbPieces || "TOUS").toUpperCase();
-          var hasSurf = surf !== "TOUTES" && surf !== "" && /^S[1-5]$/.test(surf);
-          var hasPie = pie !== "TOUS" && pie !== "" && /^T[1-5]$/.test(pie);
-          if (hasSurf || hasPie) {
-            return {
-              renta_brute: resolveFullRentabiliteScoreKey("renta_brute", typeCode, typeSurf, nbPieces, cat),
-              renta_nette: resolveFullRentabiliteScoreKey("renta_nette", typeCode, typeSurf, nbPieces, cat),
-              taux_tfb: "taux_tfb",
-              taux_teom: "taux_teom"
-            };
+          var base;
+          if (cat !== "rentabilite") {
+            base = TABLE_BLOCKS[0].keyMap;
+          } else {
+            var surf = String(typeSurf || "TOUTES").toUpperCase();
+            var pie = String(nbPieces || "TOUS").toUpperCase();
+            var hasSurf = surf !== "TOUTES" && surf !== "" && /^S[1-5]$/.test(surf);
+            var hasPie = pie !== "TOUS" && pie !== "" && /^T[1-5]$/.test(pie);
+            if (hasSurf || hasPie) {
+              base = {
+                renta_brute: resolveFullRentabiliteScoreKey("renta_brute", typeCode, typeSurf, nbPieces, cat),
+                renta_nette: resolveFullRentabiliteScoreKey("renta_nette", typeCode, typeSurf, nbPieces, cat),
+                taux_tfb: "taux_tfb",
+                taux_teom: "taux_teom"
+              };
+            } else {
+              var rp = rentaKeyPairForTypeLogt(typeCode);
+              if (rp) {
+                base = { renta_brute: rp.rb, renta_nette: rp.rn, taux_tfb: "taux_tfb", taux_teom: "taux_teom" };
+              } else if (!isRentabiliteTypeSupported(typeCode)) {
+                base = { renta_brute: RENTA_UNAVAILABLE_KEY, renta_nette: RENTA_UNAVAILABLE_KEY, taux_tfb: "taux_tfb", taux_teom: "taux_teom" };
+              } else {
+                var u = String(typeCode || "TOUS").toUpperCase();
+                base = u === "MAISON" ? TABLE_BLOCKS[1].keyMap : u === "APPART" ? TABLE_BLOCKS[2].keyMap : TABLE_BLOCKS[0].keyMap;
+              }
+            }
           }
-          var rp = rentaKeyPairForTypeLogt(typeCode);
-          if (rp) {
-            return {
-              renta_brute: rp.rb,
-              renta_nette: rp.rn,
-              taux_tfb: "taux_tfb",
-              taux_teom: "taux_teom"
-            };
-          }
-          if (!isRentabiliteTypeSupported(typeCode)) {
-            return {
-              renta_brute: RENTA_UNAVAILABLE_KEY,
-              renta_nette: RENTA_UNAVAILABLE_KEY,
-              taux_tfb: "taux_tfb",
-              taux_teom: "taux_teom"
-            };
-          }
-          var u = String(typeCode || "TOUS").toUpperCase();
-          if (u === "MAISON") return TABLE_BLOCKS[1].keyMap;
-          if (u === "APPART") return TABLE_BLOCKS[2].keyMap;
-          return TABLE_BLOCKS[0].keyMap;
+          return Object.assign({}, base, { nb_locaux: "nb_locaux" });
         }
 
         function mergeRowsForBounds(rowsByFilterKey, jobs) {
@@ -1294,6 +1335,7 @@
         var legendCustomMax = null;
         var lastTableConfigs = [];
         var sortByTable = {};
+        var _currentMapScoreKey = "";
         var mapViz = {
           mode: null,
           communeMaps: [],
@@ -1353,7 +1395,8 @@
           var order = CATEGORY_INDICATORS[cat] || [];
           var out = [];
           order.forEach(function (key) {
-            var id = key === "renta_brute" ? "ind-renta-brute" : key === "renta_nette" ? "ind-renta-nette" : key === "taux_tfb" ? "ind-taux-tfb" : "ind-taux-teom";
+            var id = key === "renta_brute" ? "ind-renta-brute" : key === "renta_nette" ? "ind-renta-nette" : key === "taux_tfb" ? "ind-taux-tfb" : key === "taux_teom" ? "ind-taux-teom" : key === "nb_locaux" ? "ind-nb-locaux" : null;
+            if (!id) return;
             var cb = document.getElementById(id);
             if (cb && cb.checked) out.push({ key: key, label: getScoreLabel(key) });
           });
@@ -1737,13 +1780,9 @@
             if (tableIndicators.length === 0) return;
             if (!jobHasDisplayableData(rows, job, cat, displayIndicators)) return;
             if (cat === "rentabilite") {
-              tableIndicators = [
-                { key: "nb_ventes_dvf", label: "Nb ventes DVF" },
-                { key: "nb_locaux", label: "Nb locaux vendus" }
-              ].concat(tableIndicators);
               var firstScoreIdx = -1;
               for (var si = 0; si < tableIndicators.length; si++) {
-                if (tableIndicators[si].key !== "nb_locaux" && tableIndicators[si].key !== "nb_ventes_dvf") {
+                if (tableIndicators[si].key !== "nb_locaux") {
                   firstScoreIdx = si;
                   break;
                 }
@@ -1772,8 +1811,12 @@
 
             var nbZones = rows.length;
             var zoneLabel = displayMode === "departements" ? "départements" : displayMode === "regions" ? "régions" : "communes";
+            var _pdvfEl = document.getElementById("comparaison-periode-dvf");
+            var _pdvf = _pdvfEl ? parseInt(String(_pdvfEl.value || "1"), 10) : 1;
+            if (!Number.isFinite(_pdvf) || [1, 2, 3, 5].indexOf(_pdvf) < 0) _pdvf = 1;
+            var periodeLabel = _pdvf === 1 ? "1 an" : _pdvf + " ans";
             var titleHtml =
-              "<strong>" + escapeHtml(job.groupTitle) + "</strong> (" + nbZones + " " + zoneLabel + ") — " + escapeHtml(job.cardTitle);
+              "<strong>" + escapeHtml(job.groupTitle) + "</strong> (" + nbZones + " " + zoneLabel + ") — " + escapeHtml(job.cardTitle) + " · " + periodeLabel;
             var crit = job.criteriaLine
               ? '<p class="comparaison-table-criteria">' + escapeHtml(job.criteriaLine) + "</p>"
               : "";
@@ -1851,6 +1894,7 @@
         function formatLegendValue(value) {
           var v = Number(value);
           if (!Number.isFinite(v)) return "—";
+          if (_currentMapScoreKey === "nb_locaux") return Math.round(v).toLocaleString("fr-FR");
           return v.toLocaleString("fr-FR", { minimumFractionDigits: 1, maximumFractionDigits: 1 }) + " %";
         }
 
@@ -1998,10 +2042,19 @@
           // Graduation : 6 ticks aux frontières des 5 blocs de couleur (0/20/40/60/80/100 %)
           if (ticks) {
             var steps = [0, 0.2, 0.4, 0.6, 0.8, 1];
-            ticks.innerHTML = steps.map(function (t) {
-              var val = lo + t * (hi - lo);
-              return '<span class="tick" style="left:' + (t * 100) + '%">' + formatLegendValue(val) + '</span>';
-            }).join("");
+            if (_currentMapScoreKey === "nb_locaux") {
+              var logLo = Math.log(Math.max(1, lo));
+              var logHi = Math.log(Math.max(1, hi));
+              ticks.innerHTML = steps.map(function (t) {
+                var val = Math.round(Math.exp(logLo + t * (logHi - logLo)));
+                return '<span class="tick" style="left:' + (t * 100) + '%">' + formatLegendValue(val) + '</span>';
+              }).join("");
+            } else {
+              ticks.innerHTML = steps.map(function (t) {
+                var val = lo + t * (hi - lo);
+                return '<span class="tick" style="left:' + (t * 100) + '%">' + formatLegendValue(val) + '</span>';
+              }).join("");
+            }
           }
           // Sync des inputs
           var inMin = document.getElementById("legend-input-min");
@@ -2172,12 +2225,6 @@
             var cat = (document.getElementById("comparaison-categorie") || {}).value || "rentabilite";
             var displayIndicators = getSelectedIndicators();
             var tableIndicators = job ? computeTableIndicatorsForJob(job, cat, displayIndicators.length ? displayIndicators : [{ key: "renta_brute", label: "Renta. brute" }]) : [];
-            if (cat === "rentabilite" && tableIndicators.length) {
-              tableIndicators = [
-                { key: "nb_ventes_dvf", label: "Nb ventes DVF" },
-                { key: "nb_locaux", label: "Nb locaux vendus" }
-              ].concat(tableIndicators);
-            }
 
             rows.forEach(function (row, j) {
               var rank = j + 1;
@@ -2424,13 +2471,32 @@
               fctx.strokeStyle = "#d1d5db";
               fctx.lineWidth = 1;
               fctx.strokeRect(legendBarX, legendY + 4, legendBarW, legendBarH);
-              // Min / Max labels
+              // Ticks : lire les valeurs depuis le DOM (6 ticks à 0/20/40/60/80/100 %)
+              var ticksContainer = document.getElementById("comparaison-map-legend-ticks");
+              var tickEls = ticksContainer ? Array.prototype.slice.call(ticksContainer.querySelectorAll(".tick")) : [];
               fctx.fillStyle = "#4b5563";
-              fctx.font = "11px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
-              fctx.textAlign = "left";
-              fctx.fillText(legendMin, legendBarX, legendY + legendBarH + 18);
-              fctx.textAlign = "right";
-              fctx.fillText(legendMax, legendBarX + legendBarW, legendY + legendBarH + 18);
+              fctx.font = "10px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif";
+              if (tickEls.length > 0) {
+                tickEls.forEach(function (el) {
+                  var leftPct = parseFloat(el.style.left) / 100; // 0..1
+                  if (!Number.isFinite(leftPct)) return;
+                  var tx = legendBarX + leftPct * legendBarW;
+                  var label = el.textContent.trim();
+                  // Trait de graduation vertical sous la barre
+                  fctx.fillStyle = "#9ca3af";
+                  fctx.fillRect(Math.round(tx) - 0.5, legendY + 4 + legendBarH, 1, 5);
+                  // Label : alignement selon la position (gauche bord, droite bord, centré ailleurs)
+                  fctx.fillStyle = "#4b5563";
+                  fctx.textAlign = leftPct < 0.05 ? "left" : leftPct > 0.95 ? "right" : "center";
+                  fctx.fillText(label, tx, legendY + legendBarH + 18);
+                });
+              } else {
+                // Fallback : min/max uniquement
+                fctx.textAlign = "left";
+                fctx.fillText(legendMin, legendBarX, legendY + legendBarH + 18);
+                fctx.textAlign = "right";
+                fctx.fillText(legendMax, legendBarX + legendBarW, legendY + legendBarH + 18);
+              }
 
               // Télécharger
               var mimeType = format === "jpg" ? "image/jpeg" : "image/png";
@@ -2454,7 +2520,18 @@
           var v = Number(value);
           if (!Number.isFinite(v)) return "#d1d5db";
           if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return "#22c55e";
-          var t = Math.max(0, Math.min(1, (v - min) / (max - min)));
+          var t;
+          if (_currentMapScoreKey === "nb_locaux") {
+            var vSafe = Math.max(1, v);
+            var minSafe = Math.max(1, min);
+            var maxSafe = Math.max(1, max);
+            t = maxSafe > minSafe
+              ? (Math.log(vSafe) - Math.log(minSafe)) / (Math.log(maxSafe) - Math.log(minSafe))
+              : 1;
+          } else {
+            t = (v - min) / (max - min);
+          }
+          t = Math.max(0, Math.min(1, t));
           if (t < 0.2) return "#f0fdf4";
           if (t < 0.4) return "#bbf7d0";
           if (t < 0.6) return "#4ade80";
@@ -2587,6 +2664,7 @@
         function resolveFullRentabiliteScoreKey(scorePrincipal, typeLogt, typeSurf, nbPieces, cat) {
           if (cat !== "rentabilite") return scorePrincipal;
           var sp = String(scorePrincipal || "renta_nette");
+          if (sp === "nb_locaux") return "nb_locaux";
           var isBrute = sp.indexOf("renta_brute") === 0;
           var pref = isBrute ? "renta_brute" : "renta_nette";
           var t = String(typeLogt || "TOUS").toUpperCase();
@@ -2807,9 +2885,11 @@
             } else {
               lines.push(escapeHtml(scoreLabel) + " : " + formatLegendValue(scoreVal));
             }
-            var nbV = found.nb_ventes != null ? Number(found.nb_ventes) : null;
-            if (nbV != null && Number.isFinite(nbV)) {
-              lines.push("Nb ventes DVF : " + nbV.toLocaleString("fr-FR"));
+            if (_currentMapScoreKey !== "nb_locaux") {
+              var nbV = found.nb_ventes != null ? Number(found.nb_ventes) : null;
+              if (nbV != null && Number.isFinite(nbV)) {
+                lines.push("Nb ventes : " + nbV.toLocaleString("fr-FR"));
+              }
             }
           }
           layerEl.bindTooltip(lines.join("<br/>"), { sticky: true });
@@ -2868,6 +2948,49 @@
           });
           var limited = deptEntries.slice(0, 12);
           return { byDept: byDept, limited: limited, deptEntriesTotal: deptEntries };
+        }
+
+        /** Ajoute un bouton × sur une carte pour la supprimer du DOM et de mapViz. */
+        function addMapCloseButton(cardEl, leafletMap, mapVizArray) {
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "map-close-btn";
+          btn.title = "Supprimer cette carte";
+          btn.textContent = "×";
+          btn.addEventListener("click", function () {
+            if (leafletMap) { try { leafletMap.remove(); } catch (_) {} }
+            if (mapVizArray) {
+              var idx = mapVizArray.findIndex(function (e) { return e.map === leafletMap; });
+              if (idx !== -1) mapVizArray.splice(idx, 1);
+            }
+            if (cardEl && cardEl.parentNode) cardEl.parentNode.removeChild(cardEl);
+          });
+          cardEl.appendChild(btn);
+        }
+
+        /** Ajoute une poignée de redimensionnement vertical sous l’élément de carte. */
+        function addMapResizeHandle(mapEl, leafletMap) {
+          var handle = document.createElement("div");
+          handle.className = "map-resize-handle";
+          mapEl.parentNode.insertBefore(handle, mapEl.nextSibling);
+          var startY, startH;
+          handle.addEventListener("mousedown", function (e) {
+            startY = e.clientY;
+            startH = mapEl.offsetHeight;
+            e.preventDefault();
+            function onMove(ev) {
+              var newH = Math.max(150, startH + (ev.clientY - startY));
+              mapEl.style.height = newH + "px";
+              if (leafletMap) leafletMap.invalidateSize({ animate: false });
+            }
+            function onUp() {
+              document.removeEventListener("mousemove", onMove);
+              document.removeEventListener("mouseup", onUp);
+              if (leafletMap) leafletMap.invalidateSize({ animate: false });
+            }
+            document.addEventListener("mousemove", onMove);
+            document.addEventListener("mouseup", onUp);
+          });
         }
 
         /**
@@ -3017,6 +3140,9 @@
 
                 mapViz.communeMaps = mapViz.communeMaps || [];
                 mapViz.communeMaps.push({ map: map, layer: layer, job: job, valuesByCommune: valuesByCommune });
+                var mapEl = document.getElementById(mapId);
+                addMapCloseButton(card, map, mapViz.communeMaps);
+                if (jobs.length === 1) addMapResizeHandle(mapEl, map);
               });
             })
             .catch(function (err) {
@@ -3173,6 +3299,10 @@
                     fitOpts: fitOpts,
                     valuesByCommune: valuesByCommune  // Fix 1.2 : nécessaire pour recolorAllMaps()
                   });
+                  addMapCloseButton(card, map, mapViz.communeMaps);
+                  if (limited.length === 1 && jobs.length === 1) {
+                    addMapResizeHandle(document.getElementById(mapId), map);
+                  }
                   allMaps.push(map);
                 });
               });
@@ -3204,6 +3334,7 @@
         }
 
         function renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePrincipal) {
+          _currentMapScoreKey = scorePrincipal || "";
           var mapWrap = document.getElementById("comparaison-map-wrap");
           var status = document.getElementById("comparaison-map-status");
           var legend = document.getElementById("comparaison-map-legend");
@@ -3236,7 +3367,11 @@
           resetComparaisonMapVisuals();
           mapWrap.removeAttribute("aria-hidden");
           if (status) status.textContent = "Chargement des cartes…";
-          if (titleEl) titleEl.textContent = "Cartes — " + getScoreLabel(scorePrincipal);
+          var _pdvfMapEl = document.getElementById("comparaison-periode-dvf");
+          var _pdvfMap = _pdvfMapEl ? parseInt(String(_pdvfMapEl.value || "1"), 10) : 1;
+          if (!Number.isFinite(_pdvfMap) || [1, 2, 3, 5].indexOf(_pdvfMap) < 0) _pdvfMap = 1;
+          var periodeLabelMap = _pdvfMap === 1 ? "1 an" : _pdvfMap + " ans";
+          if (titleEl) titleEl.textContent = "Cartes — " + getScoreLabel(scorePrincipal) + " · " + periodeLabelMap;
 
           var allValues = [];
           mapJobs.forEach(function (job) {
@@ -3279,8 +3414,8 @@
             if (titleEl) {
               titleEl.textContent =
                 mapJobs.length > 1
-                  ? "Cartes — " + getScoreLabel(scorePrincipal) + " (échelle commune à tous les panneaux)"
-                  : "Cartes — " + getScoreLabel(scorePrincipal);
+                  ? "Cartes — " + getScoreLabel(scorePrincipal) + " · " + periodeLabelMap + " (échelle commune à tous les panneaux)"
+                  : "Cartes — " + getScoreLabel(scorePrincipal) + " · " + periodeLabelMap;
             }
             var communeHintPre = document.getElementById("comparaison-map-commune-legend-hint");
             if (communeHintPre) communeHintPre.hidden = true;
@@ -3379,6 +3514,19 @@
               }
               bindLinkedLeafletMaps(maps);
               invalidateMapsSoon(maps, 120);
+              // Bouton × et poignée de resize sur les cartes choroplèthes
+              (mapViz.multiChoroMaps || []).forEach(function (entry) {
+                var articleEl = entry.map ? entry.map.getContainer().closest("article.comparaison-map-card-choro") : null;
+                if (articleEl) {
+                  addMapCloseButton(articleEl, entry.map, mapViz.multiChoroMaps);
+                }
+              });
+              if ((mapViz.multiChoroMaps || []).length === 1) {
+                var soloEntry = mapViz.multiChoroMaps[0];
+                if (soloEntry && soloEntry.map) {
+                  addMapResizeHandle(soloEntry.map.getContainer(), soloEntry.map);
+                }
+              }
               status.textContent =
                 displayMode === "regions"
                   ? "Carte(s) par région — même cadrage, zoom et déplacement synchronisés entre les vues."
@@ -3634,7 +3782,7 @@
                 var removed = selectedCommunes.splice(absIdx, 1)[0];
                 if (removed) {
                   // Retirer aussi du Set de dédoublonnage
-                  var key = (removed.code_dept || "") + "|" + (removed.code_postal || "") + "|" + (removed.commune || "");
+                  var key = (removed.code_dept || "") + "|" + (removed.commune || "").trim().toUpperCase();
                   selectedCommunesSet.delete(key);
                   tlog("Commune retirée : " + removed.commune + " code_insee=" + (removed.code_insee || "?") + " — selectedCommunes.length=" + selectedCommunes.length);
                 }
@@ -4024,8 +4172,11 @@
         const selectedCommunesSet = new Set();
 
         function addSelectedCommuneItem(item) {
-          const key = (item.code_dept || "") + "|" + (item.code_postal || "") + "|" + (item.commune || "");
-
+          // Clé de dédup : dept + commune normalisée (sans code_postal pour éviter les doublons d'arrondissements)
+          const key = (item.code_dept || "") + "|" + (item.commune || "").trim().toUpperCase();
+          if ((item.code_dept == '75') || (item.commune == "PARIS")) {
+            console.log("[addSelectedCommuneItem] item : ", JSON.stringify(item));
+          }
           if (selectedCommunesSet.has(key)) return; // O(1) au lieu de O(n)
 
           selectedCommunesSet.add(key);
@@ -4469,15 +4620,6 @@
               lastComparaisonRows = firstRows.length ? firstRows : rowsByFilterKey[firstKeys[0]] || [];
 
               var displayMode = getDisplayModeFromRows(firstRows.length ? firstRows : lastComparaisonRows);
-              /* ancien code : Cursor
-              var theadPrefix =
-                displayMode === "departements"
-                  ? "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th>Département</th>"
-                  : displayMode === "regions"
-                  ? "<tr><th class=\"col-num\">Rang</th><th class=\"col-num\">Code région</th><th>Région</th>"
-                  : "<tr><th class=\"col-num\">Rang</th><th>Région</th><th class=\"col-num\">Code dépt</th><th class=\"col-num\">Code postal</th><th>Commune</th>";
-              */
-              // nouveau code : Claude.ia
               var theadPrefix =
                 displayMode === "departements"
                   ? "<tr><th class=\"col-num\">Rang</th><th class=\"sortable\" data-sort=\"region\">Région<span class=\"sort-icon\"></span></th><th class=\"col-num sortable\" data-sort=\"code_dept\">Code dépt<span class=\"sort-icon\"></span></th><th class=\"sortable\" data-sort=\"dep_nom\">Département<span class=\"sort-icon\"></span></th>"
@@ -4702,10 +4844,12 @@
           if (periodeDvfReset) periodeDvfReset.value = "1";
           var nbLocauxMinReset = document.getElementById("comparaison-nb-locaux-min");
           if (nbLocauxMinReset) nbLocauxMinReset.value = "";
-          ["ind-renta-brute", "ind-renta-nette", "ind-taux-tfb", "ind-taux-teom"].forEach(function (id) {
+          ["ind-renta-nette", "ind-nb-locaux", "ind-taux-tfb", "ind-taux-teom"].forEach(function (id) {
             var cb = document.getElementById(id);
             if (cb) cb.checked = true;
           });
+          var cbRentaBrute = document.getElementById("ind-renta-brute");
+          if (cbRentaBrute) cbRentaBrute.checked = false;
           updateIndicatorVisibility();
 
           ["comparaison-granularity-type", "comparaison-granularity-surf", "comparaison-granularity-pieces"].forEach(function (nm) {

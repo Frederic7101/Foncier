@@ -702,49 +702,93 @@ def get_communes(
                         (search_norm_like, search_cp_like),
                     )
         elif code_dept:
+            ## c'est ici qu'il faut normaliser le nom des communes avec arrondissements pour la comparaison du nom de la commune : pour "Paris 20" on doit avoir "PARIS"
+            ## et aussi qu'il faut comparer les 3 premiers caractères du code postal pour éviter de ne pas trouver les communes avec les arrondissements
             code_dept_vf = _normalize_code_dept_for_vf(code_dept.strip())
-            cur.execute(
-                """
-                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
+            sql = """
+                SELECT DISTINCT v.code_dept, v.code_postal, rc.nom_standard_majuscule, rc.code_insee
                 FROM foncier.vf_communes v
                 LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND rc.code_postal = LPAD(v.code_postal::text, 5, '0')
-                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
+                  ON rc.dep_code = v.code_dept AND left(rc.code_postal,3) = left(LPAD(v.code_postal::text, 5, '0'),3)
+                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical_commune_vf("v.commune") + """
                 WHERE v.code_dept = %s
-                ORDER BY v.commune, v.code_postal
-                """,
-                (code_dept_vf,),
-            )
+                ORDER BY rc.nom_standard_majuscule, v.code_postal
+                """
+            params = (code_dept_vf,)
+            _debug_log("[stats] SQL (exécutable): %s", _debug_sql_params(sql, params))
+            cur.execute(sql, params)
         elif code_region:
             code_region_vf = code_region.strip()
-            cur.execute(
-                """
-                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
+            sql = """
+                SELECT DISTINCT v.code_dept, v.code_postal, rc.nom_standard_majuscule, rc.code_insee
                 FROM foncier.vf_communes v
                 LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND rc.code_postal = LPAD(v.code_postal::text, 5, '0')
-                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
+                  ON rc.dep_code = v.code_dept AND left(rc.code_postal,3) = left(LPAD(v.code_postal::text, 5, '0'),3)
+                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical_commune_vf("v.commune") + """
                 WHERE v.code_dept IN (SELECT code_dept FROM foncier.ref_departements WHERE code_region = %s)
-                ORDER BY v.commune, v.code_postal
-                """,
-                (code_region_vf,),
-            )
-        elif all_France:
-            cur.execute(
+                ORDER BY rc.nom_standard_majuscule, v.code_postal
                 """
-                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
+            params = (code_region_vf,)
+            _debug_log("[stats] SQL (exécutable): %s", _debug_sql_params(sql, params))
+            cur.execute(sql, params)
+        elif all_France:
+            sql = f"""
+                SELECT DISTINCT v.code_dept, v.code_postal, rc.nom_standard_majuscule, rc.code_insee
                 FROM foncier.vf_communes v
                 LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND rc.code_postal = LPAD(v.code_postal::text, 5, '0')
-                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
-                ORDER BY v.commune, v.code_postal
+                  ON rc.dep_code = v.code_dept AND left(rc.code_postal,3) = left(LPAD(v.code_postal::text, 5, '0'),3)
+                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical_commune_vf("v.commune") + """
+                ORDER BY rc.nom_standard_majuscule, v.code_postal
                 """
-            )
+            params = ()
+            _debug_log("[stats] SQL (exécutable): %s", _debug_sql_params(sql, params))
+            cur.execute(sql, params)
         else:
             raise HTTPException(status_code=400, detail="Aucun paramètre de filtre valide fourni")
         rows = [{"code_dept": r[0], "code_postal": r[1], "commune": r[2], "code_insee": r[3]} for r in cur.fetchall()]
+        _debug_log("[stats] rows : %s", rows)
         cur.close()
-        return rows
+
+        # Déduplication des arrondissements (Paris, Marseille, Lyon)
+        # Remplacer "PARIS 01", "PARIS 02", ..., "PARIS 20" par une seule entrée "PARIS"
+        # avec le code_postal principal (75000, 69000, 13000)
+        import re
+        deduped = {}
+        for row in rows:
+            commune_norm = str(row["commune"]).strip().upper()
+            # Retirer suffixe arrondissement (ex: " 01", " 1ER", " 2EME", " 3E")
+            base_commune = re.sub(r'\s+\d{1,2}\s*(ER|EME|E)?\s*$', '', commune_norm, flags=re.IGNORECASE)
+
+            # Clé de dédup : dept + commune_normalisée
+            key = (row["code_dept"], base_commune)
+            if (base_commune == "PARIS" or base_commune == "LYON" or base_commune == "MARSEILLE"):
+                _debug_log("[stats] key : %s", key)
+            if (base_commune != 'None') and (key not in deduped):
+                # Première occurrence : garder la row
+                deduped[key] = row.copy()
+                deduped[key]["commune"] = base_commune.title()
+            else:
+                # Si on a un code_insee plus récent et que celui-ci est non-null, on met à jour
+                if row["code_insee"] and not deduped[key]["code_insee"]:
+                    deduped[key]["code_insee"] = row["code_insee"]
+
+        result = list(deduped.values())
+
+        # Correction des codes postaux : Paris → 75000, Lyon → 69000, Marseille → 13000
+        canonical_postals = {
+            ("75", "PARIS"): "75000",
+            ("69", "LYON"): "69000",
+            ("13", "MARSEILLE"): "13000"
+        }
+        for row in result:
+            key = (row["code_dept"], row["commune"].upper())
+            if key in canonical_postals:
+                row["code_postal"] = canonical_postals[key]
+
+        # Trier par commune puis code_postal pour garder un ordre cohérent
+        result.sort(key=lambda x: (x["commune"], x["code_postal"]))
+        _debug_log("[stats] result : %s", result[0])
+        return result
     except psycopg2.Error as e:
         raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     finally:
