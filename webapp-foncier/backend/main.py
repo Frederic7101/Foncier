@@ -708,7 +708,7 @@ def get_communes(
                 SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
                 FROM foncier.vf_communes v
                 LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
+                  ON rc.dep_code = v.code_dept AND rc.code_postal = LPAD(v.code_postal::text, 5, '0')
                   AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
                 WHERE v.code_dept = %s
                 ORDER BY v.commune, v.code_postal
@@ -722,7 +722,7 @@ def get_communes(
                 SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
                 FROM foncier.vf_communes v
                 LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
+                  ON rc.dep_code = v.code_dept AND rc.code_postal = LPAD(v.code_postal::text, 5, '0')
                   AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
                 WHERE v.code_dept IN (SELECT code_dept FROM foncier.ref_departements WHERE code_region = %s)
                 ORDER BY v.commune, v.code_postal
@@ -735,7 +735,7 @@ def get_communes(
                 SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
                 FROM foncier.vf_communes v
                 LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
+                  ON rc.dep_code = v.code_dept AND rc.code_postal = LPAD(v.code_postal::text, 5, '0')
                   AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
                 ORDER BY v.commune, v.code_postal
                 """

@@ -215,6 +215,14 @@
         width: 1.5rem; height: 1.5rem; border: 3px solid #e5e7eb; border-top-color: #2563eb; border-radius: 50%;
         animation: comparaison-spin 0.8s linear infinite;
       }
+      #comparaison-maps-loading {
+        display: none; align-items: center; justify-content: center; gap: 0.75rem; padding: 1.5rem; color: #6b7280; font-size: 0.9rem;
+      }
+      #comparaison-maps-loading.visible { display: flex; }
+      #comparaison-maps-loading .comparaison-spinner {
+        width: 1.5rem; height: 1.5rem; border: 3px solid #e5e7eb; border-top-color: #2563eb; border-radius: 50%;
+        animation: comparaison-spin 0.8s linear infinite;
+      }
       .comparaison-criteria-block {
         margin-top: 0.75rem;
         padding-top: 0.75rem;
@@ -524,6 +532,7 @@
         margin-top: 0.5rem;
         margin-bottom: 0.25rem;
       }
+      .comparaison-export-bar[hidden] { display: none; }
       .export-btn {
         display: inline-flex;
         align-items: center;
@@ -737,13 +746,14 @@
               <div id="comparaison-error" role="alert" hidden></div>
               <div id="comparaison-tables-dynamic" class="comparaison-tables-dynamic" aria-live="polite"></div>
               <div id="comparaison-tables-export-bar" class="comparaison-export-bar" hidden>
-                <button type="button" class="export-btn" id="export-csv-btn">Exporter CSV</button>
+                <button type="button" class="export-btn" id="export-csv-btn">Export</button>
               </div>
             </div>
           </div>
           <div id="comparaison-panel-maps" role="tabpanel" aria-labelledby="comparaison-tab-maps" class="comparaison-panel" hidden>
         <section class="comparaison-map-wrap" id="comparaison-map-wrap" aria-hidden="true">
           <h3 class="comparaison-map-title" id="comparaison-map-main-title">Cartes — indicateur principal</h3>
+          <div id="comparaison-maps-loading" aria-hidden="true"><span class="comparaison-spinner" aria-hidden="true"></span> Chargement…</div>
           <div id="comparaison-maps-zone" class="comparaison-maps-zone"></div>
           <div id="comparaison-communes-maps-grid" hidden></div>
           <div id="comparaison-map-status"></div>
@@ -769,8 +779,7 @@
             </div>
           </div>
           <div id="comparaison-maps-export-bar" class="comparaison-export-bar" hidden>
-            <button type="button" class="export-btn" id="export-map-png-btn">Exporter PNG</button>
-            <button type="button" class="export-btn" id="export-map-jpg-btn">Exporter JPG</button>
+            <button type="button" class="export-btn" id="export-map-png-btn">Export</button>
           </div>
         </section>
           </div>
@@ -2312,10 +2321,10 @@
          */
         function exportMapImage(format) {
           var btn = document.getElementById("export-map-" + format + "-btn");
-          if (btn) { btn.disabled = true; btn.textContent = "Export en cours…"; }
+          if (btn) { btn.disabled = true; btn.textContent = "Export…"; }
 
           function resetBtn() {
-            if (btn) { btn.disabled = false; btn.textContent = format === "jpg" ? "Exporter JPG" : "Exporter PNG"; }
+            if (btn) { btn.disabled = false; btn.textContent = "Export"; }
           }
 
           // Collecter toutes les cartes Leaflet actives
@@ -4011,16 +4020,6 @@
         })();
 
         // Ajout d'une commune à la liste sélectionnée (utilisé par autocomplete + select)
-        /*
-        // ancien code : Cursor
-        function addSelectedCommuneItem(item) {
-          const key = (item.code_dept || "") + "|" + (item.code_postal || "") + "|" + (item.commune || "");
-          if (selectedCommunes.some(function (c) { return (c.code_dept || "") + "|" + (c.code_postal || "") + "|" + (c.commune || "") === key; })) return;
-          selectedCommunes.push({ code_dept: item.code_dept || "", code_postal: item.code_postal || "", commune: item.commune || "" });
-          renderSelectedList();
-        }
-        */
-        // nouveau code : Claude.ia
         // En haut de ton code, remplace le tableau par un Set pour les doublons
         const selectedCommunesSet = new Set();
 
@@ -4249,6 +4248,8 @@
           errorEl.hidden = true;
           emptyEl.style.display = "none";
           loadingEl.classList.add("visible");
+          var mapsLoadingEl = document.getElementById("comparaison-maps-loading");
+          if (mapsLoadingEl) mapsLoadingEl.classList.add("visible");
           var dynLoading = document.getElementById("comparaison-tables-dynamic");
           if (dynLoading) dynLoading.innerHTML = "";
 
@@ -4270,20 +4271,27 @@
           var currentSelectedInsee = [];
           if (mode === "communes") {
             currentExcludedInsee = excludedCommunes.map(function (c) { return c.code_insee; }).filter(Boolean);
-            if (selectedCommunes.length > 500 || selectionMassMode === "france") {
+            /*
+            if (selectedCommunes.length > 5000 || selectionMassMode === "france") {
               // Beaucoup de communes ou France entière : fetch scope=all_france, filtrage client-side
               scope = "all_france";
               // Si ce n'est PAS "toute la France", on filtre côté client
               if (selectionMassMode !== "france") {
                 currentSelectedInsee = selectedCommunes.map(function (c) { return c.code_insee; }).filter(Boolean);
               }
-            } else if (selectedCommunes.length > 0 && selectedCommunes[0].code_insee) {
-              scope = "communes";
+            } else */
+            if (selectedCommunes.length > 0) {
               currentSelectedInsee = selectedCommunes.map(function (c) { return c.code_insee; }).filter(Boolean);
+              if (currentSelectedInsee.length > 0) {
+                scope = "communes";
+              }
             }
           }
 
-          tlog("scope=" + scope + " selectionMassMode=" + selectionMassMode + " selectedCommunes=" + selectedCommunes.length + " excludedCommunes=" + excludedCommunes.length + " currentExcludedInsee=" + currentExcludedInsee.length + " currentSelectedInsee=" + currentSelectedInsee.length);
+          tlog("scope=" + scope + " selectionMassMode=" + selectionMassMode + " selectedCommunes=" + selectedCommunes.length 
+            + " excludedCommunes=" + excludedCommunes.length + " currentExcludedInsee=" + currentExcludedInsee.length 
+            + " currentSelectedInsee=" + currentSelectedInsee.length);
+          
           // Fingerprint structurelle : mode + scope + géographie + liste triée des codes sélectionnés
           // N'inclut PAS : indicateurs, période, n_max, nb_locaux_min
           var selectedGeoKeys = [];
@@ -4441,6 +4449,8 @@
             .then(function (rowsByFilterKey) {
               tlog("dataPromise resolved — début du rendu");
               loadingEl.classList.remove("visible");
+              var mapsLoadingEl2 = document.getElementById("comparaison-maps-loading");
+              if (mapsLoadingEl2) mapsLoadingEl2.classList.remove("visible");
               var displayIndicators = indicators.length
                 ? indicators
                 : [{ key: scorePrincipal, label: CATEGORY_LABELS[cat] || getScoreLabel(scorePrincipal) }];
@@ -4490,6 +4500,10 @@
                 var dynEmpty = document.getElementById("comparaison-tables-dynamic");
                 if (dynEmpty) dynEmpty.innerHTML = "";
                 clearComparaisonMap();
+                var _csvB1 = document.getElementById("comparaison-tables-export-bar");
+                if (_csvB1) _csvB1.hidden = true;
+                var _mapB1 = document.getElementById("comparaison-maps-export-bar");
+                if (_mapB1) _mapB1.hidden = true;
               } else if (!hasRenderableTable && !hasRenderableMapValues) {
                 emptyEl.textContent =
                   "Aucune donnée exploitable (valeurs nulles) pour les tableaux et les cartes avec les filtres demandés.";
@@ -4497,6 +4511,10 @@
                 var dynEmpty2 = document.getElementById("comparaison-tables-dynamic");
                 if (dynEmpty2) dynEmpty2.innerHTML = "";
                 clearComparaisonMap();
+                var _csvB2 = document.getElementById("comparaison-tables-export-bar");
+                if (_csvB2) _csvB2.hidden = true;
+                var _mapB2 = document.getElementById("comparaison-maps-export-bar");
+                if (_mapB2) _mapB2.hidden = true;
               } else {
                 emptyEl.style.display = "none";
                 if (hasRenderableTable) {
@@ -4539,6 +4557,8 @@
             })
             .catch(function (err) {
               loadingEl.classList.remove("visible");
+              var mapsLoadingEl3 = document.getElementById("comparaison-maps-loading");
+              if (mapsLoadingEl3) mapsLoadingEl3.classList.remove("visible");
               errorEl.textContent = err.message || "Erreur lors du chargement.";
               errorEl.hidden = false;
               emptyEl.style.display = "none";
@@ -4561,8 +4581,6 @@
           if (csvBtn) csvBtn.addEventListener("click", exportTablesToCsv);
           var pngBtn = document.getElementById("export-map-png-btn");
           if (pngBtn) pngBtn.addEventListener("click", function () { exportMapImage("png"); });
-          var jpgBtn = document.getElementById("export-map-jpg-btn");
-          if (jpgBtn) jpgBtn.addEventListener("click", function () { exportMapImage("jpg"); });
         })();
 
         function forceRecalculForMode() {
