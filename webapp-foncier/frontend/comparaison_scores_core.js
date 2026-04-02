@@ -43,6 +43,7 @@ import {
   communeRowsCoverSelectedDepartments,
   parseDistanceFilterInputs,
   jobHasDisplayableData,
+  jobHasMapDisplayableData,
   getDisplayModeFromRows,
   normalizeCodeInseeFr
 } from './comparaison_table.js';
@@ -50,9 +51,11 @@ import {
   renderComparaisonMap,
   clearComparaisonMap,
   refreshCommuneMapsIfCurrentTab,
+  getCommuneMapSubTab,
   setCommuneMapSubTab,
   syncCommuneMapSubtabButtons,
-  jobHasMapDisplayableData
+  saveCommuneMapViewsForSubTab,
+  applyPendingCommuneMapLayoutRefit
 } from './comparaison_maps.js';
 
 (function () {
@@ -114,23 +117,6 @@ import {
           }
           return "C:manual";
         }
-        function refreshTableAndMapsAfterDistanceThresholdChange() {
-          if (!S.lastDistanceOverlay || !S.lastRenderTableArgs) return;
-          renderComparaisonTables(
-            S.lastRenderTableArgs.jobs,
-            S.lastRenderTableArgs.rowsByFilterKey,
-            S.lastRenderTableArgs.displayMode,
-            S.lastRenderTableArgs.cat,
-            S.lastRenderTableArgs.displayIndicators,
-            S.lastRenderTableArgs.theadPrefix
-          );
-          if (S.mapViz.mode === "communes" && S.mapViz.lastCommuneMapScorePrincipal != null && S.lastComparaisonJobs.length) {
-            renderComparaisonMap(S.lastComparaisonJobs, S.lastRowsByFilterKey, "communes", S.mapViz.lastCommuneMapScorePrincipal, {
-              preserveLegendBounds: true
-            });
-          }
-        }
-
         function resetComparaisonResultsOnModeChange(mode) {
           var emptyEl = document.getElementById("comparaison-empty");
           var loadingEl = document.getElementById("comparaison-loading");
@@ -293,52 +279,24 @@ import {
             panelMaps.hidden = false;
             panelTables.hidden = true;
 
-            // Fonction unique qui invalide et refait le fitBounds pour TOUS les types de carte
+            // Invalider la taille Leaflet sans refit : conserve zoom / centre après passage tableau ↔ cartes
             function _refitAllMaps() {
               if (typeof L === "undefined") return;
 
-              // 1. Cartes choroplèthes (mode département / région)
-              var choroMaps = (S.mapViz.multiChoroMaps || []).map(function (x) { return x.map; }).filter(Boolean);
-              choroMaps.forEach(function (m) {
-                try { m.invalidateSize({ animate: false }); } catch (e) {}
-              });
               (S.mapViz.multiChoroMaps || []).forEach(function (entry) {
                 if (!entry || !entry.map) return;
                 try {
                   entry.map.invalidateSize({ animate: false });
-                  var b = entry.savedBounds;
-                  if (!b || !b.isValid || !b.isValid()) {
-                    b = entry.layer && entry.layer.getBounds ? entry.layer.getBounds() : null;
-                  }
-                  var fo = entry.fitOpts || { padding: [12, 12], maxZoom: 11 };
-                  if (b && b.isValid && b.isValid()) entry.map.fitBounds(b, fo);
                 } catch (e) {}
               });
 
-              // 2. Cartes communes
               (S.mapViz.communeMaps || []).forEach(function (entry) {
                 if (!entry || !entry.map) return;
                 try {
                   entry.map.invalidateSize({ animate: false });
-                  if (entry.franceMetroFixedBounds && entry.franceMetroFixedBounds.isValid && entry.franceMetroFixedBounds.isValid()) {
-                    var ffo = entry.franceMetroFitOpts || { padding: [12, 12], maxZoom: 6 };
-                    entry.map.fitBounds(entry.franceMetroFixedBounds, ffo);
-                    return;
-                  }
-                  var b = null;
-                  if (entry.preferFullLayerBounds && entry.layer && entry.layer.getBounds) {
-                    b = entry.layer.getBounds();
-                  } else if (entry.selBounds && entry.selBounds.isValid && entry.selBounds.isValid()) {
-                    b = entry.selBounds;
-                  } else if (entry.layer && entry.layer.getBounds) {
-                    b = entry.layer.getBounds();
-                  }
-                  var fo = entry.fitOpts || { padding: [10, 10], maxZoom: 15 };
-                  if (b && b.isValid && b.isValid()) entry.map.fitBounds(b, fo);
                 } catch (e) {}
               });
 
-              // 3. Carte principale unique (S.mapViz.map)
               if (S.mapViz.map) {
                 try { S.mapViz.map.invalidateSize({ animate: false }); } catch (e) {}
               }
@@ -349,6 +307,16 @@ import {
             setTimeout(_refitAllMaps, 80);
             setTimeout(_refitAllMaps, 300);
             setTimeout(_refitAllMaps, 700);
+            /* Recadrage sur les GeoJSON si les cartes avaient été rendues avec le panneau masqué (zoom initial faux). */
+            setTimeout(function () {
+              applyPendingCommuneMapLayoutRefit(false);
+            }, 100);
+            setTimeout(function () {
+              applyPendingCommuneMapLayoutRefit(false);
+            }, 400);
+            setTimeout(function () {
+              applyPendingCommuneMapLayoutRefit(true);
+            }, 950);
           }
           tabTables.addEventListener("click", showTables);
           tabMaps.addEventListener("click", showMaps);
@@ -362,6 +330,8 @@ import {
             if (!t) return;
             var tab = t.getAttribute("data-commune-map-tab");
             if (!tab) return;
+            var prev = getCommuneMapSubTab();
+            saveCommuneMapViewsForSubTab(prev);
             setCommuneMapSubTab(tab);
             syncCommuneMapSubtabButtons(tab);
             refreshCommuneMapsIfCurrentTab();
@@ -444,11 +414,13 @@ import {
           var rnMinRaw = rnMinEl ? String(rnMinEl.value || "").trim().replace(",", ".") : "";
           var rbMin = rbMinRaw === "" ? NaN : parseFloat(rbMinRaw);
           var rnMin = rnMinRaw === "" ? NaN : parseFloat(rnMinRaw);
-          if (Number.isFinite(rbMin)) {
-            baseParams.set("renta_brute_min", String(rbMin));
-          }
-          if (Number.isFinite(rnMin)) {
-            baseParams.set("renta_nette_min", String(rnMin));
+          if (cat === "rentabilite") {
+            if (Number.isFinite(rbMin)) {
+              baseParams.set("renta_brute_min", String(rbMin));
+            }
+            if (Number.isFinite(rnMin)) {
+              baseParams.set("renta_nette_min", String(rnMin));
+            }
           }
           scoresSecondaires.forEach(function (s) {
             baseParams.append("scores_secondaires", s);
@@ -560,7 +532,7 @@ import {
                 return jobHasDisplayableData(rowsByFilterKey[j.filterKey] || [], j, cat, displayIndicators);
               });
               var hasRenderableMapValues = jobs.some(function (j) {
-                return jobHasMapDisplayableData(rowsByFilterKey[j.filterKey] || [], j);
+                return jobHasMapDisplayableData(rowsByFilterKey[j.filterKey] || [], j, cat, displayIndicators);
               });
               if (!hasAnyRows) {
                 S.lastRenderTableArgs = null;
@@ -598,8 +570,12 @@ import {
                   if (dynNoTab) dynNoTab.innerHTML = "";
                 }
                 if (hasRenderableMapValues) {
-                  renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePrincipal);
-                  // Si l'onglet cartes est déjà actif, invalider la taille immédiatement
+                  renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePrincipal, {
+                    cat: cat,
+                    displayIndicators: displayIndicators,
+                    preserveLegendBounds: false
+                  });
+                  // Si l'onglet cartes est déjà actif, invalider la taille (sans refit pour conserver zoom / pan)
                   var _tabMaps = document.getElementById("comparaison-tab-maps");
                   if (_tabMaps && _tabMaps.classList.contains("is-active")) {
                     [150, 500, 1000].forEach(function (d) {
@@ -608,16 +584,6 @@ import {
                           if (!e || !e.map) return;
                           try {
                             e.map.invalidateSize({ animate: false });
-                          } catch (_) {}
-                          try {
-                            if (e.franceMetroFixedBounds && e.franceMetroFixedBounds.isValid && e.franceMetroFixedBounds.isValid()) {
-                              e.map.fitBounds(e.franceMetroFixedBounds, e.franceMetroFitOpts || { padding: [12, 12], maxZoom: 6 });
-                            } else if (e.savedBounds && e.savedBounds.isValid && e.savedBounds.isValid()) {
-                              e.map.fitBounds(e.savedBounds, e.fitOpts || { padding: [12, 12], maxZoom: 11 });
-                            } else if (e.layer && e.layer.getBounds) {
-                              var b = e.layer.getBounds();
-                              if (b && b.isValid()) e.map.fitBounds(b, { padding: [10, 10] });
-                            }
                           } catch (_) {}
                         });
                       }, d);
@@ -854,7 +820,9 @@ import {
                 S.lastComparaisonJobs.length
               ) {
                 renderComparaisonMap(S.lastComparaisonJobs, S.lastRowsByFilterKey, "communes", S.mapViz.lastCommuneMapScorePrincipal, {
-                  preserveLegendBounds: true
+                  preserveLegendBounds: true,
+                  cat: S.lastRenderTableArgs.cat,
+                  displayIndicators: S.lastRenderTableArgs.displayIndicators
                 });
               }
             },
@@ -876,20 +844,23 @@ import {
                 S.lastComparaisonJobs.length
               ) {
                 renderComparaisonMap(S.lastComparaisonJobs, S.lastRowsByFilterKey, "communes", S.mapViz.lastCommuneMapScorePrincipal, {
-                  preserveLegendBounds: true
+                  preserveLegendBounds: true,
+                  cat: S.lastRenderTableArgs.cat,
+                  displayIndicators: S.lastRenderTableArgs.displayIndicators
                 });
               }
             },
-            onDistanceCalcBusy: function () {}
-          });
-          ["distances-max-km", "distances-max-minutes"].forEach(function (id) {
-            var el = document.getElementById(id);
-            if (!el) return;
-            ["change", "input"].forEach(function (evName) {
-              el.addEventListener(evName, function () {
-                if (S.lastDistanceOverlay) refreshTableAndMapsAfterDistanceThresholdChange();
-              });
-            });
+            onDistanceCalcBusy: function (busy) {
+              var el = document.getElementById("comparaison-distances-loading");
+              if (!el) return;
+              if (busy) {
+                el.classList.add("visible");
+                el.setAttribute("aria-hidden", "false");
+              } else {
+                el.classList.remove("visible");
+                el.setAttribute("aria-hidden", "true");
+              }
+            }
           });
         }
 

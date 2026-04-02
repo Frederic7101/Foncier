@@ -84,12 +84,76 @@ function rowHasNumericIndicator(row, tableIndicators) {
   return false;
 }
 
+/** Colonnes score « tableau » (sans raccourci nb_locaux) — pour l’éligibilité cartes. */
+function rowHasNumericScoreInTableColumns(row, tableIndicators) {
+  for (var i = 0; i < tableIndicators.length; i++) {
+    var k = tableIndicators[i].key;
+    if (k === S.RENTA_UNAVAILABLE_KEY) continue;
+    var v = row[k];
+    if (v != null && v !== "" && Number.isFinite(Number(v))) return true;
+  }
+  return false;
+}
+
 export function jobHasDisplayableData(rows, job, cat, displayIndicators) {
   if (!rows || !rows.length) return false;
   var tableIndicators = computeTableIndicatorsForJob(job, cat, displayIndicators);
   if (!tableIndicators.length) return false;
   return rows.some(function (r) {
     return rowHasNumericIndicator(r, tableIndicators);
+  });
+}
+
+/** Colonnes score pour cartes : alignées sur le tableau (pas seulement job.scoreKey). */
+function getMapScoreColumnKeysForJob(job, cat, displayIndicators) {
+  var keys;
+  if (!displayIndicators || !displayIndicators.length) {
+    keys = job.scoreKey && job.scoreKey !== S.RENTA_UNAVAILABLE_KEY ? [job.scoreKey] : [];
+  } else {
+    var tableIndicators = computeTableIndicatorsForJob(job, cat, displayIndicators);
+    keys = tableIndicators
+      .map(function (ti) {
+        return ti.key;
+      })
+      .filter(function (k) {
+        return k && k !== S.RENTA_UNAVAILABLE_KEY && k !== "nb_locaux";
+      });
+  }
+  /* Même repli que getEffectiveMapScoreKeyForJob : si le keyMap ne donne que des colonnes
+   * indisponibles pour ce job, on garde job.scoreKey pour ne pas vider toutes les cartes. */
+  if (keys.length) return keys;
+  return job.scoreKey && job.scoreKey !== S.RENTA_UNAVAILABLE_KEY ? [job.scoreKey] : [];
+}
+
+/**
+ * Colonne utilisée pour la choroplèthe / cartes communales : 1er indicateur score du tableau pour ce job.
+ */
+export function getEffectiveMapScoreKeyForJob(job, cat, displayIndicators) {
+  var keys = getMapScoreColumnKeysForJob(job, cat, displayIndicators);
+  return keys.length ? keys[0] : job.scoreKey;
+}
+
+/**
+ * Au moins une valeur numérique exploitable pour une carte : mêmes colonnes score que le tableau
+ * (computeTableIndicatorsForJob), sans compter le raccourci nb_locaux de rowHasNumericIndicator.
+ * Sinon repli sur getMapScoreColumnKeysForJob (ex. displayIndicators vide).
+ */
+export function jobHasMapDisplayableData(rows, job, cat, displayIndicators) {
+  if (!job || !rows || !rows.length) return false;
+  var tableIndicators = computeTableIndicatorsForJob(job, cat, displayIndicators);
+  if (tableIndicators.length) {
+    return rows.some(function (r) {
+      return rowHasNumericScoreInTableColumns(r, tableIndicators);
+    });
+  }
+  var keys = getMapScoreColumnKeysForJob(job, cat, displayIndicators);
+  if (!keys.length) return false;
+  return rows.some(function (r) {
+    return keys.some(function (k) {
+      var v = r[k];
+      if (v == null || v === "") return false;
+      return Number.isFinite(Number(v));
+    });
   });
 }
 

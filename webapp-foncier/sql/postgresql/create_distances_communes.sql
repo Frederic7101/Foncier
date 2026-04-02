@@ -1,0 +1,25 @@
+-- Référence : la table en production est déjà créée avec la structure suivante
+-- (les distances déjà calculées restent utilisées telles quelles) :
+--
+-- CREATE TABLE foncier.distances_communes (
+--   adresse_hash text NOT NULL,
+--   adresse_label text NOT NULL,
+--   adresse_lat numeric(10, 7) NOT NULL,
+--   adresse_lon numeric(10, 7) NOT NULL,
+--   code_insee text NOT NULL,
+--   distance_km numeric(8, 2) NULL,
+--   duree_minutes numeric(8, 1) NULL,
+--   "source" text DEFAULT 'osrm'::text NOT NULL,
+--   updated_at timestamptz DEFAULT clock_timestamp() NOT NULL,
+--   CONSTRAINT distances_communes_pkey PRIMARY KEY (adresse_hash, code_insee)
+-- );
+--
+-- L’API lit les lignes par égalité sur adresse_lat / adresse_lon arrondis à 7 décimales
+-- (même jeu de coordonnées BAN qu’à l’enregistrement), puis réutilise le même adresse_hash
+-- que les lignes déjà présentes pour ce point.
+--
+-- Ne pas exécuter de CREATE TABLE ici si la table existe déjà.
+--
+-- Si une table de développement a été créée par erreur avec une autre structure (ex. colonne
+-- orig_key), voir migrate_distances_communes_wrong_schema.sql pour un exemple de migration
+-- à adapter manuellement.

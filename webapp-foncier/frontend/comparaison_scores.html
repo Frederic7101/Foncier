@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
@@ -94,61 +94,54 @@
             <button type="button" class="btn-vider" id="comparaison-vider-liste">Vider la liste</button>
           </div>
 
-          <div id="comparaison-criteria-block" class="comparaison-criteria-block" hidden>
-            <h3>Critères sur les locaux</h3>
-            <div class="comparaison-criteria-grid">
-              <div class="comparaison-criteria-col">
-                <div class="comparaison-granularity-column" role="group" aria-labelledby="comparaison-granularity-type-legend">
-                  <span id="comparaison-granularity-type-legend" class="granularity-col-title">Granularité</span>
-                  <div class="comparaison-granularity-radios">
-                    <label><input type="radio" name="comparaison-granularity-type" value="agg" checked /> Agrégée</label>
-                    <label><input type="radio" name="comparaison-granularity-type" value="detail" /> Détaillée</label>
+          <div class="comparaison-scores-block">
+            <h3>Indicateurs et critères de filtrage</h3>
+            <div class="comparaison-scores-row comparaison-filters-row-primary">
+              <div class="comparaison-filters-line1" id="comparaison-filters-line1">
+                <div class="cfl-grid" id="comparaison-filters-line1-grid">
+                  <label class="cfl-g11" for="comparaison-categorie">Catégorie d'indicateurs</label>
+                  <label class="cfl-g12a" for="comparaison-renta-brute-min">Renta. brute min (%)</label>
+                  <label class="cfl-g12b" for="comparaison-renta-nette-min">Renta. nette min (%)</label>
+                  <span class="cfl-g13" aria-hidden="true">&nbsp;</span>
+
+                  <select id="comparaison-categorie" class="cfl-g21">
+                    <option value="rentabilite">Rentabilité</option>
+                    <option value="taxes">Taxes</option>
+                  </select>
+                  <input
+                    id="comparaison-renta-brute-min"
+                    class="cfl-g22a"
+                    type="text"
+                    inputmode="decimal"
+                    value=""
+                    placeholder="aucun"
+                    title="Seuil minimal sur la rentabilité brute (%) après période DVF. Laisser vide pour ne pas filtrer."
+                    aria-label="Rentabilité brute minimum"
+                  />
+                  <input
+                    id="comparaison-renta-nette-min"
+                    class="cfl-g22b"
+                    type="text"
+                    inputmode="decimal"
+                    value=""
+                    placeholder="aucun"
+                    title="Seuil minimal sur la rentabilité nette (%) après période DVF. Laisser vide pour ne pas filtrer."
+                    aria-label="Rentabilité nette minimum"
+                  />
+                  <div class="cfl-g23 comparaison-indicators-inline" id="comparaison-indicators-inline">
+                    <div class="score-secondary" id="indicators-rentabilite">
+                      <label><input type="checkbox" id="ind-renta-brute" value="renta_brute" checked /> Renta. brute</label>
+                      <label><input type="checkbox" id="ind-renta-nette" value="renta_nette" checked /> Renta. nette</label>
+                    </div>
+                    <div class="score-secondary" id="indicators-taxes" style="display: none;">
+                      <label><input type="checkbox" id="ind-taux-tfb" value="taux_tfb" checked /> Taux TF</label>
+                      <label><input type="checkbox" id="ind-taux-teom" value="taux_teom" checked /> Taux TEOM</label>
+                    </div>
                   </div>
-                </div>
-                <div class="field comparaison-field-inline">
-                  <label for="comparaison-type-logt">Type de local</label>
-                  <select id="comparaison-type-logt" class="comparaison-select-multi" multiple size="3"></select>
-                </div>
-              </div>
-              <div id="comparaison-surf-col" class="comparaison-criteria-col" style="display: none;">
-                <div class="comparaison-granularity-column" role="group" aria-labelledby="comparaison-granularity-surf-legend">
-                  <span id="comparaison-granularity-surf-legend" class="granularity-col-title">Granularité</span>
-                  <div class="comparaison-granularity-radios">
-                    <label><input type="radio" name="comparaison-granularity-surf" value="agg" checked /> Agrégée</label>
-                    <label><input type="radio" name="comparaison-granularity-surf" value="detail" /> Détaillée</label>
-                  </div>
-                </div>
-                <div class="field comparaison-field-inline">
-                  <label for="comparaison-surf">Surface</label>
-                  <select id="comparaison-surf" class="comparaison-select-multi" multiple size="3"></select>
-                </div>
-              </div>
-              <div id="comparaison-pieces-col" class="comparaison-criteria-col" style="display: none;">
-                <div class="comparaison-granularity-column" role="group" aria-labelledby="comparaison-granularity-pieces-legend">
-                  <span id="comparaison-granularity-pieces-legend" class="granularity-col-title">Granularité</span>
-                  <div class="comparaison-granularity-radios">
-                    <label><input type="radio" name="comparaison-granularity-pieces" value="agg" checked /> Agrégée</label>
-                    <label><input type="radio" name="comparaison-granularity-pieces" value="detail" /> Détaillée</label>
-                  </div>
-                </div>
-                <div class="field comparaison-field-inline">
-                  <label for="comparaison-pieces">Nombre de pièces</label>
-                  <select id="comparaison-pieces" class="comparaison-select-multi" multiple size="3"></select>
                 </div>
               </div>
             </div>
-          </div>
-
-          <div class="comparaison-scores-block">
-            <h3>Indicateurs</h3>
-            <div class="comparaison-scores-row">
-              <div class="field">
-                <label for="comparaison-categorie">Catégorie d'indicateurs</label>
-                <select id="comparaison-categorie">
-                  <option value="rentabilite">Rentabilité</option>
-                  <option value="taxes">Taxes</option>
-                </select>
-              </div>
+            <div class="comparaison-scores-row comparaison-filters-row-secondary">
               <div class="field">
                 <label for="comparaison-n-max" id="comparaison-n-max-label">Nb max de Communes</label>
                 <input id="comparaison-n-max" type="number" min="1" max="50000" value="20" aria-label="Nb max de Communes" />
@@ -175,48 +168,46 @@
                   aria-label="Nb locaux minimum"
                 />
               </div>
-              <div class="comparaison-renta-min-fields" id="comparaison-renta-min-fields">
-                <div class="field">
-                  <label for="comparaison-renta-brute-min">Renta. brute min (%)</label>
-                  <input
-                    id="comparaison-renta-brute-min"
-                    type="text"
-                    inputmode="decimal"
-                    value=""
-                    placeholder="aucun"
-                    title="Seuil minimal sur la rentabilité brute (%) après période DVF. Laisser vide pour ne pas filtrer."
-                    aria-label="Rentabilité brute minimum"
-                  />
-                </div>
-                <div class="field">
-                  <label for="comparaison-renta-nette-min">Renta. nette min (%)</label>
-                  <input
-                    id="comparaison-renta-nette-min"
-                    type="text"
-                    inputmode="decimal"
-                    value=""
-                    placeholder="aucun"
-                    title="Seuil minimal sur la rentabilité nette (%) après période DVF. Laisser vide pour ne pas filtrer."
-                    aria-label="Rentabilité nette minimum"
-                  />
-                </div>
-              </div>
-              <div class="field actions-field">
-                <label>&nbsp;</label>
-                <button type="button" class="comparaison-btn" id="comparaison-btn">Comparer</button>
-                <button type="button" class="stats-reset-btn" id="comparaison-reset-btn">Réinitialiser</button>
-                <button type="button" class="comparaison-btn force-recalc" id="comparaison-force-btn" title="Relance le calcul côté serveur des indicateurs mis en cache pour les zones actuellement sélectionnées (peut prendre quelques secondes). Utile après une mise à jour des données en base.">Forcer le recalcul</button>
-              </div>
             </div>
-            <div class="comparaison-scores-row" id="comparaison-indicators-row">
-              <span style="font-size: 0.85rem; color: #6b7280;">Indicateurs (colonnes du tableau) :</span>
-              <div class="score-secondary" id="indicators-rentabilite">
-                <label><input type="checkbox" id="ind-renta-brute" value="renta_brute" checked /> Renta. brute</label>
-                <label><input type="checkbox" id="ind-renta-nette" value="renta_nette" checked /> Renta. nette</label>
+            <div class="comparaison-scores-row comparaison-filters-row-actions">
+              <button type="button" class="comparaison-btn" id="comparaison-btn">Comparer</button>
+              <button type="button" class="stats-reset-btn" id="comparaison-reset-btn">Réinitialiser</button>
+              <button type="button" class="comparaison-btn force-recalc" id="comparaison-force-btn" title="Relance le calcul côté serveur des indicateurs mis en cache pour les zones actuellement sélectionnées (peut prendre quelques secondes). Utile après une mise à jour des données en base.">Forcer le recalcul</button>
+            </div>
+          </div>
+
+          <div id="comparaison-criteria-block" class="comparaison-criteria-block" hidden>
+            <h3>Granularité</h3>
+            <div class="comparaison-criteria-grid">
+              <div class="comparaison-criteria-col">
+                <div class="field comparaison-field-inline comparaison-granularity-stack">
+                  <label for="comparaison-type-logt" class="granularity-col-title">Type de local</label>
+                  <select id="comparaison-type-logt" class="comparaison-select-multi" multiple size="3"></select>
+                  <div class="comparaison-granularity-radios" role="group" aria-label="Granularité pour le type de local">
+                    <label><input type="radio" name="comparaison-granularity-type" value="agg" checked /> Agrégée</label>
+                    <label><input type="radio" name="comparaison-granularity-type" value="detail" /> Détaillée</label>
+                  </div>
+                </div>
               </div>
-              <div class="score-secondary" id="indicators-taxes" style="display: none;">
-                <label><input type="checkbox" id="ind-taux-tfb" value="taux_tfb" checked /> Taux TF</label>
-                <label><input type="checkbox" id="ind-taux-teom" value="taux_teom" checked /> Taux TEOM</label>
+              <div id="comparaison-surf-col" class="comparaison-criteria-col" style="display: none;">
+                <div class="field comparaison-field-inline comparaison-granularity-stack">
+                  <label for="comparaison-surf" class="granularity-col-title">Surface</label>
+                  <select id="comparaison-surf" class="comparaison-select-multi" multiple size="3"></select>
+                  <div class="comparaison-granularity-radios" role="group" aria-label="Granularité pour la surface">
+                    <label><input type="radio" name="comparaison-granularity-surf" value="agg" checked /> Agrégée</label>
+                    <label><input type="radio" name="comparaison-granularity-surf" value="detail" /> Détaillée</label>
+                  </div>
+                </div>
+              </div>
+              <div id="comparaison-pieces-col" class="comparaison-criteria-col" style="display: none;">
+                <div class="field comparaison-field-inline comparaison-granularity-stack">
+                  <label for="comparaison-pieces" class="granularity-col-title">Nombre de pièces</label>
+                  <select id="comparaison-pieces" class="comparaison-select-multi" multiple size="3"></select>
+                  <div class="comparaison-granularity-radios" role="group" aria-label="Granularité pour le nombre de pièces">
+                    <label><input type="radio" name="comparaison-granularity-pieces" value="agg" checked /> Agrégée</label>
+                    <label><input type="radio" name="comparaison-granularity-pieces" value="detail" /> Détaillée</label>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -228,7 +219,7 @@
           </button>
           <div class="distances-body" id="distances-body" hidden>
             <p class="help" style="font-size:0.8rem;color:#6b7280;margin:0 0 0.75rem">
-              Après avoir lancé <strong>Comparer</strong>, saisissez une adresse de référence puis calculez : les colonnes <strong>Distance</strong> et <strong>Trajet</strong> s’ajoutent au tableau. Les seuils <strong>Dist. max</strong> et <strong>Trajet max</strong> filtrent le tableau et les cartes (optionnel).
+              Après avoir lancé <strong>Comparer</strong>, saisissez une adresse de référence puis cliquez sur <strong>Calculer les distances</strong> : les colonnes <strong>Distance</strong> et <strong>Trajet</strong> s’ajoutent au tableau. Les seuils <strong>Dist. max</strong> et <strong>Trajet max</strong> (optionnels) ne sont pris en compte qu’au moment de ce calcul : modifiez-les puis recliquez sur <strong>Calculer les distances</strong> pour réactualiser le filtrage du tableau et des cartes.
             </p>
             <div id="distances-recent" class="distances-recent" hidden></div>
             <div class="distances-form-row">
@@ -241,11 +232,11 @@
               </div>
               <div class="field">
                 <label for="distances-max-km">Dist. max (km)</label>
-                <input id="distances-max-km" type="text" inputmode="decimal" placeholder="ex. 80" autocomplete="off" title="Plafond distance (km), appliqué après calcul (optionnel)." />
+                <input id="distances-max-km" type="text" inputmode="decimal" placeholder="ex. 80" autocomplete="off" title="Plafond distance (km). Appliqué au clic sur « Calculer les distances » (optionnel)." />
               </div>
               <div class="field">
                 <label for="distances-max-minutes">Trajet max (min)</label>
-                <input id="distances-max-minutes" type="text" inputmode="decimal" placeholder="ex. 90" autocomplete="off" title="Plafond temps de trajet en minutes (optionnel)." />
+                <input id="distances-max-minutes" type="text" inputmode="decimal" placeholder="ex. 90" autocomplete="off" title="Plafond temps de trajet en minutes. Appliqué au clic sur « Calculer les distances » (optionnel)." />
               </div>
               <div class="field" style="flex:0 0 auto">
                 <label>&nbsp;</label>
@@ -253,13 +244,14 @@
               </div>
             </div>
             <div id="distances-status" class="distances-status" hidden></div>
-            <div id="distances-progress" class="distances-progress" hidden>
-              <div class="distances-progress-bar"><div class="distances-progress-fill" id="distances-progress-fill" style="width:0%"></div></div>
-            </div>
           </div>
         </section>
 
         <div class="comparaison-results-view">
+          <div id="comparaison-distances-loading" class="comparaison-distances-loading" aria-hidden="true">
+            <span class="comparaison-spinner" aria-hidden="true"></span>
+            <span>Calcul des distances et temps de trajet…</span>
+          </div>
           <div class="comparaison-view-tabs" role="tablist" aria-label="Affichage des résultats">
             <button type="button" class="comparaison-tab is-active" role="tab" id="comparaison-tab-tables" aria-selected="true" aria-controls="comparaison-panel-tables">Affichage tableaux</button>
             <button type="button" class="comparaison-tab" role="tab" id="comparaison-tab-maps" aria-selected="false" aria-controls="comparaison-panel-maps">Affichage cartes</button>
@@ -299,6 +291,7 @@
               <label><input type="number" id="legend-input-max" step="0.1" style="width:5.5rem">&nbsp;Max</label>
             </div>
             <div id="comparaison-map-commune-legend-hint" class="comparaison-map-commune-legend-hint" hidden>
+              <span class="legend-item"><span class="commune-legend-swatch" style="background:#fecaca;border-color:#fca5a5"></span> Hors périmètre du tableau filtré</span>
               <span class="legend-item"><span class="commune-legend-swatch" style="background:#fde047;border-color:#ca8a04"></span> Pas de correspondance (données / nom)</span>
               <span class="legend-item"><span class="commune-legend-swatch" style="background:#d1d5db;border-color:#6b7280"></span> Indicateur non renseigné</span>
               <span class="legend-item"><span class="commune-legend-swatch" style="background:linear-gradient(135deg,#bbf7d0,#16a34a);border-color:#15803d"></span> Dégradé vert = valeur</span>

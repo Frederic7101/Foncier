@@ -1,4 +1,4 @@
-﻿/* Page Comparaison scores — alignée fiche_commune / stats_ventes */
+/* Page Comparaison scores — alignée fiche_commune / stats_ventes */
 #app-comparaison {
   width: 100%;
   max-width: 1200px;
@@ -87,9 +87,129 @@
 .comparaison-scores-row { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 0.5rem; }
 .comparaison-scores-row .score-secondary { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
 .comparaison-scores-row .score-secondary label { display: inline-flex; align-items: center; gap: 0.35rem; font-weight: normal; white-space: nowrap; }
-.comparaison-renta-min-fields { display: contents; }
+.comparaison-filters-row-primary {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+/* Grille 2 lignes × 4 colonnes : libellés ligne 1 (catégorie + 2 renta + spacer), contrôles ligne 2 */
+.comparaison-filters-line1 {
+  width: 100%;
+}
+.cfl-grid {
+  display: grid;
+  grid-template-columns:
+    minmax(9rem, 1.15fr)
+    minmax(7rem, 0.95fr)
+    minmax(7rem, 0.95fr)
+    minmax(11rem, 1.05fr);
+  grid-template-rows: auto auto;
+  gap: 0.2rem 1rem;
+  width: 100%;
+  align-items: start;
+}
+.cfl-g11,
+.cfl-g12a,
+.cfl-g12b {
+  grid-row: 1;
+  align-self: end;
+  display: block;
+  font-size: 0.85rem;
+  margin: 0;
+  color: #374151;
+}
+.cfl-g11 { grid-column: 1; }
+.cfl-g12a { grid-column: 2; }
+.cfl-g12b { grid-column: 3; }
+.cfl-g13 {
+  grid-column: 4;
+  grid-row: 1;
+  align-self: end;
+  font-size: 0.85rem;
+  line-height: 1.25;
+  visibility: hidden;
+  user-select: none;
+  margin: 0;
+}
+.cfl-g21 {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: baseline;
+  max-width: 100%;
+  font-size: 0.9rem;
+  padding: 0.35rem 0.5rem;
+  border-radius: 0.35rem;
+  border: 1px solid #d1d5db;
+  box-sizing: border-box;
+}
+.cfl-g22a,
+.cfl-g22b {
+  grid-row: 2;
+  align-self: baseline;
+  min-width: 0;
+  width: 100%;
+  max-width: 8rem;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.9rem;
+  border-radius: 0.35rem;
+  border: 1px solid #d1d5db;
+  box-sizing: border-box;
+}
+.cfl-g22a { grid-column: 2; }
+.cfl-g22b { grid-column: 3; }
+.cfl-g23 {
+  grid-column: 4;
+  grid-row: 2;
+  align-self: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.cfl-g23 .score-secondary { margin: 0; }
+.cfl-g23 .score-secondary label {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-weight: normal;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+/* Mode Taxes : masque colonnes renta ; 2 colonnes (catégorie | indicateurs) */
+.comparaison-filters-line1--taxes .cfl-grid {
+  grid-template-columns: minmax(10rem, 1fr) minmax(12rem, 1.2fr);
+}
+.comparaison-filters-line1--taxes .cfl-g12a,
+.comparaison-filters-line1--taxes .cfl-g12b,
+.comparaison-filters-line1--taxes .cfl-g22a,
+.comparaison-filters-line1--taxes .cfl-g22b {
+  display: none !important;
+}
+.comparaison-filters-line1--taxes .cfl-g13 {
+  grid-column: 2;
+  grid-row: 1;
+}
+.comparaison-filters-line1--taxes .cfl-g23 {
+  grid-column: 2;
+  grid-row: 2;
+}
+.comparaison-filters-line1--taxes .cfl-g11 {
+  grid-column: 1;
+  grid-row: 1;
+}
+.comparaison-filters-line1--taxes .cfl-g21 {
+  grid-column: 1;
+  grid-row: 2;
+}
+.comparaison-filters-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+  padding-top: 0.35rem;
+}
 .comparaison-scores-row .actions-field {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   display: flex;
   align-items: center;
   gap: 0.35rem;
@@ -192,6 +312,32 @@
 .comparaison-pagination .pag-info { color: #6b7280; }
 .comparaison-table th.sortable:hover { background: #e2e8f0; }
 .comparaison-table th.sortable .sort-icon { font-size: 0.7em; margin-left: 0.2rem; opacity: 0.7; }
+/* Spinner « distances » : au-dessus des onglets tableaux / cartes */
+.comparaison-distances-loading {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1rem;
+  margin-bottom: 0.75rem;
+  border: 1px solid #bfdbfe;
+  border-radius: 0.5rem;
+  background: #eff6ff;
+  color: #1e40af;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+.comparaison-distances-loading.visible {
+  display: flex;
+}
+.comparaison-distances-loading .comparaison-spinner {
+  width: 1.35rem;
+  height: 1.35rem;
+  border: 3px solid #bfdbfe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: comparaison-spin 0.8s linear infinite;
+}
 #comparaison-empty, #comparaison-loading, #comparaison-error { padding: 1.5rem; text-align: center; color: #6b7280; font-size: 0.9rem; }
 #comparaison-error { color: #dc2626; }
 #comparaison-loading { display: none; align-items: center; justify-content: center; gap: 0.75rem; padding: 1.5rem; color: #6b7280; }
@@ -229,7 +375,7 @@
 .comparaison-criteria-grid {
   display: flex;
   flex-wrap: wrap;
-  align-items: flex-end;
+  align-items: flex-start;
   gap: 0.75rem 1.25rem;
 }
 .comparaison-criteria-col {
@@ -240,10 +386,11 @@
   flex-direction: column;
   gap: 0.35rem;
 }
-.comparaison-granularity-column {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+.comparaison-granularity-stack {
+  gap: 0.45rem;
+}
+.comparaison-granularity-stack .comparaison-granularity-radios {
+  margin-top: 0.15rem;
 }
 .granularity-col-title {
   font-size: 0.72rem;
@@ -272,10 +419,13 @@
   gap: 0.2rem;
   margin: 0;
 }
-.comparaison-field-inline label {
+.comparaison-field-inline label:not(.granularity-col-title) {
   font-size: 0.78rem;
   color: #4b5563;
   white-space: nowrap;
+}
+.comparaison-field-inline label.granularity-col-title {
+  white-space: normal;
 }
 .comparaison-filters .field label,
 #comparaison-mode-departements .field label,
@@ -394,6 +544,36 @@
   resize: vertical;
   overflow: hidden;
   box-sizing: border-box;
+}
+/* Une seule carte : hauteur via poignée basse (JS), pas le coin natif */
+.comparaison-commune-map--single-resize {
+  height: 420px;
+  min-height: 220px;
+  max-height: 92vh;
+  overflow: hidden;
+  box-sizing: border-box;
+  resize: none;
+}
+.comparaison-map-resize-handle {
+  height: 10px;
+  margin-top: 2px;
+  border-radius: 0 0 0.35rem 0.35rem;
+  background: linear-gradient(180deg, #e2e8f0, #cbd5e1);
+  border: 1px solid #cbd5e1;
+  border-top: none;
+  cursor: ns-resize;
+  flex-shrink: 0;
+}
+.comparaison-map-resize-handle:hover {
+  background: linear-gradient(180deg, #bfdbfe, #93c5fd);
+}
+.comparaison-commune-map-card--with-resize-handle {
+  display: flex;
+  flex-direction: column;
+}
+.comparaison-commune-map-card--with-resize-handle .comparaison-commune-map--single-resize {
+  flex: 1 1 auto;
+  min-height: 220px;
 }
 #comparaison-commune-map-subtabs[hidden] {
   display: none !important;
@@ -601,7 +781,7 @@
 }
 .distances-btn-calc {
   padding: 0.5rem 1.25rem;
-  background: #059669;
+  background: #2563eb;
   color: #fff;
   border: none;
   border-radius: 0.4rem;
@@ -610,20 +790,7 @@
   cursor: pointer;
   white-space: nowrap;
 }
-.distances-btn-calc:hover { background: #047857; }
+.distances-btn-calc:hover { background: #1d4ed8; }
 .distances-btn-calc:disabled { background: #9ca3af; cursor: not-allowed; }
 .distances-status { font-size: 0.85rem; color: #6b7280; margin-top: 0.5rem; }
 .distances-status.error { color: #dc2626; }
-.distances-progress { margin-top: 0.35rem; }
-.distances-progress-bar {
-  height: 6px;
-  background: #e5e7eb;
-  border-radius: 3px;
-  overflow: hidden;
-}
-.distances-progress-fill {
-  height: 100%;
-  background: #059669;
-  border-radius: 3px;
-  transition: width 0.3s;
-}

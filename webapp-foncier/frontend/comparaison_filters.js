@@ -1,4 +1,47 @@
 export var DISTANCES_ADDR_STORAGE_KEY = "foncier_comparaison_distances_adresses_v1";
+/** Cache navigateur : origine (lat|lon arrondis) → { code_insee → ligne résultat } */
+export var DISTANCES_RESULT_CACHE_KEY = "foncier_distances_origin_insee_v1";
+
+function normalizeInseeForCache(raw) {
+  var t = String(raw || "").trim().replace(/\s/g, "");
+  if (!/^\d+$/.test(t)) return t;
+  while (t.length < 5) t = "0" + t;
+  return t.length > 5 ? t.slice(-5) : t;
+}
+
+function makeDistanceOrigKey(lat, lon) {
+  var la = Math.round(Number(lat) * 1e5) / 1e5;
+  var lo = Math.round(Number(lon) * 1e5) / 1e5;
+  return la.toFixed(5) + "|" + lo.toFixed(5);
+}
+
+function loadDistancesResultCache() {
+  try {
+    var raw = localStorage.getItem(DISTANCES_RESULT_CACHE_KEY);
+    if (!raw) return {};
+    var o = JSON.parse(raw);
+    return typeof o === "object" && o !== null ? o : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function mergeResultsIntoOriginCache(origKey, results) {
+  if (!origKey || !results || !results.length) return;
+  var all = loadDistancesResultCache();
+  var bucket = all[origKey] || {};
+  results.forEach(function (r) {
+    if (!r || r.code_insee == null) return;
+    bucket[normalizeInseeForCache(r.code_insee)] = r;
+  });
+  all[origKey] = bucket;
+  try {
+    localStorage.setItem(DISTANCES_RESULT_CACHE_KEY, JSON.stringify(all));
+  } catch (e) {
+    console.log("[distances] cache merge", e);
+  }
+}
+
 export function initDistancesSection(opts) {
   opts = opts || {};
   var getInseeListForDistance = opts.getInseeListForDistance || function () {
@@ -23,8 +66,6 @@ export function initDistancesSection(opts) {
   var suggestionsUl = document.getElementById("distances-suggestions");
   var calcBtn = document.getElementById("distances-btn-calc");
   var statusEl = document.getElementById("distances-status");
-  var progressEl = document.getElementById("distances-progress");
-  var progressFill = document.getElementById("distances-progress-fill");
   var recentEl = document.getElementById("distances-recent");
   var maxKmEl = document.getElementById("distances-max-km");
   var maxMinEl = document.getElementById("distances-max-minutes");
@@ -247,6 +288,47 @@ export function initDistancesSection(opts) {
       return;
     }
 
+    var origKeyCache = makeDistanceOrigKey(distAddrCoords.lat, distAddrCoords.lon);
+    var cacheAll = loadDistancesResultCache();
+    var bucketCache = cacheAll[origKeyCache] || {};
+    var allHitCache = codeInseeList.every(function (ci) {
+      return bucketCache[normalizeInseeForCache(ci)];
+    });
+    if (allHitCache) {
+      var fromCacheOnly = codeInseeList.map(function (ci) {
+        return bucketCache[normalizeInseeForCache(ci)];
+      });
+      try {
+        onDistanceCalcBusy(true);
+      } catch (eBusyC) {}
+      calcBtn.disabled = true;
+      statusEl.textContent = "Chargement depuis le cache…";
+      statusEl.className = "distances-status";
+      statusEl.hidden = false;
+      setTimeout(function () {
+        try {
+          onDistanceComputed(fromCacheOnly);
+        } catch (eCb0) {
+          log("onDistanceComputed erreur (cache)", eCb0);
+        }
+        if (hasComparaisonResults()) {
+          statusEl.textContent =
+            fromCacheOnly.length +
+            " commune(s) traitée(s). Les colonnes distance et trajet ont été ajoutées au tableau des résultats.";
+        } else {
+          statusEl.textContent =
+            fromCacheOnly.length +
+            " commune(s) traitée(s). Les résultats seront reliés au tableau après un « Comparer ».";
+        }
+        calcBtn.disabled = false;
+        try {
+          onDistanceCalcBusy(false);
+        } catch (eBusyC2) {}
+        log("calcul terminé (cache navigateur)", { resultCount: fromCacheOnly.length });
+      }, 20);
+      return;
+    }
+
     try {
       onDistanceCalcBusy(true);
     } catch (eBusy0) {}
@@ -254,8 +336,6 @@ export function initDistancesSection(opts) {
     statusEl.textContent = "Calcul en cours pour " + codeInseeList.length + " commune(s) du tableau...";
     statusEl.className = "distances-status";
     statusEl.hidden = false;
-    progressEl.hidden = false;
-    progressFill.style.width = "10%";
 
     var BATCH = 1000;
     var allResults = [];
@@ -268,7 +348,6 @@ export function initDistancesSection(opts) {
     var total = codeInseeList.length;
     function runBatch(idx) {
       if (idx >= batches.length) {
-        progressFill.style.width = "100%";
         statusEl.className = "distances-status";
         try {
           onDistanceComputed(allResults);
@@ -288,14 +367,11 @@ export function initDistancesSection(opts) {
         try {
           onDistanceCalcBusy(false);
         } catch (eBusy1) {}
-        setTimeout(function () {
-          progressEl.hidden = true;
-        }, 1500);
         log("calcul terminé", { resultCount: allResults.length });
         return;
       }
       var batch = batches[idx];
-      /* force_recalcul: false → le serveur ne route (OSRM) que les couples adresse/INSEE absents du cache BDD. */
+      /* force_recalcul : réservé côté API (recalcul explicite si un cache serveur est ajouté plus tard). */
       var payload = {
         adresse_label: distAddrCoords.label,
         adresse_lat: distAddrCoords.lat,
@@ -330,12 +406,11 @@ export function initDistancesSection(opts) {
         })
         .then(function (data) {
           var results = data.results || [];
+          mergeResultsIntoOriginCache(origKeyCache, results);
           results.forEach(function (r) {
             allResults.push(r);
           });
           done += batch.length;
-          var pct = Math.round((done / total) * 100);
-          progressFill.style.width = pct + "%";
           statusEl.textContent = "Calcul en cours... " + done + " / " + total;
           runBatch(idx + 1);
         })
@@ -344,7 +419,6 @@ export function initDistancesSection(opts) {
           statusEl.textContent = "Erreur : " + (err.message || err);
           statusEl.className = "distances-status error";
           calcBtn.disabled = false;
-          progressEl.hidden = true;
           try {
             onDistanceCalcBusy(false);
           } catch (eBusy2) {}

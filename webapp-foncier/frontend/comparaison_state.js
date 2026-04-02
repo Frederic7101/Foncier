@@ -27,7 +27,11 @@ export const S = {
     multiChoroMaps: [],
     geoCache: { departements: null, regions: null, communesAll: null },
     mapSyncIgnore: false,
-    lastCommuneMapScorePrincipal: null
+    lastCommuneMapScorePrincipal: null,
+    /** Vues sauvegardées par sous-onglet cartes communes (dept / region / france) : { lat, lng, zoom }[] */
+    communeViewsBySubTab: { dept: null, region: null, france: null },
+    /** Cartes construites pendant que le panneau cartes était masqué → recadrage au 1er affichage */
+    pendingCommuneMapLayoutRefit: false
   },
   COMMUNE_MAP_TAB_STORAGE_KEY: "comparaison_commune_map_subtab",
   refData: { type_logts: [], type_surf: [], nb_pieces: [] },

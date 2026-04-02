@@ -83,8 +83,11 @@ export function updateIndicatorVisibility() {
   var cat = document.getElementById("comparaison-categorie").value;
   document.getElementById("indicators-rentabilite").style.display = cat === "rentabilite" ? "" : "none";
   document.getElementById("indicators-taxes").style.display = cat === "taxes" ? "" : "none";
-  var rentaMinFields = document.getElementById("comparaison-renta-min-fields");
-  if (rentaMinFields) rentaMinFields.style.display = cat === "rentabilite" ? "contents" : "none";
+  var filtersLine1 = document.getElementById("comparaison-filters-line1");
+  if (filtersLine1) {
+    if (cat === "taxes") filtersLine1.classList.add("comparaison-filters-line1--taxes");
+    else filtersLine1.classList.remove("comparaison-filters-line1--taxes");
+  }
 }
 
 export function getSelectedIndicators() {

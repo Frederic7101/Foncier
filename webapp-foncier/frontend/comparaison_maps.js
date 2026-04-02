@@ -12,7 +12,10 @@ import {
 import {
   buildFilteredRowsByFilterKeyForMaps,
   mergeRowsForBounds,
-  normalizeCodeInseeFr
+  normalizeCodeInseeFr,
+  jobHasMapDisplayableData,
+  getEffectiveMapScoreKeyForJob,
+  parseDistanceFilterInputs
 } from "./comparaison_table.js";
 
 function getFranceMetroLeafletBounds() {
@@ -33,19 +36,9 @@ export function numericScoreFromRow(r, key) {
   return Number.isFinite(v) ? v : NaN;
 }
 
-/** Une carte n’est rendue que si au moins une ligne a une valeur finie pour la colonne score de ce job (vérifié par carte, pas globalement). */
-export function jobHasMapDisplayableData(rows, job) {
-  if (!job || !job.scoreKey) return false;
-  if (job.scoreKey === S.RENTA_UNAVAILABLE_KEY) return false;
-  rows = rows || [];
-  return rows.some(function (r) {
-    return Number.isFinite(numericScoreFromRow(r, job.scoreKey));
-  });
-}
-
-export function filterJobsForMapRendering(jobs, rowsByFilterKey) {
+export function filterJobsForMapRendering(jobs, rowsByFilterKey, cat, displayIndicators) {
   return (jobs || []).filter(function (j) {
-    return jobHasMapDisplayableData(rowsByFilterKey[j.filterKey] || [], j);
+    return jobHasMapDisplayableData(rowsByFilterKey[j.filterKey] || [], j, cat, displayIndicators);
   });
 }
 
@@ -64,6 +57,59 @@ export function setCommuneMapSubTab(tab) {
   try {
     sessionStorage.setItem(S.COMMUNE_MAP_TAB_STORAGE_KEY, tab);
   } catch (e) {}
+}
+
+function ensureCommuneViewsBySubTabStore() {
+  if (!S.mapViz.communeViewsBySubTab) {
+    S.mapViz.communeViewsBySubTab = { dept: null, region: null, france: null };
+  }
+}
+
+/** Sauvegarde le centre / zoom courants des cartes communales pour un sous-onglet (avant changement d’onglet ou re-rendu). */
+export function saveCommuneMapViewsForSubTab(subTab) {
+  ensureCommuneViewsBySubTabStore();
+  if (subTab !== "dept" && subTab !== "region" && subTab !== "france") return;
+  if (!S.mapViz.communeMaps || !S.mapViz.communeMaps.length) return;
+  S.mapViz.communeViewsBySubTab[subTab] = S.mapViz.communeMaps.map(function (entry) {
+    if (!entry || !entry.map) return null;
+    try {
+      var c = entry.map.getCenter();
+      return { lat: c.lat, lng: c.lng, zoom: entry.map.getZoom() };
+    } catch (e) {
+      return null;
+    }
+  });
+}
+
+function restoreCommuneMapViewsForSubTab(subTab) {
+  ensureCommuneViewsBySubTabStore();
+  var arr = S.mapViz.communeViewsBySubTab[subTab];
+  if (!arr || !S.mapViz.communeMaps || !S.mapViz.communeMaps.length) return;
+  for (var i = 0; i < Math.min(arr.length, S.mapViz.communeMaps.length); i++) {
+    var s = arr[i];
+    var e = S.mapViz.communeMaps[i];
+    if (!s || !e || !e.map) continue;
+    try {
+      e.map.setView([s.lat, s.lng], s.zoom, { animate: false });
+    } catch (err) {}
+  }
+}
+
+function scheduleRestoreCommuneMapViews(subTab) {
+  var tab = subTab || getCommuneMapSubTab();
+  setTimeout(function () {
+    restoreCommuneMapViewsForSubTab(tab);
+  }, 280);
+}
+
+/** True si on peut réappliquer les vues sauvegardées sans refaire de fitBounds (même nombre de cartes). */
+function savedCommuneSubTabViewsMatch(subTab, nMaps) {
+  ensureCommuneViewsBySubTabStore();
+  var arr = S.mapViz.communeViewsBySubTab[subTab];
+  if (!arr || !Array.isArray(arr) || arr.length !== nMaps || nMaps <= 0) return false;
+  return arr.every(function (s) {
+    return s && Number.isFinite(s.lat) && Number.isFinite(s.lng) && Number.isFinite(s.zoom);
+  });
 }
 
 export function syncCommuneMapSubtabButtons(active) {
@@ -85,8 +131,11 @@ export function refreshCommuneMapsIfCurrentTab() {
   if (!modeEl || modeEl.value !== "communes") return;
   var sp = S.mapViz.lastCommuneMapScorePrincipal;
   if (sp == null || !S.lastComparaisonJobs.length) return;
+  var args = S.lastRenderTableArgs;
   renderComparaisonMap(S.lastComparaisonJobs, S.lastRowsByFilterKey, "communes", sp, {
-    preserveLegendBounds: true
+    preserveLegendBounds: true,
+    cat: args ? args.cat : undefined,
+    displayIndicators: args ? args.displayIndicators : undefined
   });
 }
 
@@ -135,7 +184,42 @@ function attachPreferredBaseLayer(map) {
   ignLayer.addTo(map);
 }
 
+function markPendingLayoutRefitIfMapsPanelHidden() {
+  var panelMaps = document.getElementById("comparaison-panel-maps");
+  if (panelMaps && panelMaps.hidden) {
+    S.mapViz.pendingCommuneMapLayoutRefit = true;
+  }
+}
+
+/**
+ * Recadre les cartes communales sur les données (dépt / région / France) après affichage du panneau
+ * si le rendu avait eu lieu alors que le panneau était masqué (Leaflet : taille 0 → mauvais zoom).
+ * @param {boolean} [clearPending] — si true, efface le drapeau après ce passage
+ */
+export function applyPendingCommuneMapLayoutRefit(clearPending) {
+  if (!S.mapViz.pendingCommuneMapLayoutRefit) return;
+  (S.mapViz.communeMaps || []).forEach(function (entry) {
+    if (!entry || !entry.map) return;
+    try {
+      entry.map.invalidateSize({ animate: false });
+      if (entry.preferFullLayerBounds && entry.layer && entry.layer.getBounds && entry.layer.getBounds().isValid()) {
+        entry.map.fitBounds(entry.layer.getBounds(), entry.fitOpts || { padding: [10, 10], maxZoom: 15 });
+      } else if (
+        entry.franceMetroFixedBounds &&
+        entry.franceMetroFixedBounds.isValid &&
+        entry.franceMetroFixedBounds.isValid()
+      ) {
+        entry.map.fitBounds(entry.franceMetroFixedBounds, entry.franceMetroFitOpts || { padding: [12, 12], maxZoom: 6 });
+      }
+    } catch (e) {}
+  });
+  if (clearPending) {
+    S.mapViz.pendingCommuneMapLayoutRefit = false;
+  }
+}
+
 export function clearCommuneMaps() {
+  S.mapViz.pendingCommuneMapLayoutRefit = false;
   if (Array.isArray(S.mapViz.communeMaps)) {
     S.mapViz.communeMaps.forEach(function (entry) {
       if (entry && entry.resizeObserver && typeof entry.resizeObserver.disconnect === "function") {
@@ -286,7 +370,10 @@ function buildInseeLookupFromPartitionRows(rows) {
   return out;
 }
 
-function classifyCommuneFeatureForStyle(feature, valuesByCommune, inseeLookup) {
+function classifyCommuneFeatureForStyle(feature, valuesByCommune, inseeLookup, filteredKeys) {
+  if (filteredKeys && !communePolygonInFilteredTableKeys(feature, filteredKeys)) {
+    return { kind: "out_of_filter", score: null };
+  }
   var props = (feature && feature.properties) || {};
   var insee = normalizeCodeInseeFr(props.code || "");
   var normGeoName = normalizeCommuneNameForMapMatch(props.nom || props.name || "");
@@ -309,8 +396,11 @@ function classifyCommuneFeatureForStyle(feature, valuesByCommune, inseeLookup) {
   return { kind: "neutral", score: null };
 }
 
-function getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max) {
-  var c = classifyCommuneFeatureForStyle(feature, valuesByCommune, inseeLookup);
+function getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max, filteredKeys) {
+  var c = classifyCommuneFeatureForStyle(feature, valuesByCommune, inseeLookup, filteredKeys);
+  if (c.kind === "out_of_filter") {
+    return { color: "#fca5a5", weight: 0.28, fillColor: "#fecaca", fillOpacity: 0.52 };
+  }
   if (c.kind === "neutral") {
     return { color: "#e5e7eb", weight: 0.25, fillColor: "#f8fafc", fillOpacity: 0.32 };
   }
@@ -350,18 +440,24 @@ function communePolygonInFilteredTableKeys(feature, keys) {
   return false;
 }
 function getCommunePolygonStyleForFranceMassTable(feature, valuesByCommune, inseeLookup, min, max, filteredKeys) {
-  if (filteredKeys && !communePolygonInFilteredTableKeys(feature, filteredKeys)) {
-    return { color: "#e5e7eb", weight: 0.25, fillColor: "#f8fafc", fillOpacity: 0.32 };
-  }
-  return getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max);
+  return getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max, filteredKeys);
 }
 
-function communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey) {
+function communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, filteredKeys) {
   var props = (feature && feature.properties) || {};
   var nom = props.nom || props.name || "Commune";
-  var cl = classifyCommuneFeatureForStyle(feature, valuesByCommune, inseeLookup);
+  if (filteredKeys && !communePolygonInFilteredTableKeys(feature, filteredKeys)) {
+    return (
+      "<strong>" +
+      escapeHtml(nom) +
+      "</strong><br/>" +
+      escapeHtml(getScoreLabel(scoreKey)) +
+      " : hors périmètre du tableau filtré"
+    );
+  }
+  var cl = classifyCommuneFeatureForStyle(feature, valuesByCommune, inseeLookup, filteredKeys);
   var label;
-  if (cl.kind === "neutral") label = "Hors périmètre du tableau filtré";
+  if (cl.kind === "neutral") label = "Sans agrégation pour cette vue";
   else if (cl.kind === "name_mismatch") label = "Pas de correspondance du nom (données / carte)";
   else if (cl.kind === "empty") label = "Indicateur non renseigné";
   else label = escapeHtml(formatLegendValue(cl.score));
@@ -458,23 +554,15 @@ function recolorAllMaps() {
   // Cartes communes
   (S.mapViz.communeMaps || []).forEach(function (entry) {
     if (!entry || !entry.layer) return;
+    var fk = entry.franceMassFilteredKeys || entry.tableFilteredKeys || null;
     entry.layer.setStyle(function (feature) {
-      if (entry.franceMassFilteredKeys) {
-        return getCommunePolygonStyleForFranceMassTable(
-          feature,
-          entry.valuesByCommune,
-          entry.inseeLookup || null,
-          lo,
-          hi,
-          entry.franceMassFilteredKeys
-        );
-      }
       return getCommunePolygonStyle(
         feature,
         entry.valuesByCommune,
         entry.inseeLookup || null,
         lo,
-        hi
+        hi,
+        fk
       );
     });
   });
@@ -609,6 +697,70 @@ function invalidateMapsSoon(maps, delayMs) {
       if (m && typeof m.invalidateSize === "function") m.invalidateSize();
     });
   }, d);
+}
+
+/** Poignée sur le bord bas pour redimensionner la hauteur (carte unique). */
+function attachCommuneMapBottomResize(mapEl, map) {
+  if (!mapEl || !map || mapEl._comparaisonResizeBound) return;
+  mapEl._comparaisonResizeBound = true;
+  var strip = document.createElement("div");
+  strip.className = "comparaison-map-resize-handle";
+  strip.setAttribute("role", "separator");
+  strip.setAttribute("aria-orientation", "horizontal");
+  strip.setAttribute("aria-label", "Redimensionner la hauteur de la carte");
+  var card = mapEl.closest(".comparaison-commune-map-card");
+  if (card) card.classList.add("comparaison-commune-map-card--with-resize-handle");
+  mapEl.parentNode.insertBefore(strip, mapEl.nextSibling);
+  strip.addEventListener("mousedown", function (e) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    var startY = e.clientY;
+    var startH = mapEl.getBoundingClientRect().height;
+    var minH = 200;
+    var maxH = Math.min(window.innerHeight * 0.92, 1200);
+    function move(ev) {
+      var dy = ev.clientY - startY;
+      var nh = Math.max(minH, Math.min(maxH, startH + dy));
+      mapEl.style.height = nh + "px";
+      try {
+        map.invalidateSize({ animate: false });
+      } catch (eInv) {}
+    }
+    function up() {
+      document.removeEventListener("mousemove", move);
+      document.removeEventListener("mouseup", up);
+    }
+    document.addEventListener("mousemove", move);
+    document.addEventListener("mouseup", up);
+  });
+}
+
+/** Une seule carte communale : hauteur ajustable par la poignée basse (pas le coin natif). */
+function maybeAttachSingleCommuneMapResize() {
+  var arr = S.mapViz.communeMaps || [];
+  if (arr.length !== 1) return;
+  var ent = arr[0];
+  if (ent.resizeObserver && typeof ent.resizeObserver.disconnect === "function") {
+    try {
+      ent.resizeObserver.disconnect();
+    } catch (e0) {}
+    ent.resizeObserver = null;
+  }
+  var map = ent.map;
+  var mel = map && map.getContainer();
+  if (!mel) return;
+  mel.classList.add("comparaison-commune-map--single-resize");
+  mel.classList.remove("comparaison-commune-map--france-met");
+  attachCommuneMapBottomResize(mel, map);
+  if (typeof ResizeObserver !== "undefined") {
+    var ro = new ResizeObserver(function () {
+      try {
+        map.invalidateSize({ animate: false });
+      } catch (eR) {}
+    });
+    ro.observe(mel);
+    ent.resizeObserver = ro;
+  }
 }
 
 function ensureGeoJson(mode) {
@@ -783,7 +935,22 @@ function partitionRowsByRegionForCommuneMaps(rows, scoreKey) {
  * Cadrage initial par carte : Leaflet a besoin que le conteneur ait une taille réelle (surtout la 1ère carte).
  * Chaque appel est indépendant (pas d’état partagé entre cartes).
  */
-function scheduleIndependentCommuneMapFit(map, layer, selBounds, fitOpts) {
+function scheduleIndependentCommuneMapFit(map, layer, selBounds, fitOpts, doFit) {
+  if (doFit === false) {
+    function invOnly() {
+      try {
+        if (map && typeof map.invalidateSize === "function") {
+          map.invalidateSize({ animate: false });
+        }
+      } catch (e) {}
+    }
+    requestAnimationFrame(function () {
+      requestAnimationFrame(invOnly);
+    });
+    setTimeout(invOnly, 80);
+    setTimeout(invOnly, 200);
+    return;
+  }
   function applyFit() {
     try {
       if (map && typeof map.invalidateSize === "function") {
@@ -803,6 +970,54 @@ function scheduleIndependentCommuneMapFit(map, layer, selBounds, fitOpts) {
   setTimeout(applyFit, 200);
   setTimeout(applyFit, 400);
   setTimeout(applyFit, 650);
+  setTimeout(applyFit, 1000);
+  setTimeout(applyFit, 1650);
+  var container = map && map.getContainer && map.getContainer();
+  if (container && typeof ResizeObserver !== "undefined") {
+    var roT = null;
+    var ro = new ResizeObserver(function () {
+      var r = container.getBoundingClientRect();
+      if (r.width < 32 || r.height < 32) return;
+      if (roT) clearTimeout(roT);
+      roT = setTimeout(function () {
+        roT = null;
+        applyFit();
+      }, 120);
+    });
+    ro.observe(container);
+    setTimeout(function () {
+      try {
+        ro.disconnect();
+      } catch (e1) {}
+    }, 6000);
+  }
+  if (container && typeof IntersectionObserver !== "undefined") {
+    var ioDone = false;
+    var io = new IntersectionObserver(
+      function (entries) {
+        for (var i = 0; i < entries.length; i++) {
+          if (entries[i].isIntersecting && entries[i].intersectionRatio > 0) {
+            if (ioDone) return;
+            ioDone = true;
+            try {
+              io.disconnect();
+            } catch (eIo) {}
+            requestAnimationFrame(function () {
+              requestAnimationFrame(applyFit);
+            });
+            return;
+          }
+        }
+      },
+      { root: null, rootMargin: "0px", threshold: [0, 0.01, 0.05] }
+    );
+    io.observe(container);
+    setTimeout(function () {
+      try {
+        io.disconnect();
+      } catch (eIo2) {}
+    }, 12000);
+  }
 }
 
 /**
@@ -834,10 +1049,11 @@ function renderCommunesMassMap(jobs, rowsByFilterKey, min, max) {
       var allMaps = [];
       var fitOpts = { padding: [12, 12], maxZoom: 11 };
       var totalMaps = 0;
+      var franceFitEntries = [];
 
       jobs.forEach(function (job) {
         var rows = rowsByFilterKey[job.filterKey] || [];
-        var scoreKey = job.scoreKey;
+        var scoreKey = job.mapScoreKey || job.scoreKey;
         var deptMetSet = collectMetropolitanDeptCodesFromRows(rows);
         if (!deptMetSet.size) return;
 
@@ -915,7 +1131,7 @@ function renderCommunesMassMap(jobs, rowsByFilterKey, min, max) {
           },
           onEachFeature: function (feature, fLayer) {
             fLayer.bindTooltip(
-              communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey),
+              communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, franceMassFilteredKeys),
               { sticky: true }
             );
           }
@@ -925,20 +1141,7 @@ function renderCommunesMassMap(jobs, rowsByFilterKey, min, max) {
 
         var frBounds = getFranceMetroLeafletBounds();
         var frFitOpts = { padding: [12, 12], maxZoom: 6 };
-        function fitFranceMetroView() {
-          try {
-            map.invalidateSize({ animate: false });
-            if (frBounds && frBounds.isValid && frBounds.isValid()) {
-              map.fitBounds(frBounds, frFitOpts);
-            }
-          } catch (eF) {}
-        }
-        requestAnimationFrame(function () {
-          requestAnimationFrame(fitFranceMetroView);
-        });
-        setTimeout(fitFranceMetroView, 80);
-        setTimeout(fitFranceMetroView, 250);
-        setTimeout(fitFranceMetroView, 500);
+        franceFitEntries.push({ map: map, frBounds: frBounds, frFitOpts: frFitOpts, mapId: mapId });
 
         var massEntry = {
           map: map,
@@ -958,28 +1161,93 @@ function renderCommunesMassMap(jobs, rowsByFilterKey, min, max) {
         S.mapViz.communeMaps.push(massEntry);
         totalMaps += 1;
 
-        var mapEl = document.getElementById(mapId);
+        allMaps.push(map);
+      });
+
+      var restoreFrance = savedCommuneSubTabViewsMatch("france", totalMaps);
+      franceFitEntries.forEach(function (ent, idx) {
+        var map = ent.map;
+        var frBounds = ent.frBounds;
+        var frFitOpts = ent.frFitOpts;
+        var massEntry = S.mapViz.communeMaps[idx];
+        function fitFranceMetroView() {
+          if (restoreFrance) return;
+          try {
+            map.invalidateSize({ animate: false });
+            if (frBounds && frBounds.isValid && frBounds.isValid()) {
+              map.fitBounds(frBounds, frFitOpts);
+            }
+          } catch (eF) {}
+        }
+        function invOnly() {
+          try {
+            map.invalidateSize({ animate: false });
+          } catch (e) {}
+        }
+        if (restoreFrance) {
+          requestAnimationFrame(function () {
+            requestAnimationFrame(invOnly);
+          });
+          setTimeout(invOnly, 80);
+          setTimeout(invOnly, 200);
+        } else {
+          requestAnimationFrame(function () {
+            requestAnimationFrame(fitFranceMetroView);
+          });
+          setTimeout(fitFranceMetroView, 80);
+          setTimeout(fitFranceMetroView, 250);
+          setTimeout(fitFranceMetroView, 500);
+          var container = map.getContainer && map.getContainer();
+          if (container && typeof ResizeObserver !== "undefined") {
+            var roDone = false;
+            var roFit = new ResizeObserver(function () {
+              if (roDone) return;
+              var r = container.getBoundingClientRect();
+              if (r.width < 40 || r.height < 40) return;
+              roDone = true;
+              try {
+                roFit.disconnect();
+              } catch (e0) {}
+              fitFranceMetroView();
+            });
+            roFit.observe(container);
+            setTimeout(function () {
+              try {
+                roFit.disconnect();
+              } catch (e1) {}
+            }, 5000);
+          }
+        }
+        var mapEl = document.getElementById(ent.mapId);
         if (mapEl && typeof ResizeObserver !== "undefined") {
           var ro = new ResizeObserver(function () {
             try {
               map.invalidateSize({ animate: false });
-              fitFranceMetroView();
+              if (!restoreFrance) fitFranceMetroView();
             } catch (eRz) {}
           });
           ro.observe(mapEl);
-          massEntry.resizeObserver = ro;
+          if (massEntry) massEntry.resizeObserver = ro;
         }
-
-        allMaps.push(map);
       });
 
+      if (!restoreFrance) {
+        markPendingLayoutRefitIfMapsPanelHidden();
+      }
       invalidateMapsSoon(allMaps, 120);
+      maybeAttachSingleCommuneMapResize();
+      scheduleRestoreCommuneMapViews("france");
+      var communeHintFr = document.getElementById("comparaison-map-commune-legend-hint");
+      if (communeHintFr) communeHintFr.hidden = totalMaps === 0;
       if (status) {
         status.textContent =
           totalMaps === 0
             ? "Aucune commune métropolitaine à cartographier pour la sélection actuelle."
             : "France métropolitaine : fond complet des communes des départements concernés ; " +
-              "molette pour zoomer ; poignée en bas du cadre pour redimensionner la hauteur. " +
+              "communes hors tableau filtré en rouge clair ; molette pour zoomer ; " +
+              (totalMaps === 1
+                ? "poignée horizontale sous la carte pour redimensionner la hauteur. "
+                : "redimensionnement vertical du cadre de chaque carte (poignée du navigateur). ") +
               totalMaps +
               " carte(s).";
       }
@@ -1010,7 +1278,7 @@ function renderCommuneDeptMapsMulti(jobs, rowsByFilterKey, min, max) {
   }
 
   var anyDeptMaps = jobs.some(function (j) {
-    var p = partitionRowsByDeptForCommuneMaps(rowsByFilterKey[j.filterKey] || [], j.scoreKey);
+    var p = partitionRowsByDeptForCommuneMaps(rowsByFilterKey[j.filterKey] || [], j.mapScoreKey || j.scoreKey);
     return p.limited.length > 0;
   });
   if (!anyDeptMaps) {
@@ -1028,11 +1296,12 @@ function renderCommuneDeptMapsMulti(jobs, rowsByFilterKey, min, max) {
         padding: [10, 10],
         maxZoom: S.selectedCommunes.length === 1 ? 17 : 15
       };
+      var fitTasks = [];
 
       jobs.forEach(function (job) {
         var rowsJob = rowsByFilterKey[job.filterKey] || [];
-        var part = partitionRowsByDeptForCommuneMaps(rowsJob, job.scoreKey);
-        var scoreKey = job.scoreKey;
+        var part = partitionRowsByDeptForCommuneMaps(rowsJob, job.mapScoreKey || job.scoreKey);
+        var scoreKey = job.mapScoreKey || job.scoreKey;
 
         var jobWrap = document.createElement("div");
         jobWrap.className = "comparaison-communes-maps-job";
@@ -1053,6 +1322,16 @@ function renderCommuneDeptMapsMulti(jobs, rowsByFilterKey, min, max) {
         innerGrid.className = "comparaison-communes-maps-grid-inner";
         jobWrap.appendChild(innerGrid);
         grid.appendChild(jobWrap);
+
+        var tableFilteredKeys = buildFilteredCommuneTableKeys(
+          rowsJob.map(function (r) {
+            return {
+              code_insee: r.code_insee,
+              commune: r.commune || r.nom_commune,
+              nom_commune: r.nom_commune
+            };
+          })
+        );
 
         part.limited.forEach(function (deptEntry) {
           var rowsForDept = part.byDept[deptEntry.code] || [];
@@ -1080,17 +1359,17 @@ function renderCommuneDeptMapsMulti(jobs, rowsByFilterKey, min, max) {
           attachPreferredBaseLayer(map);
           var layer = L.geoJSON(geojson, {
             style: function (feature) {
-              return getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max);
+              return getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max, tableFilteredKeys);
             },
             onEachFeature: function (feature, layerEl) {
               layerEl.bindTooltip(
-                communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey),
+                communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, tableFilteredKeys),
                 { sticky: true }
               );
             }
           }).addTo(map);
-          /* Cadrage sur l’ensemble du département (tous les polygones communaux). */
-          scheduleIndependentCommuneMapFit(map, layer, null, fitOpts);
+          /* Cadrage différé : si vues sauvegardées (sous-onglet), pas de fitBounds après restore. */
+          fitTasks.push({ map: map, layer: layer, fitOpts: fitOpts });
           S.mapViz.communeMaps.push({
             map: map,
             layer: layer,
@@ -1100,18 +1379,30 @@ function renderCommuneDeptMapsMulti(jobs, rowsByFilterKey, min, max) {
             valuesByCommune: valuesByCommune,
             inseeLookup: inseeLookup,
             scoreKey: scoreKey,
-            preferFullLayerBounds: true
+            preferFullLayerBounds: true,
+            tableFilteredKeys: tableFilteredKeys
           });
           allMaps.push(map);
         });
       });
 
+      var restoreDept = savedCommuneSubTabViewsMatch("dept", S.mapViz.communeMaps.length);
+      fitTasks.forEach(function (t) {
+        scheduleIndependentCommuneMapFit(t.map, t.layer, null, t.fitOpts, !restoreDept);
+      });
+
+      if (!restoreDept) {
+        markPendingLayoutRefitIfMapsPanelHidden();
+      }
       invalidateMapsSoon(allMaps, 120);
+      maybeAttachSingleCommuneMapResize();
+      scheduleRestoreCommuneMapViews("dept");
       var nj = jobs.length;
       var msg =
         "Par département : toutes les communes du département en fond ; " +
-        "les communes du tableau sont colorées selon la légende ; " +
+        "les communes du tableau filtré sont colorées selon la légende ; les autres en rouge clair ; " +
         "cadrage sur le département entier ; zoom / pan indépendants entre cartes. " +
+        (allMaps.length === 1 ? "Poignée sous la carte pour ajuster la hauteur. " : "") +
         allMaps.length +
         " carte(s)" +
         (nj > 1 ? " (" + nj + " critères)." : ".");
@@ -1156,7 +1447,7 @@ function renderCommuneRegionMapsMulti(jobs, rowsByFilterKey, min, max) {
   }
 
   var anyRegMaps = jobs.some(function (j) {
-    var p = partitionRowsByRegionForCommuneMaps(rowsByFilterKey[j.filterKey] || [], j.scoreKey);
+    var p = partitionRowsByRegionForCommuneMaps(rowsByFilterKey[j.filterKey] || [], j.mapScoreKey || j.scoreKey);
     return p.limited.length > 0;
   });
   if (!anyRegMaps) {
@@ -1174,11 +1465,12 @@ function renderCommuneRegionMapsMulti(jobs, rowsByFilterKey, min, max) {
         padding: [10, 10],
         maxZoom: S.selectedCommunes.length === 1 ? 17 : 15
       };
+      var fitTasksReg = [];
 
       jobs.forEach(function (job) {
         var rowsJob = rowsByFilterKey[job.filterKey] || [];
-        var part = partitionRowsByRegionForCommuneMaps(rowsJob, job.scoreKey);
-        var scoreKey = job.scoreKey;
+        var part = partitionRowsByRegionForCommuneMaps(rowsJob, job.mapScoreKey || job.scoreKey);
+        var scoreKey = job.mapScoreKey || job.scoreKey;
 
         var jobWrap = document.createElement("div");
         jobWrap.className = "comparaison-communes-maps-job";
@@ -1199,6 +1491,16 @@ function renderCommuneRegionMapsMulti(jobs, rowsByFilterKey, min, max) {
         innerGrid.className = "comparaison-communes-maps-grid-inner";
         jobWrap.appendChild(innerGrid);
         grid.appendChild(jobWrap);
+
+        var tableFilteredKeys = buildFilteredCommuneTableKeys(
+          rowsJob.map(function (r) {
+            return {
+              code_insee: r.code_insee,
+              commune: r.commune || r.nom_commune,
+              nom_commune: r.nom_commune
+            };
+          })
+        );
 
         part.limited.forEach(function (regEntry) {
           var rowsForReg = part.byRegion[regEntry.code] || [];
@@ -1226,16 +1528,16 @@ function renderCommuneRegionMapsMulti(jobs, rowsByFilterKey, min, max) {
           attachPreferredBaseLayer(map);
           var layer = L.geoJSON(geojson, {
             style: function (feature) {
-              return getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max);
+              return getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max, tableFilteredKeys);
             },
             onEachFeature: function (feature, layerEl) {
               layerEl.bindTooltip(
-                communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey),
+                communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, tableFilteredKeys),
                 { sticky: true }
               );
             }
           }).addTo(map);
-          scheduleIndependentCommuneMapFit(map, layer, null, fitOpts);
+          fitTasksReg.push({ map: map, layer: layer, fitOpts: fitOpts });
           S.mapViz.communeMaps.push({
             map: map,
             layer: layer,
@@ -1245,18 +1547,30 @@ function renderCommuneRegionMapsMulti(jobs, rowsByFilterKey, min, max) {
             valuesByCommune: valuesByCommune,
             inseeLookup: inseeLookup,
             scoreKey: scoreKey,
-            preferFullLayerBounds: true
+            preferFullLayerBounds: true,
+            tableFilteredKeys: tableFilteredKeys
           });
           allMaps.push(map);
         });
       });
 
+      var restoreRegion = savedCommuneSubTabViewsMatch("region", S.mapViz.communeMaps.length);
+      fitTasksReg.forEach(function (t) {
+        scheduleIndependentCommuneMapFit(t.map, t.layer, null, t.fitOpts, !restoreRegion);
+      });
+
+      if (!restoreRegion) {
+        markPendingLayoutRefitIfMapsPanelHidden();
+      }
       invalidateMapsSoon(allMaps, 120);
+      maybeAttachSingleCommuneMapResize();
+      scheduleRestoreCommuneMapViews("region");
       var nj = jobs.length;
       var msg =
         "Par région : toutes les communes de la région en fond ; " +
-        "les communes du tableau sont colorées selon la légende ; " +
+        "les communes du tableau filtré sont colorées selon la légende ; les autres en rouge clair ; " +
         "cadrage sur la région entière ; zoom / pan indépendants entre cartes. " +
+        (allMaps.length === 1 ? "Poignée sous la carte pour ajuster la hauteur. " : "") +
         allMaps.length +
         " carte(s)" +
         (nj > 1 ? " (" + nj + " critères)." : ".");
@@ -1288,23 +1602,62 @@ export function renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePr
     clearComparaisonMap();
     return;
   }
-  var hasAnyRows = jobs.some(function (j) {
-    return (rowsByFilterKey[j.filterKey] || []).length > 0;
-  });
-  if (!hasAnyRows) {
-    clearComparaisonMap();
-    return;
-  }
   var rowsForMaps =
     displayMode === "communes"
       ? buildFilteredRowsByFilterKeyForMaps(rowsByFilterKey, jobs, displayMode)
       : rowsByFilterKey;
-  var mapJobs = filterJobsForMapRendering(jobs, rowsForMaps);
+  var hasAnyRowsFiltered = jobs.some(function (j) {
+    return (rowsForMaps[j.filterKey] || []).length > 0;
+  });
+  if (!hasAnyRowsFiltered) {
+    clearComparaisonMap();
+    if (status) {
+      var distFilt0 = S.lastDistanceOverlay ? parseDistanceFilterInputs() : { maxKm: null, maxMin: null };
+      var activeDist0 =
+        (distFilt0.maxKm != null && distFilt0.maxKm > 0) || (distFilt0.maxMin != null && distFilt0.maxMin > 0);
+      if (S.lastDistanceOverlay && activeDist0) {
+        status.textContent =
+          "Aucune commune ne correspond aux critères de distance ou de durée de trajet ; assouplissez les seuils ou réinitialisez les filtres.";
+      }
+    }
+    return;
+  }
+  if (!opts.preserveLegendBounds) {
+    S.mapViz.communeViewsBySubTab = { dept: null, region: null, france: null };
+  }
+  var cat =
+    opts.cat != null && opts.cat !== ""
+      ? opts.cat
+      : S.lastRenderTableArgs && S.lastRenderTableArgs.cat != null
+        ? S.lastRenderTableArgs.cat
+        : (function () {
+            var el = document.getElementById("comparaison-categorie");
+            return el ? el.value : "rentabilite";
+          })();
+  var displayIndicators =
+    opts.displayIndicators != null
+      ? opts.displayIndicators
+      : S.lastRenderTableArgs && S.lastRenderTableArgs.displayIndicators
+        ? S.lastRenderTableArgs.displayIndicators
+        : [];
+  var mapJobs = filterJobsForMapRendering(jobs, rowsForMaps, cat, displayIndicators).map(function (j) {
+    return Object.assign({}, j, {
+      mapScoreKey: getEffectiveMapScoreKeyForJob(j, cat, displayIndicators)
+    });
+  });
   if (!mapJobs.length) {
     clearComparaisonMap();
     if (status) {
-      status.textContent =
-        "Aucune carte à afficher : pour chaque combinaison (type de local, surface, pièces), des valeurs sont nécessaires ; les panneaux sans donnée pour ce score sont masqués.";
+      var distFilt1 = S.lastDistanceOverlay ? parseDistanceFilterInputs() : { maxKm: null, maxMin: null };
+      var activeDist1 =
+        (distFilt1.maxKm != null && distFilt1.maxKm > 0) || (distFilt1.maxMin != null && distFilt1.maxMin > 0);
+      if (S.lastDistanceOverlay && activeDist1) {
+        status.textContent =
+          "Aucune carte à afficher : après filtre distance / durée, il ne reste aucune valeur de score exploitable pour la légende (assouplissez les seuils ou vérifiez les indicateurs).";
+      } else {
+        status.textContent =
+          "Aucune carte à afficher : pour chaque combinaison (type de local, surface, pièces), des valeurs sont nécessaires ; les panneaux sans donnée pour ce score sont masqués.";
+      }
     }
     return;
   }
@@ -1316,8 +1669,9 @@ export function renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePr
   var allValues = [];
   mapJobs.forEach(function (job) {
     var rows = rowsForMaps[job.filterKey] || [];
+    var mk = job.mapScoreKey || job.scoreKey;
     rows.forEach(function (r) {
-      var v = numericScoreFromRow(r, job.scoreKey);
+      var v = numericScoreFromRow(r, mk);
       if (Number.isFinite(v)) allValues.push(v);
     });
   });
@@ -1332,8 +1686,13 @@ export function renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePr
   var min = Math.min.apply(null, allValues);
   var max = Math.max.apply(null, allValues);
   if (!opts.preserveLegendBounds) {
-    S.legendCustomMin = null;
-    S.legendCustomMax = null;
+    if (scorePrincipal === "renta_brute" || scorePrincipal === "renta_nette") {
+      S.legendCustomMin = 0;
+      S.legendCustomMax = 10;
+    } else {
+      S.legendCustomMin = null;
+      S.legendCustomMax = null;
+    }
   }
   var inMinData = document.getElementById("legend-input-min");
   var inMaxData = document.getElementById("legend-input-max");
@@ -1431,7 +1790,7 @@ export function renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePr
 
   var renderPromises = entries.map(function (e) {
     var rows = rowsByFilterKey[e.job.filterKey] || [];
-    return renderChoroplethIntoDiv(e.mapId, rows, displayMode, e.job.scoreKey, min, max);
+    return renderChoroplethIntoDiv(e.mapId, rows, displayMode, e.job.mapScoreKey || e.job.scoreKey, min, max);
   });
   Promise.all(renderPromises)
     .then(function () {

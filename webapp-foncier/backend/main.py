@@ -1,8 +1,10 @@
 import csv
+import hashlib
 import json
 import math
 import os
 import re
+import threading
 import time as _time
 import unicodedata
 import urllib.error
@@ -4152,27 +4154,219 @@ def _fetch_commune_centre_geo_gouv(code_insee: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+# L'API publique OSRM limite fortement le débit : trop d'appels concurrents → 429 / timeouts →
+# échec silencieux et retombée sur le haversine (distance sans durée). D'où sémaphore + backoff.
+_OSRM_PUBLIC_SEM = threading.BoundedSemaphore(
+    max(1, min(8, int(os.environ.get("OSRM_MAX_CONCURRENT", "3"))))
+)
+
+
 def _osrm_route_km_minutes(lon1: float, lat1: float, lon2: float, lat2: float) -> Tuple[Optional[float], Optional[float]]:
     base = (os.environ.get("OSRM_BASE_URL") or "https://router.project-osrm.org").rstrip("/")
     path = f"/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
     url = base + path
+    max_attempts = max(1, min(8, int(os.environ.get("OSRM_ROUTE_MAX_ATTEMPTS", "4"))))
+    backoff_base = float(os.environ.get("OSRM_ROUTE_BACKOFF_SEC", "0.35"))
+    pacing = float(os.environ.get("OSRM_ROUTE_PACING_SEC", "0.12"))
+    with _OSRM_PUBLIC_SEM:
+        _time.sleep(pacing)
+        for attempt in range(max_attempts):
+            try:
+                req = urllib.request.Request(url, headers={"User-Agent": "webapp-foncier-distances/1.0"})
+                with urllib.request.urlopen(req, timeout=28) as resp:
+                    data = json.loads(resp.read().decode())
+                routes = data.get("routes") or []
+                if not routes:
+                    return None, None
+                r0 = routes[0]
+                dist_m = r0.get("distance")
+                dur_s = r0.get("duration")
+                if dist_m is None:
+                    return None, None
+                km = float(dist_m) / 1000.0
+                minutes = float(dur_s) / 60.0 if dur_s is not None else None
+                return km, minutes
+            except Exception:
+                if attempt < max_attempts - 1:
+                    _time.sleep(backoff_base * (2**attempt))
+                    continue
+                return None, None
+
+
+def _distances_adresse_hash(lat: float, lon: float, adresse_label: Optional[str]) -> str:
+    """
+    Hash stable pour adresse_hash (nouvelle origine sans ligne en base).
+    Aligné sur une origine BAN : 7 décimales + libellé.
+    Les lignes déjà en base sont retrouvées par égalité sur (lat, lon) arrondis.
+    """
+    la = f"{float(lat):.7f}"
+    lo = f"{float(lon):.7f}"
+    lab = (adresse_label or "").strip()
+    raw = f"{la}|{lo}|{lab}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _distances_resolve_adresse_hash(
+    conn, alat: float, alon: float, adresse_label: Optional[str]
+) -> str:
+    """Réutilise un adresse_hash déjà stocké pour ce couple (lat, lon) à 7 décimales, sinon en crée un."""
+    cur = conn.cursor()
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "webapp-foncier-distances/1.0"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            data = json.loads(resp.read().decode())
-        routes = data.get("routes") or []
-        if not routes:
-            return None, None
-        r0 = routes[0]
-        dist_m = r0.get("distance")
-        dur_s = r0.get("duration")
-        if dist_m is None:
-            return None, None
-        km = float(dist_m) / 1000.0
-        minutes = float(dur_s) / 60.0 if dur_s is not None else None
-        return km, minutes
-    except Exception:
-        return None, None
+        cur.execute(
+            """
+            SELECT adresse_hash
+            FROM distances_communes
+            WHERE round(adresse_lat::numeric, 7) = round(%s::numeric, 7)
+              AND round(adresse_lon::numeric, 7) = round(%s::numeric, 7)
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (alat, alon),
+        )
+        row = cur.fetchone()
+        if row and row[0]:
+            return str(row[0])
+    finally:
+        cur.close()
+    return _distances_adresse_hash(alat, alon, adresse_label)
+
+
+def _distance_row_empty(ci: str) -> Dict[str, Any]:
+    z = _normalize_insee_fr_api(ci)
+    return {
+        "code_insee": z,
+        "code_dept": None,
+        "code_postal": None,
+        "commune": None,
+        "distance_km": None,
+        "duree_minutes": None,
+    }
+
+
+def _distance_compute_one_commune(alat: float, alon: float, ci_raw: str) -> Dict[str, Any]:
+    """Centre api.gouv.fr + OSRM ; secours haversine (sans durée)."""
+    meta = _fetch_commune_centre_geo_gouv(ci_raw)
+    ci = _normalize_insee_fr_api(ci_raw)
+    base_out: Dict[str, Any] = {
+        "code_insee": ci,
+        "code_dept": None,
+        "code_postal": None,
+        "commune": None,
+        "distance_km": None,
+        "duree_minutes": None,
+    }
+    if not meta:
+        return base_out
+    base_out["commune"] = meta.get("nom")
+    cps = meta.get("codes_postaux") or []
+    if cps:
+        base_out["code_postal"] = str(cps[0])
+    lon2, lat2 = meta["lon"], meta["lat"]
+    cd = ci[:2] if len(ci) >= 2 and ci[:2].isdigit() else None
+    if ci.startswith("97") or ci.startswith("98"):
+        cd = ci[:3] if len(ci) >= 3 else cd
+    base_out["code_dept"] = cd
+
+    km, minutes = _osrm_route_km_minutes(alon, alat, lon2, lat2)
+    src = "osrm"
+    if km is None:
+        km = _haversine_km(alat, alon, lat2, lon2)
+        minutes = None
+        src = "haversine"
+    base_out["distance_km"] = round(km, 3)
+    if minutes is not None:
+        base_out["duree_minutes"] = round(minutes, 2)
+    base_out["_source"] = src
+    return base_out
+
+
+def _distances_load_from_db(
+    conn, alat: float, alon: float, insees: List[str]
+) -> Dict[str, Dict[str, Any]]:
+    """Lit le cache table réelle (adresse_lat/lon à 7 décimales), sans colonnes commune/postal/dept."""
+    if not insees:
+        return {}
+    cur = conn.cursor(cursor_factory=RealDictCursor)
+    cur.execute(
+        """
+        SELECT DISTINCT ON (code_insee)
+            code_insee, distance_km, duree_minutes
+        FROM distances_communes
+        WHERE code_insee = ANY(%s)
+          AND round(adresse_lat::numeric, 7) = round(%s::numeric, 7)
+          AND round(adresse_lon::numeric, 7) = round(%s::numeric, 7)
+        ORDER BY code_insee, updated_at DESC
+        """,
+        (insees, alat, alon),
+    )
+    rows = cur.fetchall()
+    cur.close()
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in rows:
+        ci = _normalize_insee_fr_api(str(r["code_insee"] or ""))
+        out[ci] = {
+            "code_insee": ci,
+            "code_dept": None,
+            "code_postal": None,
+            "commune": None,
+            "distance_km": float(r["distance_km"]) if r["distance_km"] is not None else None,
+            "duree_minutes": float(r["duree_minutes"]) if r["duree_minutes"] is not None else None,
+        }
+    return out
+
+
+def _distances_upsert_db(
+    conn,
+    adresse_hash: str,
+    adresse_label: Optional[str],
+    alat: float,
+    alon: float,
+    rows: List[Dict[str, Any]],
+) -> None:
+    """Schéma : adresse_hash, adresse_label, adresse_lat/lon, code_insee, distance_km, duree_minutes, source."""
+    if not rows:
+        return
+    lab = (adresse_label or "").strip() or "—"
+    cur = conn.cursor()
+    for res in rows:
+        ci = _normalize_insee_fr_api(str(res.get("code_insee") or ""))
+        dk = res.get("distance_km")
+        if dk is None:
+            continue
+        dm = res.get("duree_minutes")
+        src = str(res.get("_source") or "osrm")
+        if src not in ("osrm", "haversine"):
+            src = "osrm"
+        dk_stored = round(float(dk), 2)
+        dm_stored = round(float(dm), 1) if dm is not None else None
+        cur.execute(
+            """
+            INSERT INTO distances_communes (
+                adresse_hash, adresse_label, adresse_lat, adresse_lon, code_insee,
+                distance_km, duree_minutes, "source"
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ON CONFLICT (adresse_hash, code_insee) DO UPDATE SET
+                adresse_label = EXCLUDED.adresse_label,
+                adresse_lat = EXCLUDED.adresse_lat,
+                adresse_lon = EXCLUDED.adresse_lon,
+                distance_km = EXCLUDED.distance_km,
+                duree_minutes = EXCLUDED.duree_minutes,
+                "source" = EXCLUDED."source",
+                updated_at = clock_timestamp()
+            """,
+            (
+                adresse_hash,
+                lab,
+                alat,
+                alon,
+                ci,
+                dk_stored,
+                dm_stored,
+                src,
+            ),
+        )
+    cur.close()
 
 
 class DistancesCommunesBody(BaseModel):
@@ -4186,8 +4380,9 @@ class DistancesCommunesBody(BaseModel):
 @app.post("/api/distances-communes")
 def post_distances_communes(body: DistancesCommunesBody):
     """
-    Distance et durée routière (OSRM public par défaut) entre un point adresse (BAN) et chaque commune (centre api.gouv.fr).
-    Secours : distance haversine si OSRM échoue. Pas de persistance BDD (cache mémoire des centres uniquement).
+    Distance et durée routière (OSRM, voir OSRM_BASE_URL) entre un point adresse (BAN) et chaque commune
+    (centre api.gouv.fr). Cache : table `distances_communes` (adresse_hash + code_insee, recherche aussi
+    par lat/lon à 7 décimales), puis calcul OSRM / haversine pour les manquants, avec écriture en base.
     """
     if not body.code_insee_list:
         return {"results": [], "adresse_label": body.adresse_label}
@@ -4195,42 +4390,72 @@ def post_distances_communes(body: DistancesCommunesBody):
         raise HTTPException(status_code=400, detail="code_insee_list limité à 2000 entrées par requête.")
 
     alat, alon = float(body.adresse_lat), float(body.adresse_lon)
+    normalized_list = [_normalize_insee_fr_api(c) for c in body.code_insee_list]
 
-    def one(ci_raw: str) -> dict:
-        meta = _fetch_commune_centre_geo_gouv(ci_raw)
-        ci = _normalize_insee_fr_api(ci_raw)
-        base_out: Dict[str, Any] = {
-            "code_insee": ci,
-            "code_dept": None,
-            "code_postal": None,
-            "commune": None,
-            "distance_km": None,
-            "duree_minutes": None,
-        }
-        if not meta:
-            return base_out
-        base_out["commune"] = meta.get("nom")
-        cps = meta.get("codes_postaux") or []
-        if cps:
-            base_out["code_postal"] = str(cps[0])
-        lon2, lat2 = meta["lon"], meta["lat"]
-        cd = ci[:2] if len(ci) >= 2 and ci[:2].isdigit() else None
-        if ci.startswith("97") or ci.startswith("98"):
-            cd = ci[:3] if len(ci) >= 3 else cd
-        base_out["code_dept"] = cd
+    conn = None
+    try:
+        conn = get_db_connection()
+    except HTTPException:
+        conn = None
 
-        km, minutes = _osrm_route_km_minutes(alon, alat, lon2, lat2)
-        if km is None:
-            km = _haversine_km(alat, alon, lat2, lon2)
-            minutes = None
-        base_out["distance_km"] = round(km, 3)
-        if minutes is not None:
-            base_out["duree_minutes"] = round(minutes, 2)
-        return base_out
+    db_by_insee: Dict[str, Dict[str, Any]] = {}
+    if conn is not None and not body.force_recalcul:
+        try:
+            db_by_insee = _distances_load_from_db(conn, alat, alon, normalized_list)
+        except Exception as e:
+            _debug_log("distances DB lecture: %s", e)
+            db_by_insee = {}
 
-    # Ordre d'entrée conservé (map séquentiel dans le pool)
-    with ThreadPoolExecutor(max_workers=min(12, max(1, len(body.code_insee_list)))) as ex:
-        ordered = list(ex.map(one, body.code_insee_list))
+    missing_unique: List[str] = []
+    seen_mu = set()
+    for ci in normalized_list:
+        if ci in db_by_insee:
+            continue
+        if ci in seen_mu:
+            continue
+        seen_mu.add(ci)
+        missing_unique.append(ci)
+
+    computed: List[Dict[str, Any]] = []
+    if missing_unique:
+        pool_workers = max(1, min(6, len(missing_unique)))
+
+        def _compute_one(ci: str) -> Dict[str, Any]:
+            return _distance_compute_one_commune(alat, alon, ci)
+
+        with ThreadPoolExecutor(max_workers=pool_workers) as ex:
+            computed = list(ex.map(_compute_one, missing_unique))
+
+    if conn is not None and computed:
+        try:
+            adresse_hash = _distances_resolve_adresse_hash(conn, alat, alon, body.adresse_label)
+            _distances_upsert_db(conn, adresse_hash, body.adresse_label, alat, alon, computed)
+            conn.commit()
+        except Exception as e:
+            _debug_log("distances DB écriture: %s", e)
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    merged: Dict[str, Dict[str, Any]] = dict(db_by_insee)
+    for row in computed:
+        ci = _normalize_insee_fr_api(str(row.get("code_insee") or ""))
+        merged[ci] = row
+
+    ordered: List[Dict[str, Any]] = []
+    for ci in normalized_list:
+        if ci in merged:
+            row = dict(merged[ci])
+            row.pop("_source", None)
+            ordered.append(row)
+        else:
+            ordered.append(_distance_row_empty(ci))
 
     return {"results": ordered, "adresse_label": body.adresse_label}
 

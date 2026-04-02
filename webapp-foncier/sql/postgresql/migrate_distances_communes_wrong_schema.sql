@@ -1,0 +1,34 @@
+-- Migration optionnelle — à utiliser UNIQUEMENT si une table de test a été créée avec un
+-- schéma différent de la table de production (ex. colonnes orig_key, id, commune, …).
+--
+-- La table de référence en production est :
+--   PRIMARY KEY (adresse_hash, code_insee)
+--   colonnes : adresse_hash, adresse_label, adresse_lat, adresse_lon, code_insee,
+--              distance_km, duree_minutes, source, updated_at
+--
+-- Les données déjà présentes dans cette table ne doivent pas être écrasées par ce script.
+--
+-- Si vous avez une copie de sauvegarde sous un autre nom (ex. distances_communes_bak),
+-- adaptez la requête ci-dessous : le hash d’origine doit correspondre à la fonction
+-- Python _distances_adresse_hash / reprise par coordonnées dans main.py.
+--
+-- Exemple (à valider ligne à ligne selon vos colonnes source) :
+--
+-- INSERT INTO foncier.distances_communes (
+--   adresse_hash, adresse_label, adresse_lat, adresse_lon, code_insee,
+--   distance_km, duree_minutes, "source"
+-- )
+-- SELECT
+--   ...  -- calcul du hash cohérent avec l’existant ou avec l’API
+--   adresse_label,
+--   adresse_lat,
+--   adresse_lon,
+--   code_insee,
+--   distance_km,
+--   duree_minutes,
+--   coalesce("source", 'osrm')
+-- FROM foncier.distances_communes_bak  -- renommer
+-- ON CONFLICT (adresse_hash, code_insee) DO NOTHING;
+--
+-- En cas de doute, exporter la table source en CSV et réinjecter via un petit script Python
+-- qui appelle la même logique que l’API pour adresse_hash et les arrondis.
