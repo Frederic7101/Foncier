@@ -3,13 +3,10 @@ import json
 import math
 import os
 import re
-try:
-    import orjson as _orjson
-except ImportError:
-    _orjson = None
 import time as _time
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -21,7 +18,6 @@ import psycopg2
 from psycopg2.extras import RealDictCursor, Json
 from fastapi import FastAPI, Query, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
-# from starlette.middleware.gzip import GZipMiddleware  # Utile en production (réseau), contre-productif en localhost
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
@@ -432,17 +428,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# GZip : utile en production (réseau distant), contre-productif en localhost (CPU > gain transfert)
-# app.add_middleware(GZipMiddleware, minimum_size=1000)
-
-
-def _fast_json_response(data: dict) -> Response:
-    """Sérialise un dict en JSON via orjson (5-10x plus rapide que json standard).
-    Fallback sur json.dumps si orjson n'est pas disponible."""
-    if _orjson:
-        content = _orjson.dumps(data)
-        return Response(content=content, media_type="application/json")
-    return data  # FastAPI sérialisera avec json standard
 
 
 @app.get("/api/period")
@@ -702,93 +687,49 @@ def get_communes(
                         (search_norm_like, search_cp_like),
                     )
         elif code_dept:
-            ## c'est ici qu'il faut normaliser le nom des communes avec arrondissements pour la comparaison du nom de la commune : pour "Paris 20" on doit avoir "PARIS"
-            ## et aussi qu'il faut comparer les 3 premiers caractères du code postal pour éviter de ne pas trouver les communes avec les arrondissements
             code_dept_vf = _normalize_code_dept_for_vf(code_dept.strip())
-            sql = """
-                SELECT DISTINCT v.code_dept, v.code_postal, rc.nom_standard_majuscule, rc.code_insee
+            cur.execute(
+                """
+                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
                 FROM foncier.vf_communes v
                 LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND left(rc.code_postal,3) = left(LPAD(v.code_postal::text, 5, '0'),3)
-                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical_commune_vf("v.commune") + """
+                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
+                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
                 WHERE v.code_dept = %s
-                ORDER BY rc.nom_standard_majuscule, v.code_postal
-                """
-            params = (code_dept_vf,)
-            _debug_log("[stats] SQL (exécutable): %s", _debug_sql_params(sql, params))
-            cur.execute(sql, params)
+                ORDER BY v.commune, v.code_postal
+                """,
+                (code_dept_vf,),
+            )
         elif code_region:
             code_region_vf = code_region.strip()
-            sql = """
-                SELECT DISTINCT v.code_dept, v.code_postal, rc.nom_standard_majuscule, rc.code_insee
+            cur.execute(
+                """
+                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
                 FROM foncier.vf_communes v
                 LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND left(rc.code_postal,3) = left(LPAD(v.code_postal::text, 5, '0'),3)
-                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical_commune_vf("v.commune") + """
+                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
+                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
                 WHERE v.code_dept IN (SELECT code_dept FROM foncier.ref_departements WHERE code_region = %s)
-                ORDER BY rc.nom_standard_majuscule, v.code_postal
-                """
-            params = (code_region_vf,)
-            _debug_log("[stats] SQL (exécutable): %s", _debug_sql_params(sql, params))
-            cur.execute(sql, params)
+                ORDER BY v.commune, v.code_postal
+                """,
+                (code_region_vf,),
+            )
         elif all_France:
-            sql = f"""
-                SELECT DISTINCT v.code_dept, v.code_postal, rc.nom_standard_majuscule, rc.code_insee
+            cur.execute(
+                """
+                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
                 FROM foncier.vf_communes v
                 LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND left(rc.code_postal,3) = left(LPAD(v.code_postal::text, 5, '0'),3)
-                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical_commune_vf("v.commune") + """
-                ORDER BY rc.nom_standard_majuscule, v.code_postal
+                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
+                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
+                ORDER BY v.commune, v.code_postal
                 """
-            params = ()
-            _debug_log("[stats] SQL (exécutable): %s", _debug_sql_params(sql, params))
-            cur.execute(sql, params)
+            )
         else:
             raise HTTPException(status_code=400, detail="Aucun paramètre de filtre valide fourni")
         rows = [{"code_dept": r[0], "code_postal": r[1], "commune": r[2], "code_insee": r[3]} for r in cur.fetchall()]
-        _debug_log("[stats] rows : %s", rows)
         cur.close()
-
-        # Déduplication des arrondissements (Paris, Marseille, Lyon)
-        # Remplacer "PARIS 01", "PARIS 02", ..., "PARIS 20" par une seule entrée "PARIS"
-        # avec le code_postal principal (75000, 69000, 13000)
-        import re
-        deduped = {}
-        for row in rows:
-            commune_norm = str(row["commune"]).strip().upper()
-            # Retirer suffixe arrondissement (ex: " 01", " 1ER", " 2EME", " 3E")
-            base_commune = re.sub(r'\s+\d{1,2}\s*(ER|EME|E)?\s*$', '', commune_norm, flags=re.IGNORECASE)
-
-            # Clé de dédup : dept + commune_normalisée
-            key = (row["code_dept"], base_commune)
-            if (base_commune == "PARIS" or base_commune == "LYON" or base_commune == "MARSEILLE"):
-                _debug_log("[stats] key : %s", key)
-            if (base_commune != 'None') and (key not in deduped):
-                # Première occurrence : garder la row
-                deduped[key] = row.copy()
-                deduped[key]["commune"] = base_commune.title()
-            else:
-                # Si on a un code_insee plus récent et que celui-ci est non-null, on met à jour
-                if row["code_insee"] and not deduped[key]["code_insee"]:
-                    deduped[key]["code_insee"] = row["code_insee"]
-
-        result = list(deduped.values())
-
-        # Correction des codes postaux : Paris → 75000, Lyon → 69000, Marseille → 13000
-        canonical_postals = {
-            ("75", "PARIS"): "75000",
-            ("69", "LYON"): "69000",
-            ("13", "MARSEILLE"): "13000"
-        }
-        for row in result:
-            key = (row["code_dept"], row["commune"].upper())
-            if key in canonical_postals:
-                row["code_postal"] = canonical_postals[key]
-
-        # Trier par commune puis code_postal pour garder un ordre cohérent
-        result.sort(key=lambda x: (x["commune"], x["code_postal"]))
-        _debug_log("[stats] result : %s", result[0])
-        return result
+        return rows
     except psycopg2.Error as e:
         raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     finally:
@@ -2802,13 +2743,11 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
                         except (TypeError, ValueError):
                             ipp = None
                     row_d = {
-                        "code_insee": ci,
+                        "code_insee": str(ci).strip() if ci is not None else None,
                         "code_dept": r.get("code_dept"),
                         "code_postal": r.get("code_postal"),
                         "commune": r.get("commune"),
                         "region": r.get("reg_nom") or "",
-                        "dep_nom": r.get("dep_nom") or "",
-                        "population": int(r["population"]) if r.get("population") is not None else None,
                         "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
                         "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
                         "indicateurs_par_periode": ipp if isinstance(ipp, dict) else None,
@@ -2864,9 +2803,7 @@ def _compute_needed_columns(score_principal: str, scores_secondaires: Optional[L
     unknown = needed - all_valid - {"nb_locaux"}
     if unknown:
         score_cols = list(_INDIC_ALL_SCORE_COLS)
-    # Si colonnes inconnues (ex: __ALL_COLUMNS__), toujours inclure indicateurs_par_periode
-    # pour que le frontend puisse faire le merge de période côté client
-    need_periode = (periode_annees != 1) or bool(unknown)
+    need_periode = (periode_annees != 1)
     return score_cols, need_periode
 
 
@@ -2988,14 +2925,13 @@ def _read_indicateurs_by_scope(
 
 def _build_indicateur_row_from_db(r: dict, data_cols: List[str], need_periode: bool) -> dict:
     """Construit un dict indicateur depuis une ligne DB, ne convertissant que les colonnes demandées."""
+    _ci = r.get("code_insee")
     row_d = {
-        "code_insee": r.get("code_insee"),
+        "code_insee": str(_ci).strip() if _ci is not None and str(_ci).strip() != "" else None,
         "code_dept": r.get("code_dept"),
         "code_postal": r.get("code_postal"),
         "commune": r.get("commune"),
         "region": r.get("reg_nom") or "",
-        "dep_nom": r.get("dep_nom") or "",
-        "population": int(r["population"]) if r.get("population") is not None else None,
         "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
         "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
     }
@@ -3466,6 +3402,33 @@ def _row_matches_nb_locaux_min(row: dict, nb_min: int) -> bool:
         return False
 
 
+def _row_matches_renta_mins(
+    row: dict,
+    renta_brute_min: Optional[float],
+    renta_nette_min: Optional[float],
+) -> bool:
+    """Filtre optionnel sur renta_brute / renta_nette (après merge période). Valeur absente => ligne exclue si seuil défini."""
+    if renta_brute_min is not None:
+        v = row.get("renta_brute")
+        if v is None:
+            return False
+        try:
+            if float(v) < float(renta_brute_min):
+                return False
+        except (TypeError, ValueError):
+            return False
+    if renta_nette_min is not None:
+        v = row.get("renta_nette")
+        if v is None:
+            return False
+        try:
+            if float(v) < float(renta_nette_min):
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
 @app.get("/api/comparaison_scores")
 def get_comparaison_scores(
     mode: str = Query("communes", description="Mode: communes, departements, regions"),
@@ -3486,6 +3449,14 @@ def get_comparaison_scores(
         None,
         ge=0,
         description="Si défini, exclut les lignes dont nb_locaux est absent ou strictement inférieur au seuil.",
+    ),
+    renta_brute_min: Optional[float] = Query(
+        None,
+        description="Si défini, exclut les lignes sans renta_brute ou avec renta_brute strictement inférieure.",
+    ),
+    renta_nette_min: Optional[float] = Query(
+        None,
+        description="Si défini, exclut les lignes sans renta_nette ou avec renta_nette strictement inférieure.",
     ),
     periode_annees: int = Query(
         1,
@@ -3534,7 +3505,7 @@ def get_comparaison_scores(
             rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
             if n_max and len(rows) > n_max:
                 rows = rows[:n_max]
-            return _fast_json_response({"rows": rows})
+            return {"rows": rows}
         finally:
             if conn:
                 conn.close()
@@ -3557,10 +3528,11 @@ def get_comparaison_scores(
             rows = [_merge_periode_into_row(dict(r), periode_annees) for r in rows]
             if nb_locaux_min is not None:
                 rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
+            rows = [r for r in rows if _row_matches_renta_mins(r, renta_brute_min, renta_nette_min)]
             rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
             if n_max and len(rows) > n_max:
                 rows = rows[:n_max]
-            return _fast_json_response({"rows": rows})
+            return {"rows": rows}
         finally:
             if conn:
                 conn.close()
@@ -3627,13 +3599,14 @@ def get_comparaison_scores(
 
         if nb_locaux_min is not None:
             rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
+        rows = [r for r in rows if _row_matches_renta_mins(r, renta_brute_min, renta_nette_min)]
         rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
         if n_max and len(rows) > n_max:
             rows = rows[:n_max]
         t_end = _time.monotonic()
         _debug_log("[comparaison_scores] tri+filtrage: %.3fs, sortie: %s ligne(s) retournée(s), total: %.3fs",
                    t_end - t_merge, len(rows), t_end - t_start)
-        return _fast_json_response({"rows": rows})
+        return {"rows": rows}
 
     # Chemin legacy : résolution par triplets (code_dept, code_postal, commune)
     depts = [str(x or "").strip() for x in (code_dept or [])]
@@ -3688,12 +3661,13 @@ def get_comparaison_scores(
 
     if nb_locaux_min is not None:
         rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
+    rows = [r for r in rows if _row_matches_renta_mins(r, renta_brute_min, renta_nette_min)]
     rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
     if n_max and len(rows) > n_max:
         rows = rows[:n_max]
     t_end = _time.monotonic()
     _debug_log("[comparaison_scores] sortie: %s ligne(s) retournée(s), total: %.3fs", len(rows), t_end - t_start)
-    return _fast_json_response({"rows": rows})
+    return {"rows": rows}
 
 # nouvelle version (Claude.ia) : ajout de la validation du body JSON
 class ComparaisonScoresBody(BaseModel):
@@ -3709,6 +3683,8 @@ class ComparaisonScoresBody(BaseModel):
     score_principal: str = "renta_nette"
     n_max: int = 50000 # maximum de 50000 communes
     nb_locaux_min: Optional[int] = None
+    renta_brute_min: Optional[float] = None
+    renta_nette_min: Optional[float] = None
     periode_annees: int = 1
     scores_secondaires: Optional[List[str]] = None
     type_logt: Optional[str] = None
@@ -3734,6 +3710,8 @@ def post_comparaison_scores(body: ComparaisonScoresBody):
         score_principal=body.score_principal,
         n_max=max(1, min(body.n_max, 50000)),
         nb_locaux_min=body.nb_locaux_min,
+        renta_brute_min=body.renta_brute_min,
+        renta_nette_min=body.renta_nette_min,
         periode_annees=body.periode_annees,
         scores_secondaires=body.scores_secondaires,
         type_logt=body.type_logt,
@@ -4118,6 +4096,143 @@ def force_recalcul_indicateurs(
     out["requested"] = len(communes_in)
     out["resolved"] = len(code_insee_list)
     return out
+
+
+# --- Distances adresse → communes (OSRM + centre IGN/API géo) ---------------------------------
+def _normalize_insee_fr_api(code: Optional[str]) -> str:
+    if code is None:
+        return ""
+    s = str(code).strip().replace(" ", "")
+    if s.isdigit() and len(s) <= 5:
+        return s.zfill(5)
+    return s
+
+
+_GOUV_COMMUNE_CENTRE_CACHE: Dict[str, Optional[Dict[str, Any]]] = {}
+
+
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Distance orthodromique (km), secours si OSRM indisponible."""
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlamb = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlamb / 2) ** 2
+    c = 2 * math.asin(min(1.0, math.sqrt(a)))
+    return 6371.0 * c
+
+
+def _fetch_commune_centre_geo_gouv(code_insee: str) -> Optional[Dict[str, Any]]:
+    """Centre administratif (lon, lat) et métadonnées via api.gouv.fr."""
+    ci = _normalize_insee_fr_api(code_insee)
+    if not ci:
+        return None
+    if ci in _GOUV_COMMUNE_CENTRE_CACHE:
+        return _GOUV_COMMUNE_CENTRE_CACHE[ci]
+    url = "https://geo.api.gouv.fr/communes/" + urllib.parse.quote(ci) + "?fields=nom,centre,code,codesPostaux"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "webapp-foncier-distances/1.0"})
+        with urllib.request.urlopen(req, timeout=12) as resp:
+            data = json.loads(resp.read().decode())
+        centre = data.get("centre") or {}
+        coords = centre.get("coordinates")
+        if not coords or len(coords) < 2:
+            _GOUV_COMMUNE_CENTRE_CACHE[ci] = None
+            return None
+        out = {
+            "lon": float(coords[0]),
+            "lat": float(coords[1]),
+            "nom": data.get("nom"),
+            "code_insee": data.get("code") or ci,
+            "codes_postaux": data.get("codesPostaux") or [],
+        }
+        _GOUV_COMMUNE_CENTRE_CACHE[ci] = out
+        return out
+    except Exception:
+        _GOUV_COMMUNE_CENTRE_CACHE[ci] = None
+        return None
+
+
+def _osrm_route_km_minutes(lon1: float, lat1: float, lon2: float, lat2: float) -> Tuple[Optional[float], Optional[float]]:
+    base = (os.environ.get("OSRM_BASE_URL") or "https://router.project-osrm.org").rstrip("/")
+    path = f"/route/v1/driving/{lon1},{lat1};{lon2},{lat2}?overview=false"
+    url = base + path
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "webapp-foncier-distances/1.0"})
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            data = json.loads(resp.read().decode())
+        routes = data.get("routes") or []
+        if not routes:
+            return None, None
+        r0 = routes[0]
+        dist_m = r0.get("distance")
+        dur_s = r0.get("duration")
+        if dist_m is None:
+            return None, None
+        km = float(dist_m) / 1000.0
+        minutes = float(dur_s) / 60.0 if dur_s is not None else None
+        return km, minutes
+    except Exception:
+        return None, None
+
+
+class DistancesCommunesBody(BaseModel):
+    adresse_label: Optional[str] = None
+    adresse_lat: float
+    adresse_lon: float
+    code_insee_list: List[str]
+    force_recalcul: bool = False
+
+
+@app.post("/api/distances-communes")
+def post_distances_communes(body: DistancesCommunesBody):
+    """
+    Distance et durée routière (OSRM public par défaut) entre un point adresse (BAN) et chaque commune (centre api.gouv.fr).
+    Secours : distance haversine si OSRM échoue. Pas de persistance BDD (cache mémoire des centres uniquement).
+    """
+    if not body.code_insee_list:
+        return {"results": [], "adresse_label": body.adresse_label}
+    if len(body.code_insee_list) > 2000:
+        raise HTTPException(status_code=400, detail="code_insee_list limité à 2000 entrées par requête.")
+
+    alat, alon = float(body.adresse_lat), float(body.adresse_lon)
+
+    def one(ci_raw: str) -> dict:
+        meta = _fetch_commune_centre_geo_gouv(ci_raw)
+        ci = _normalize_insee_fr_api(ci_raw)
+        base_out: Dict[str, Any] = {
+            "code_insee": ci,
+            "code_dept": None,
+            "code_postal": None,
+            "commune": None,
+            "distance_km": None,
+            "duree_minutes": None,
+        }
+        if not meta:
+            return base_out
+        base_out["commune"] = meta.get("nom")
+        cps = meta.get("codes_postaux") or []
+        if cps:
+            base_out["code_postal"] = str(cps[0])
+        lon2, lat2 = meta["lon"], meta["lat"]
+        cd = ci[:2] if len(ci) >= 2 and ci[:2].isdigit() else None
+        if ci.startswith("97") or ci.startswith("98"):
+            cd = ci[:3] if len(ci) >= 3 else cd
+        base_out["code_dept"] = cd
+
+        km, minutes = _osrm_route_km_minutes(alon, alat, lon2, lat2)
+        if km is None:
+            km = _haversine_km(alat, alon, lat2, lon2)
+            minutes = None
+        base_out["distance_km"] = round(km, 3)
+        if minutes is not None:
+            base_out["duree_minutes"] = round(minutes, 2)
+        return base_out
+
+    # Ordre d'entrée conservé (map séquentiel dans le pool)
+    with ThreadPoolExecutor(max_workers=min(12, max(1, len(body.code_insee_list)))) as ex:
+        ordered = list(ex.map(one, body.code_insee_list))
+
+    return {"results": ordered, "adresse_label": body.adresse_label}
 
 
 @app.get("/api/ventes", response_model=List[Vente])

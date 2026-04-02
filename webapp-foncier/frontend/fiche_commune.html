@@ -860,16 +860,31 @@
             set("fiche-identite-epci", "EPCI : " + (data.epci_nom != null && data.epci_nom !== "" ? data.epci_nom : "—"));
             if (data.population != null) set("fiche-population", formatInt(data.population));
             else set("fiche-population", "—");
-            if (g.prix_moyen != null) set("fiche-prix-moyen", formatEuro(g.prix_moyen));
+            // Prix moyen et rentabilité : utiliser la DERNIÈRE ANNÉE DVF (cohérence avec indicateurs_communes)
+            var lastYear = null;
+            var gLastYear = g; // fallback : agrégat global (toutes années)
+            if (data.series && data.series.length > 0) {
+              var lastEntry = data.series[data.series.length - 1];
+              if (lastEntry && lastEntry.annee != null) {
+                lastYear = lastEntry.annee;
+                gLastYear = lastEntry;
+              }
+            }
+            if (gLastYear.prix_moyen != null) set("fiche-prix-moyen", formatEuro(gLastYear.prix_moyen));
             else set("fiche-prix-moyen", "—");
             if (data.loypredm2 != null) set("fiche-loyer-m2", formatEuroM2(data.loypredm2));
             else set("fiche-loyer-m2", "—");
             var rentaBrute = "";
-            if (data.loypredm2 != null && g.prix_m2_moyenne != null && g.prix_m2_moyenne > 0) {
-              var renta = (data.loypredm2 * 12 / g.prix_m2_moyenne) * 100;
+            if (data.loypredm2 != null && gLastYear.prix_m2_moyenne != null && gLastYear.prix_m2_moyenne > 0) {
+              var renta = (data.loypredm2 * 12 / gLastYear.prix_m2_moyenne) * 100;
               rentaBrute = formatPct(renta);
             }
             set("fiche-renta-brute", rentaBrute || "—");
+            // Mettre à jour la note avec l'année DVF utilisée
+            var noteEl = document.querySelector(".fiche-renta-note");
+            if (noteEl && lastYear) {
+              noteEl.textContent = "Prix moyen et taux de rentabilité brute calculés sur les ventes DVF " + lastYear + ". Rentabilité = (loyer annuel au m² / prix au m²) × 100.";
+            }
 
             // Tableau Ventes (ligne Total maisons/appartements)
             if (g.nb_ventes != null) set("ventes-total-nb", formatInt(g.nb_ventes));
