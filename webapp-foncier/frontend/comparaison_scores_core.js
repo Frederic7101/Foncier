@@ -229,15 +229,36 @@ import {
             console.log("(initCommuneSelect) S.listCommunes : ", S.listCommunes);
             // si sélection en masse (Toutes les communes du département, Toutes les communes de la région, Toutes les communes de France)
             if (v === "__ALL_DEPT__" || v === "__ALL_REGION__" || v === "__ALL_FRANCE__") {
-              console.log("(initCommuneSelect) sélection en masse");
               // Mémoriser le mode de sélection en masse pour orienter le rendu cartographique
               if (v === "__ALL_FRANCE__") S.selectionMassMode = "france";
               else if (v === "__ALL_REGION__") S.selectionMassMode = "region";
               else S.selectionMassMode = "dept";
               S.excludedCommunes = []; // Reset des exclusions pour la nouvelle sélection
+
+              // Pour France entière, S.listCommunes === null car le fetch est différé.
+              // On le lance maintenant, au moment où l'utilisateur sélectionne explicitement l'option.
+              if (v === "__ALL_FRANCE__" && S.listCommunes === null) {
+                const optFrance = Array.from(sel.options).find(function (o) { return o.value === "__ALL_FRANCE__"; });
+                if (optFrance) optFrance.textContent = "Chargement des communes…";
+                sel.disabled = true;
+                fetch(S.API_BASE + "/api/communes?all_France=true")
+                  .then(function (r) { return r.json(); })
+                  .then(function (data) {
+                    S.listCommunes = Array.isArray(data) ? data : [];
+                    S.listCommunes.forEach(function (c) { addSelectedCommuneItem(c); });
+                    renderSelectedList();
+                  })
+                  .catch(function () { S.listCommunes = []; })
+                  .finally(function () {
+                    sel.disabled = false;
+                    sel.value = "";
+                  });
+                return;
+              }
+
               // Remplir la liste avec toutes les communes sélectionnées en masse
               (S.listCommunes || []).forEach(function (c) { addSelectedCommuneItem(c); });
-              renderSelectedList(); // ← une seule fois après la boucle (optimisation conseillée par Claude.ia)
+              renderSelectedList(); // ← une seule fois après la boucle
               sel.value = "";
               return;
             }

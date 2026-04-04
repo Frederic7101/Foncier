@@ -186,6 +186,49 @@ function attachPreferredBaseLayer(map) {
   }
   ignLayer.on("tileerror", switchToFallback);
   ignLayer.addTo(map);
+
+  // ── Tooltip unique partagé ──
+  // Un seul L.tooltip par carte : impossible d'en accumuler plusieurs.
+  map._sharedTooltip = L.tooltip({ sticky: false, opacity: 0.92 });
+  map._sharedTTCloseTimer = null;
+  // Fermer le tooltip immédiatement au mousedown (début de pan/clic)
+  map.on("mousedown", function () {
+    if (map._sharedTTCloseTimer) { clearTimeout(map._sharedTTCloseTimer); map._sharedTTCloseTimer = null; }
+    if (map._sharedTooltip) {
+      try { map.removeLayer(map._sharedTooltip); } catch (e) {}
+    }
+  });
+}
+
+/**
+ * Attache la gestion du tooltip partagé à un GeoJSON layer.
+ * Chaque feature doit avoir stocké son contenu dans layerEl._ttContent.
+ */
+function setupSharedTooltip(map, geoJsonLayer) {
+  geoJsonLayer.on("mouseover", function (e) {
+    if (map._sharedTTCloseTimer) { clearTimeout(map._sharedTTCloseTimer); map._sharedTTCloseTimer = null; }
+    var lyr = e.layer;
+    if (!lyr || !lyr._ttContent) return;
+    map._sharedTooltip.setContent(lyr._ttContent);
+    map._sharedTooltip.setLatLng(e.latlng);
+    if (!map.hasLayer(map._sharedTooltip)) {
+      map._sharedTooltip.addTo(map);
+    }
+    map._sharedTTActiveLayer = lyr;
+  });
+  geoJsonLayer.on("mousemove", function (e) {
+    if (map.hasLayer(map._sharedTooltip)) {
+      map._sharedTooltip.setLatLng(e.latlng);
+    }
+  });
+  geoJsonLayer.on("mouseout", function () {
+    if (map._sharedTTCloseTimer) clearTimeout(map._sharedTTCloseTimer);
+    map._sharedTTCloseTimer = setTimeout(function () {
+      try { map.removeLayer(map._sharedTooltip); } catch (e) {}
+      map._sharedTTActiveLayer = null;
+      map._sharedTTCloseTimer = null;
+    }, 80);
+  });
 }
 
 function markPendingLayoutRefitIfMapsPanelHidden() {
@@ -722,6 +765,9 @@ function attachCommuneMapBottomResize(mapEl, map) {
   strip.addEventListener("mousedown", function (e) {
     if (e.button !== 0) return;
     e.preventDefault();
+    // Bloquer les événements souris sur la carte pendant le glissé
+    try { if (map._sharedTooltip) map.removeLayer(map._sharedTooltip); } catch (eC) {}
+    mapEl.style.pointerEvents = "none";
     var startY = e.clientY;
     var startH = mapEl.getBoundingClientRect().height;
     var minH = 200;
@@ -737,6 +783,8 @@ function attachCommuneMapBottomResize(mapEl, map) {
     function up() {
       document.removeEventListener("mousemove", move);
       document.removeEventListener("mouseup", up);
+      mapEl.style.pointerEvents = "";
+      try { if (map._sharedTooltip) map.removeLayer(map._sharedTooltip); } catch (eC) {}
     }
     document.addEventListener("mousemove", move);
     document.addEventListener("mouseup", up);
@@ -835,9 +883,10 @@ function renderChoroplethIntoDiv(divId, rows, displayMode, scoreKey, min, max) {
           escapeHtml(getScoreLabel(scoreKey)) +
           " : " +
           (value !== null ? escapeHtml(formatLegendValue(value)) : "—");
-        lyr.bindTooltip(content, { sticky: true });
+        lyr._ttContent = content;
       }
     }).addTo(map);
+    setupSharedTooltip(map, layer);
     // Stocker rowByCode/scoreKey/mode pour permettre le recoloriage via les contrôles min/max
     var rowByCode = {};
     rows.forEach(function (r) {
@@ -1138,14 +1187,12 @@ function renderCommunesMassMap(jobs, rowsByFilterKey, min, max) {
             );
           },
           onEachFeature: function (feature, fLayer) {
-            fLayer.bindTooltip(
-              communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, franceMassFilteredKeys),
-              { sticky: true }
-            );
+            fLayer._ttContent = communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, franceMassFilteredKeys);
           }
         });
 
         layer.addTo(map);
+        setupSharedTooltip(map, layer);
 
         var frBounds = getFranceMetroLeafletBounds();
         var frFitOpts = { padding: [12, 12], maxZoom: 6 };
@@ -1370,12 +1417,10 @@ function renderCommuneDeptMapsMulti(jobs, rowsByFilterKey, min, max) {
               return getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max, tableFilteredKeys);
             },
             onEachFeature: function (feature, layerEl) {
-              layerEl.bindTooltip(
-                communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, tableFilteredKeys),
-                { sticky: true }
-              );
+              layerEl._ttContent = communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, tableFilteredKeys);
             }
           }).addTo(map);
+          setupSharedTooltip(map, layer);
           /* Cadrage différé : si vues sauvegardées (sous-onglet), pas de fitBounds après restore. */
           fitTasks.push({ map: map, layer: layer, fitOpts: fitOpts });
           S.mapViz.communeMaps.push({
@@ -1539,12 +1584,10 @@ function renderCommuneRegionMapsMulti(jobs, rowsByFilterKey, min, max) {
               return getCommunePolygonStyle(feature, valuesByCommune, inseeLookup, min, max, tableFilteredKeys);
             },
             onEachFeature: function (feature, layerEl) {
-              layerEl.bindTooltip(
-                communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, tableFilteredKeys),
-                { sticky: true }
-              );
+              layerEl._ttContent = communeFeatureTooltipHtml(feature, valuesByCommune, inseeLookup, scoreKey, tableFilteredKeys);
             }
           }).addTo(map);
+          setupSharedTooltip(map, layer);
           fitTasksReg.push({ map: map, layer: layer, fitOpts: fitOpts });
           S.mapViz.communeMaps.push({
             map: map,
@@ -1749,11 +1792,16 @@ function _composeMapExportCanvas(captured, titleText, filterSummaryText, legendM
     var lx = MARGIN;
     // Dégradé
     var grad = ctx.createLinearGradient(lx, legendY, lx + barW, legendY);
-    grad.addColorStop(0,    "#f0fdf4");
-    grad.addColorStop(0.25, "#bbf7d0");
-    grad.addColorStop(0.50, "#4ade80");
-    grad.addColorStop(0.75, "#16a34a");
-    grad.addColorStop(1,    "#14532d");
+    grad.addColorStop(0,   "#f0fdf4");
+    grad.addColorStop(0.2, "#f0fdf4");
+    grad.addColorStop(0.2, "#bbf7d0");
+    grad.addColorStop(0.4, "#bbf7d0");
+    grad.addColorStop(0.4, "#4ade80");
+    grad.addColorStop(0.6, "#4ade80");
+    grad.addColorStop(0.6, "#16a34a");
+    grad.addColorStop(0.8, "#16a34a");
+    grad.addColorStop(0.8, "#14532d");
+    grad.addColorStop(1,   "#14532d");
     ctx.fillStyle = grad;
     ctx.fillRect(lx, legendY, barW, barH);
     ctx.strokeStyle = "#d1d5db";

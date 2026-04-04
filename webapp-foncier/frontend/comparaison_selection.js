@@ -420,14 +420,11 @@ export function fillCommunes() {
   const codeRegion = document.getElementById("comparaison-region").value;
   const communeSelect = document.getElementById("comparaison-commune");
   if (!communeSelect) return;
-  console.log("(fillCommunes)");
   // 1ère ligne : libellé neutre
   communeSelect.innerHTML = "<option value=''>— Choisir une commune —</option>";
 
   // Récupérer les communes du département si un département est sélectionné
   if (codeDept){
-    console.log("codeDept", codeDept);
-    // 2ème ligne : toutes les communes du département : la liste est correctement renseignée
     const optAllDept = document.createElement("option");
     optAllDept.value = "__ALL_DEPT__";
     optAllDept.textContent = "Toutes les communes du département";
@@ -436,19 +433,19 @@ export function fillCommunes() {
       .then(function (r) { return r.json(); })
       .then(function (data) {
         S.listCommunes = Array.isArray(data) ? data : [];
+        const frag = document.createDocumentFragment();
         S.listCommunes.forEach(function (c) {
           const opt = document.createElement("option");
           opt.value = JSON.stringify({ code_dept: c.code_dept || "", code_postal: c.code_postal || "", commune: c.commune || "", code_insee: c.code_insee || "" });
           opt.textContent = (c.commune || "") + " (" + (c.code_postal || "") + ")";
-          communeSelect.appendChild(opt);
+          frag.appendChild(opt);
         });
+        communeSelect.appendChild(frag);
       })
       .catch(function () { S.listCommunes = []; });
   }
   // Sinon, récupérer les communes de la région si une région est sélectionnée
   else if (codeRegion){
-    console.log("codeRegion", codeRegion);
-    // 2ème ligne : toutes les communes de la région : la liste est correctement renseignée
     const optAllRegion = document.createElement("option");
     optAllRegion.value = "__ALL_REGION__";
     optAllRegion.textContent = "Toutes les communes de la région";
@@ -457,35 +454,25 @@ export function fillCommunes() {
       .then(function (r) { return r.json(); })
       .then(function (data) {
         S.listCommunes = Array.isArray(data) ? data : [];
+        const frag = document.createDocumentFragment();
         S.listCommunes.forEach(function (c) {
           const opt = document.createElement("option");
           opt.value = JSON.stringify({ code_dept: c.code_dept || "", code_postal: c.code_postal || "", commune: c.commune || "", code_insee: c.code_insee || "" });
           opt.textContent = (c.commune || "") + " (" + (c.code_postal || "") + ")";
-          communeSelect.appendChild(opt);
+          frag.appendChild(opt);
         });
+        communeSelect.appendChild(frag);
       })
       .catch(function () { S.listCommunes = []; });
   }
-  // Sinon (ni département ni région sélectionnés), récupérer les communes de la France
+  // Sinon (ni département ni région sélectionnés) : afficher l'option France mais NE PAS
+  // charger les 36 000 communes immédiatement — le fetch sera déclenché à la sélection.
   else {
-    console.log("else");
-    // 2ème ligne : toutes les communes de la France : la liste est correctement renseignée
+    S.listCommunes = null;
     const optAllFrance = document.createElement("option");
     optAllFrance.value = "__ALL_FRANCE__";
     optAllFrance.textContent = "Toutes les communes de la France";
     communeSelect.appendChild(optAllFrance);
-    fetch(S.API_BASE + "/api/communes?all_France=true")
-      .then(function (r) { return r.json(); })
-      .then(function (data) {
-        S.listCommunes = Array.isArray(data) ? data : [];
-        S.listCommunes.forEach(function (c) {
-          const opt = document.createElement("option");
-          opt.value = JSON.stringify({ code_dept: c.code_dept || "", code_postal: c.code_postal || "", commune: c.commune || "", code_insee: c.code_insee || "" });
-          opt.textContent = (c.commune || "") + " (" + (c.code_postal || "") + ")";
-          communeSelect.appendChild(opt);
-        });
-      })
-      .catch(function () { S.listCommunes = []; });
   }
 }
 

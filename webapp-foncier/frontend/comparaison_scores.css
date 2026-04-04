@@ -621,7 +621,12 @@
   height: 14px;
   border-radius: 3px;
   border: 1px solid #d1d5db;
-  background: linear-gradient(90deg, #f0fdf4 0%, #bbf7d0 25%, #4ade80 50%, #16a34a 75%, #14532d 100%);
+  background: linear-gradient(90deg,
+    #f0fdf4  0%, #f0fdf4 20%,
+    #bbf7d0 20%, #bbf7d0 40%,
+    #4ade80 40%, #4ade80 60%,
+    #16a34a 60%, #16a34a 80%,
+    #14532d 80%, #14532d 100%);
   position: relative;
 }
 .comparaison-map-legend-ticks {
