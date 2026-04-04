@@ -581,6 +581,58 @@ export function communeRowsCoverSelectedDepartments(rowsByFilterKey, jobs) {
   return ok;
 }
 
+function csvField(v) {
+  var s = String(v == null ? "" : v);
+  if (s.indexOf(";") !== -1 || s.indexOf('"') !== -1 || s.indexOf("\n") !== -1) {
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  return s;
+}
+
+function exportTableToCsv(job, rows, tableIndicators, displayMode, filterSummary, sortKey, sortDesc) {
+  var sorted = (sortKey && rows.length) ? sortRows(rows, sortKey, sortDesc) : rows;
+  var BOM = "\uFEFF";
+  var lines = [];
+  lines.push("# " + (job.groupTitle || "") + " \u2014 " + (job.cardTitle || ""));
+  if (job.criteriaLine) lines.push("# Crit\u00e8res : " + job.criteriaLine);
+  if (filterSummary) lines.push("# Filtres : " + filterSummary);
+  lines.push("");
+  var geoHeaders = displayMode === "departements"
+    ? ["Rang", "R\u00e9gion", "Code d\u00e9pt", "D\u00e9partement"]
+    : displayMode === "regions"
+    ? ["Rang", "Code r\u00e9gion", "R\u00e9gion"]
+    : ["Rang", "R\u00e9gion", "Code d\u00e9pt", "Code postal", "Commune"];
+  var dataHeaders = tableIndicators.map(function (ind) { return ind.label; });
+  lines.push(geoHeaders.concat(dataHeaders).map(csvField).join(";"));
+  sorted.forEach(function (row, i) {
+    var geo;
+    if (displayMode === "departements") {
+      var cd = row.code_dept || "";
+      geo = [i + 1, row.region || row.reg_nom || "", cd, row.dep_nom || cd];
+    } else if (displayMode === "regions") {
+      geo = [i + 1, row.code_region || "", row.region || row.reg_nom || ""];
+    } else {
+      geo = [i + 1, row.region || row.reg_nom || "", row.code_dept || "", row.code_postal || row.code_postal_principal || "", row.commune || row.nom_commune || ""];
+    }
+    var data = tableIndicators.map(function (ind) {
+      var v = row[ind.key];
+      if (v == null || v === "") return "";
+      var n = Number(v);
+      return Number.isFinite(n) ? String(n).replace(".", ",") : v;
+    });
+    lines.push(geo.concat(data).map(csvField).join(";"));
+  });
+  var content = BOM + lines.join("\n");
+  var blob = new Blob([content], { type: "text/csv;charset=utf-8" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "comparaison_" + (job.cardTitle || "export").replace(/[^a-zA-Z0-9_-]/g, "_").substring(0, 50) + ".csv";
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(function () { document.body.removeChild(a); URL.revokeObjectURL(url); }, 500);
+}
+
 export function renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat, displayIndicators, theadPrefix) {
   var dyn = document.getElementById("comparaison-tables-dynamic");
   if (!dyn) return;
@@ -640,6 +692,7 @@ export function renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat,
     var zoneLabel = displayMode === "departements" ? "départements" : displayMode === "regions" ? "régions" : "communes";
     var titleHtml =
       "<strong>" + escapeHtml(job.groupTitle) + "</strong> (" + nbZones + " " + zoneLabel + ") — " + escapeHtml(job.cardTitle);
+    var filterSummary = S.lastRenderTableArgs ? (S.lastRenderTableArgs.filterSummary || "") : "";
     var crit = job.criteriaLine
       ? '<p class="comparaison-table-criteria">' + escapeHtml(job.criteriaLine) + "</p>"
       : "";
@@ -650,7 +703,9 @@ export function renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat,
     section.setAttribute("aria-hidden", "false");
     section.innerHTML =
       '<h3 class="comparaison-table-title">' +
-      titleHtml +
+      '<span class="comparaison-table-title-text">' + titleHtml + '</span>' +
+      (filterSummary ? '<span class="comparaison-table-filter-summary">' + escapeHtml(filterSummary) + '</span>' : '') +
+      '<button type="button" class="comparaison-export-csv-btn" title="Exporter ce tableau en CSV">Exporter CSV</button>' +
       "</h3>" +
       crit +
       '<div class="comparaison-table-wrap"><table class="comparaison-table" id="' +
@@ -664,6 +719,16 @@ export function renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat,
       '-tbody"></tbody></table></div>';
 
     dyn.appendChild(section);
+
+    (function (capturedJob, capturedRows, capturedTableIndicators, capturedDisplayMode, capturedFilterSummary, capturedJobId) {
+      var csvBtn = section.querySelector(".comparaison-export-csv-btn");
+      if (csvBtn) {
+        csvBtn.addEventListener("click", function () {
+          var st = S.sortByTable[capturedJobId] || { key: null, desc: true };
+          exportTableToCsv(capturedJob, capturedRows, capturedTableIndicators, capturedDisplayMode, capturedFilterSummary, st.key, st.desc);
+        });
+      }
+    })(job, rows, tableIndicators, displayMode, filterSummary, jobId);
 
     var tbodyEl = document.getElementById(jobId + "-tbody");
     var theadEl = document.getElementById(jobId + "-thead");

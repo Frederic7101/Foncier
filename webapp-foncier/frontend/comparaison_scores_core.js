@@ -338,6 +338,45 @@ import {
           });
         }
 
+        function buildFilterSummary() {
+          var catEl = document.getElementById("comparaison-categorie");
+          var cat = catEl ? catEl.value : "rentabilite";
+          var periodeDvfEl = document.getElementById("comparaison-periode-dvf");
+          var periodeDvf = periodeDvfEl ? parseInt(String(periodeDvfEl.value || "1"), 10) : 1;
+          var parts = [];
+          var periodeMap = { 1: "1 an", 2: "2 ans", 3: "3 ans", 5: "5 ans" };
+          parts.push("Période DVF : " + (periodeMap[periodeDvf] || (periodeDvf + " an(s)")));
+          var nbLocauxMinEl = document.getElementById("comparaison-nb-locaux-min");
+          var nbLocauxMinRaw = nbLocauxMinEl ? String(nbLocauxMinEl.value || "").trim() : "";
+          var nbLocauxMin = nbLocauxMinRaw === "" ? NaN : parseInt(nbLocauxMinRaw, 10);
+          if (Number.isFinite(nbLocauxMin) && nbLocauxMin > 0) {
+            parts.push("Nb locaux min : " + nbLocauxMin);
+          }
+          if (cat === "rentabilite") {
+            var rbMinEl = document.getElementById("comparaison-renta-brute-min");
+            var rnMinEl = document.getElementById("comparaison-renta-nette-min");
+            var rbMinRaw = rbMinEl ? String(rbMinEl.value || "").trim().replace(",", ".") : "";
+            var rnMinRaw = rnMinEl ? String(rnMinEl.value || "").trim().replace(",", ".") : "";
+            var rbMin = rbMinRaw === "" ? NaN : parseFloat(rbMinRaw);
+            var rnMin = rnMinRaw === "" ? NaN : parseFloat(rnMinRaw);
+            if (Number.isFinite(rbMin) && rbMin > 0) {
+              parts.push("Renta brute min : " + rbMinRaw.replace(".", ",") + " %");
+            }
+            if (Number.isFinite(rnMin) && rnMin > 0) {
+              parts.push("Renta nette min : " + rnMinRaw.replace(".", ",") + " %");
+            }
+          }
+          var dKmEl = document.getElementById("distances-max-km");
+          var dMinEl = document.getElementById("distances-max-minutes");
+          var dKmRaw = dKmEl ? String(dKmEl.value || "").trim().replace(",", ".") : "";
+          var dMinRaw = dMinEl ? String(dMinEl.value || "").trim().replace(",", ".") : "";
+          var dKm = dKmRaw === "" ? NaN : parseFloat(dKmRaw);
+          var dMin = dMinRaw === "" ? NaN : parseFloat(dMinRaw);
+          if (Number.isFinite(dKm) && dKm > 0) parts.push("Distance max : " + dKmRaw.replace(".", ",") + " km");
+          if (Number.isFinite(dMin) && dMin > 0) parts.push("Trajet max : " + dMinRaw.replace(".", ",") + " min");
+          return parts.join(" · ");
+        }
+
         function runComparaison() {
           var mode = getComparaisonMode();
           var cat = document.getElementById("comparaison-categorie").value;
@@ -561,7 +600,8 @@ import {
                   displayMode: displayMode,
                   cat: cat,
                   displayIndicators: displayIndicators,
-                  theadPrefix: theadPrefix
+                  theadPrefix: theadPrefix,
+                  filterSummary: buildFilterSummary()
                 };
                 if (hasRenderableTable) {
                   renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat, displayIndicators, theadPrefix);
@@ -805,6 +845,7 @@ import {
               S.lastDistanceOverlay = buildDistanceOverlayFromResults(results);
               S.lastComparaisonDistanceScopeKey = buildComparaisonDistanceScopeKey();
               if (!S.lastRenderTableArgs) return;
+              S.lastRenderTableArgs.filterSummary = buildFilterSummary();
               renderComparaisonTables(
                 S.lastRenderTableArgs.jobs,
                 S.lastRenderTableArgs.rowsByFilterKey,
@@ -814,7 +855,7 @@ import {
                 S.lastRenderTableArgs.theadPrefix
               );
               if (
-                S.mapViz.mode === "communes" &&
+                S.lastRenderTableArgs.displayMode === "communes" &&
                 S.mapViz.lastCommuneMapScorePrincipal != null &&
                 S.lastComparaisonJobs &&
                 S.lastComparaisonJobs.length
@@ -829,6 +870,7 @@ import {
             onDistanceCleared: function () {
               S.lastDistanceOverlay = null;
               if (!S.lastRenderTableArgs) return;
+              S.lastRenderTableArgs.filterSummary = buildFilterSummary();
               renderComparaisonTables(
                 S.lastRenderTableArgs.jobs,
                 S.lastRenderTableArgs.rowsByFilterKey,
@@ -838,7 +880,7 @@ import {
                 S.lastRenderTableArgs.theadPrefix
               );
               if (
-                S.mapViz.mode === "communes" &&
+                S.lastRenderTableArgs.displayMode === "communes" &&
                 S.mapViz.lastCommuneMapScorePrincipal != null &&
                 S.lastComparaisonJobs &&
                 S.lastComparaisonJobs.length

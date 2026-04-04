@@ -267,11 +267,13 @@
           <div id="comparaison-panel-maps" role="tabpanel" aria-labelledby="comparaison-tab-maps" class="comparaison-panel" hidden>
         <section class="comparaison-map-wrap" id="comparaison-map-wrap" aria-hidden="true">
           <h3 class="comparaison-map-title" id="comparaison-map-main-title">Cartes — indicateur principal</h3>
+          <p id="comparaison-map-filter-summary" class="comparaison-map-filter-summary" hidden></p>
           <div id="comparaison-commune-map-subtabs" role="tablist" aria-label="Vue des cartes communales" hidden>
             <button type="button" role="tab" class="is-active" data-commune-map-tab="dept" id="comparaison-commune-tab-dept" aria-selected="true">Par département</button>
             <button type="button" role="tab" data-commune-map-tab="region" id="comparaison-commune-tab-region" aria-selected="false">Par région</button>
             <button type="button" role="tab" data-commune-map-tab="france" id="comparaison-commune-tab-france" aria-selected="false">France métropolitaine</button>
           </div>
+          <button type="button" id="btn-export-map-jpg" class="comparaison-export-map-btn" hidden>Exporter JPG</button>
           <div id="comparaison-maps-zone" class="comparaison-maps-zone"></div>
           <div id="comparaison-score-map-single" style="display: none;"></div>
           <div id="comparaison-communes-maps-grid" hidden></div>

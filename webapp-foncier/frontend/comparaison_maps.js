@@ -153,19 +153,23 @@ function parseLegendNumberInput(raw) {
 
 function createIgnBaseLayer() {
   // Fond IGN détaillé (PLAN IGN v2) via WMTS Géoplateforme.
+  // crossOrigin: "anonymous" nécessaire pour pouvoir dessiner les tuiles dans un canvas (export JPG).
   return L.tileLayer(
     (S.API_BASE || "") + "/api/ign-tiles/{z}/{x}/{y}.png",
     {
       maxZoom: 19,
       tileSize: 256,
+      crossOrigin: "anonymous",
       attribution: '&copy; <a href="https://www.ign.fr/" target="_blank" rel="noopener noreferrer">IGN</a> (cache local)'
     }
   );
 }
 
 function createOsmFallbackLayer() {
+  // crossOrigin: "anonymous" — OSM envoie Access-Control-Allow-Origin: *, requis pour canvas.
   return L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 19,
+    crossOrigin: "anonymous",
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">OpenStreetMap</a>'
   });
 }
@@ -270,10 +274,14 @@ export function clearComparaisonMap() {
   var status = document.getElementById("comparaison-map-status");
   var communeHint = document.getElementById("comparaison-map-commune-legend-hint");
   var subTabs = document.getElementById("comparaison-commune-map-subtabs");
+  var filterSummaryEl = document.getElementById("comparaison-map-filter-summary");
+  var exportBtn = document.getElementById("btn-export-map-jpg");
   if (mapWrap) mapWrap.setAttribute("aria-hidden", "true");
   if (legend) legend.hidden = true;
   if (communeHint) communeHint.hidden = true;
   if (subTabs) subTabs.hidden = true;
+  if (filterSummaryEl) filterSummaryEl.hidden = true;
+  if (exportBtn) exportBtn.hidden = true;
   if (status) status.textContent = "";
   resetComparaisonMapVisuals();
   S.mapViz.mode = null;
@@ -1586,6 +1594,302 @@ function renderCommuneRegionMapsMulti(jobs, rowsByFilterKey, min, max) {
     });
 }
 
+function _parseLeafletTx(styleTransform) {
+  if (!styleTransform) return [0, 0];
+  var m = styleTransform.match(/translate3d\(\s*([-\d.]+)px\s*,\s*([-\d.]+)px/);
+  if (!m) m = styleTransform.match(/translate\(\s*([-\d.]+)px\s*,\s*([-\d.]+)px/);
+  return m ? [parseFloat(m[1]) || 0, parseFloat(m[2]) || 0] : [0, 0];
+}
+
+/**
+ * Capture une carte Leaflet en canvas :
+ *  1. Tuiles de fond (même origine → drawImage direct, pas de CORS)
+ *  2. Overlay SVG polygones (viewBox recalculé depuis les transforms cumulées)
+ */
+function captureLeafletMapFull(leafletContainer) {
+  return new Promise(function (resolve) {
+    /* getBoundingClientRect est plus fiable que clientWidth pour les éléments
+       avec des tailles CSS complexes (ex. France --france-met h:520px) */
+    var rect = leafletContainer.getBoundingClientRect();
+    var w = Math.round(rect.width) || leafletContainer.offsetWidth;
+    var h = Math.round(rect.height) || leafletContainer.offsetHeight;
+    if (!w || !h) { resolve(null); return; }
+
+    var SCALE = 2;
+    var canvas = document.createElement("canvas");
+    canvas.width = w * SCALE;
+    canvas.height = h * SCALE;
+    var ctx = canvas.getContext("2d");
+    ctx.scale(SCALE, SCALE);
+    ctx.fillStyle = "#f8fafc";
+    ctx.fillRect(0, 0, w, h);
+
+    // Transforms cumulés : mapPane > overlayPane > svg
+    // Référence de position : coin supérieur gauche du conteneur Leaflet à l'écran.
+    // getBoundingClientRect() intègre TOUS les transforms CSS de la hiérarchie DOM,
+    // éliminant le besoin de recalculer mp / tp / sp à la main.
+    var cLeft = rect.left;
+    var cTop  = rect.top;
+
+    // 1. Tuiles de fond (crossOrigin:"anonymous" positionné sur les couches IGN et OSM)
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.clip();
+    var tilePane = leafletContainer.querySelector(".leaflet-tile-pane");
+    if (tilePane) {
+      tilePane.querySelectorAll("img.leaflet-tile, img.leaflet-tile-loaded").forEach(function (tile) {
+        if (!tile.complete || !tile.naturalWidth) return;
+        var tr = tile.getBoundingClientRect();
+        var tx = tr.left - cLeft;
+        var ty = tr.top  - cTop;
+        var tw = tr.width  || tile.naturalWidth  || 256;
+        var th = tr.height || tile.naturalHeight || 256;
+        try { ctx.drawImage(tile, tx, ty, tw, th); } catch (e) {}
+      });
+    }
+    ctx.restore();
+
+    // 2. Overlay SVG (polygones)
+    // Utiliser getBoundingClientRect() sur le SVG lui-même pour obtenir sa position/taille réelles,
+    // puis conserver le viewBox natif de Leaflet pour le mappage coordonnées→pixels.
+    var svg = leafletContainer.querySelector(".leaflet-overlay-pane svg");
+    if (!svg) { resolve(canvas); return; }
+
+    var svgSR = svg.getBoundingClientRect();
+    var svgX  = svgSR.left - cLeft;
+    var svgY  = svgSR.top  - cTop;
+    var svgW  = svgSR.width  || w;
+    var svgH  = svgSR.height || h;
+
+    var svgClone = svg.cloneNode(true);
+    svgClone.style.cssText = "";
+    svgClone.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+    // viewBox, width et height natifs de Leaflet conservés intacts.
+
+    var svgStr = new XMLSerializer().serializeToString(svgClone);
+    var url = URL.createObjectURL(new Blob([svgStr], { type: "image/svg+xml;charset=utf-8" }));
+    var img = new Image();
+    img.onload = function () {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(0, 0, w, h);
+      ctx.clip();
+      ctx.drawImage(img, svgX, svgY, svgW, svgH);
+      ctx.restore();
+      URL.revokeObjectURL(url);
+      resolve(canvas);
+    };
+    img.onerror = function () { URL.revokeObjectURL(url); resolve(canvas); };
+    img.src = url;
+  });
+}
+
+function _composeMapExportCanvas(captured, titleText, filterSummaryText, legendMinText, legendMaxText, hasLegend, hasHint) {
+  var SCALE = 2;
+  var MARGIN = 24;
+  var LABEL_H = 18;
+  var nMaps = captured.length;
+  var COLS = nMaps <= 1 ? 1 : nMaps <= 4 ? 2 : 3;
+  var ROWS = Math.ceil(nMaps / COLS);
+  var mapW = Math.round(captured[0].canvas.width / SCALE);
+  var mapH = Math.round(captured[0].canvas.height / SCALE);
+  var contentW = COLS * mapW + (COLS - 1) * MARGIN;
+  var totalW = contentW + 2 * MARGIN;
+  var headerH = MARGIN + 20 + (filterSummaryText ? 18 : 0) + MARGIN * 0.5;
+  var gridH = ROWS * (LABEL_H + mapH) + Math.max(0, ROWS - 1) * MARGIN;
+  var legendH = hasLegend ? (hasHint ? 92 : 60) : 0;
+  var totalH = Math.ceil(headerH + gridH + (legendH ? MARGIN + legendH : 0) + MARGIN);
+
+  var canvas = document.createElement("canvas");
+  canvas.width = totalW * SCALE;
+  canvas.height = totalH * SCALE;
+  var ctx = canvas.getContext("2d");
+  ctx.scale(SCALE, SCALE);
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, totalW, totalH);
+
+  // Titre
+  var y = MARGIN + 16;
+  ctx.font = "bold 16px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+  ctx.fillStyle = "#1e293b";
+  ctx.fillText(titleText, MARGIN, y);
+
+  if (filterSummaryText) {
+    y += 18;
+    ctx.font = "11px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+    ctx.fillStyle = "#64748b";
+    ctx.fillText(filterSummaryText, MARGIN, y);
+  }
+  y += MARGIN * 0.75;
+
+  // Grille de cartes
+  captured.forEach(function (item, i) {
+    var col = i % COLS;
+    var row = Math.floor(i / COLS);
+    var x = MARGIN + col * (mapW + MARGIN);
+    var ry = y + row * (LABEL_H + mapH + MARGIN);
+    if (item.label) {
+      ctx.font = "bold 10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+      ctx.fillStyle = "#374151";
+      var lbl = item.label.length > 70 ? item.label.substring(0, 67) + "\u2026" : item.label;
+      ctx.fillText(lbl, x, ry + 11);
+    }
+    ctx.drawImage(item.canvas, 0, 0, item.canvas.width, item.canvas.height, x, ry + LABEL_H, mapW, mapH);
+    ctx.strokeStyle = "#d1d5db";
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(x, ry + LABEL_H, mapW, mapH);
+  });
+
+  // Barre de légende (dégradé exact de scoreColor / CSS)
+  if (hasLegend) {
+    var legendY = y + ROWS * (LABEL_H + mapH + MARGIN) - MARGIN * 0.5;
+    var barW = contentW; // pleine largeur du contenu
+    var barH = 14;
+    var lx = MARGIN;
+    // Dégradé
+    var grad = ctx.createLinearGradient(lx, legendY, lx + barW, legendY);
+    grad.addColorStop(0,    "#f0fdf4");
+    grad.addColorStop(0.25, "#bbf7d0");
+    grad.addColorStop(0.50, "#4ade80");
+    grad.addColorStop(0.75, "#16a34a");
+    grad.addColorStop(1,    "#14532d");
+    ctx.fillStyle = grad;
+    ctx.fillRect(lx, legendY, barW, barH);
+    ctx.strokeStyle = "#d1d5db";
+    ctx.lineWidth = 0.5;
+    ctx.strokeRect(lx, legendY, barW, barH);
+    // Graduations lues depuis le DOM
+    var ticksEl = document.getElementById("comparaison-map-legend-ticks");
+    var tickTopY = legendY + barH + 2;
+    if (ticksEl) {
+      var tickEls = ticksEl.querySelectorAll(".tick");
+      ctx.font = "9px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+      ctx.textAlign = "center";
+      tickEls.forEach(function (tick) {
+        var leftPct = parseFloat(tick.style.left) || 0; // "20%" → 20
+        var tx = lx + (leftPct / 100) * barW;
+        // Petite barre verticale
+        ctx.fillStyle = "#9ca3af";
+        ctx.fillRect(tx - 0.5, tickTopY, 1, 5);
+        // Valeur
+        ctx.fillStyle = "#6b7280";
+        ctx.fillText(tick.textContent.trim(), tx, tickTopY + 5 + 9);
+      });
+      ctx.textAlign = "left";
+    }
+    // Étiquettes Min / Max sous les ticks
+    var labelsY = tickTopY + 5 + 9 + 5;
+    ctx.font = "10px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+    ctx.fillStyle = "#4b5563";
+    ctx.textAlign = "left";
+    ctx.fillText(legendMinText, lx, labelsY);
+    ctx.textAlign = "right";
+    ctx.fillText(legendMaxText, lx + barW, labelsY);
+    ctx.textAlign = "left";
+
+    // Cases colorées (légende des couleurs des polygones — mode communes)
+    var communeHintEl = document.getElementById("comparaison-map-commune-legend-hint");
+    if (hasHint && communeHintEl) {
+      var hintItems   = communeHintEl.querySelectorAll(".legend-item");
+      var hintSwatches = communeHintEl.querySelectorAll(".commune-legend-swatch");
+      var swatchSz   = 10;
+      var hintStartY = labelsY + 14;    // une ligne sous Min/Max
+      var itemColW   = Math.floor(contentW / 2); // 2 colonnes
+      ctx.font = "9px -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+      ctx.textAlign = "left";
+      hintItems.forEach(function (item, idx) {
+        var col = idx % 2;
+        var row = Math.floor(idx / 2);
+        var ix = lx + col * itemColW;
+        var iy = hintStartY + row * 16;
+        var swatch = hintSwatches[idx];
+        var bg     = swatch ? swatch.style.background     : "#d1d5db";
+        var border = swatch ? swatch.style.borderColor    : "#9ca3af";
+        // Tracé du carré coloré (gradient ou couleur unie)
+        if (bg.indexOf("gradient") >= 0) {
+          var gr = ctx.createLinearGradient(ix, iy, ix + swatchSz, iy + swatchSz);
+          gr.addColorStop(0, "#bbf7d0");
+          gr.addColorStop(1, "#16a34a");
+          ctx.fillStyle = gr;
+        } else {
+          ctx.fillStyle = bg;
+        }
+        ctx.fillRect(ix, iy, swatchSz, swatchSz);
+        ctx.strokeStyle = border || "#9ca3af";
+        ctx.lineWidth = 0.5;
+        ctx.strokeRect(ix, iy, swatchSz, swatchSz);
+        // Libellé
+        var text = item.textContent.trim().replace(/\s+/g, " ");
+        ctx.fillStyle = "#374151";
+        ctx.fillText(text, ix + swatchSz + 4, iy + 8);
+      });
+    }
+  }
+  return canvas;
+}
+
+function exportMapAsJpg() {
+  var mapWrap = document.getElementById("comparaison-map-wrap");
+  if (!mapWrap) return;
+  var exportBtn = document.getElementById("btn-export-map-jpg");
+  if (exportBtn) { exportBtn.disabled = true; exportBtn.textContent = "Export\u2026"; }
+
+  var items = [];
+  mapWrap.querySelectorAll(".comparaison-commune-map-card").forEach(function (card) {
+    var lc = card.querySelector(".leaflet-container");
+    if (!lc) return;
+    var h4 = card.querySelector("h4");
+    items.push({ label: h4 ? h4.textContent.trim() : "", container: lc });
+  });
+  mapWrap.querySelectorAll(".comparaison-map-card-choro").forEach(function (card) {
+    var lc = card.querySelector(".leaflet-container");
+    if (!lc) return;
+    var head = card.querySelector(".card-head");
+    items.push({ label: head ? head.textContent.trim() : "", container: lc });
+  });
+
+  if (!items.length) {
+    if (exportBtn) { exportBtn.disabled = false; exportBtn.textContent = "Exporter JPG"; }
+    alert("Aucune carte disponible pour l\u2019export.");
+    return;
+  }
+
+  var titleEl = document.getElementById("comparaison-map-main-title");
+  var filterSummaryEl = document.getElementById("comparaison-map-filter-summary");
+  var legendEl = document.getElementById("comparaison-map-legend");
+  var legendMinEl = document.getElementById("comparaison-map-legend-min");
+  var legendMaxEl = document.getElementById("comparaison-map-legend-max");
+  var titleText = titleEl ? titleEl.textContent.trim() : "Cartes";
+  var filterSummaryText = (filterSummaryEl && !filterSummaryEl.hidden) ? filterSummaryEl.textContent.trim() : "";
+  var legendMinText = legendMinEl ? legendMinEl.textContent.trim() : "";
+  var legendMaxText = legendMaxEl ? legendMaxEl.textContent.trim() : "";
+  var hasLegend = !!(legendEl && !legendEl.hidden);
+  // La légende des couleurs (cases hors-périmètre/correspondance/…) s'applique
+  // à toutes les cartes communales, quel que soit le sous-onglet actif.
+  var hasHint = mapWrap.querySelectorAll(".comparaison-commune-map-card").length > 0;
+
+  Promise.all(items.map(function (item) {
+    return captureLeafletMapFull(item.container).then(function (canvas) {
+      return { label: item.label, canvas: canvas };
+    });
+  })).then(function (captured) {
+    captured = captured.filter(function (c) { return c.canvas; });
+    if (!captured.length) throw new Error("Aucune carte captur\u00e9e.");
+    var finalCanvas = _composeMapExportCanvas(captured, titleText, filterSummaryText, legendMinText, legendMaxText, hasLegend, hasHint);
+    var link = document.createElement("a");
+    link.download = "comparaison_cartes.jpg";
+    link.href = finalCanvas.toDataURL("image/jpeg", 0.92);
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(function () { document.body.removeChild(link); }, 500);
+  }).catch(function (err) {
+    alert("Impossible d\u2019exporter les cartes.\n" + (err && err.message ? err.message : String(err)));
+  }).finally(function () {
+    if (exportBtn) { exportBtn.disabled = false; exportBtn.textContent = "Exporter JPG"; }
+  });
+}
+
 export function renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePrincipal, opts) {
   opts = opts || {};
   if (opts.preserveLegendBounds === undefined) opts.preserveLegendBounds = true;
@@ -1665,6 +1969,21 @@ export function renderComparaisonMap(jobs, rowsByFilterKey, displayMode, scorePr
   mapWrap.removeAttribute("aria-hidden");
   if (status) status.textContent = "Chargement des cartes…";
   if (titleEl) titleEl.textContent = "Cartes — " + getScoreLabel(scorePrincipal);
+
+  var _filterSummary = S.lastRenderTableArgs ? (S.lastRenderTableArgs.filterSummary || "") : "";
+  var _filterSummaryEl = document.getElementById("comparaison-map-filter-summary");
+  if (_filterSummaryEl) {
+    _filterSummaryEl.textContent = _filterSummary;
+    _filterSummaryEl.hidden = !_filterSummary;
+  }
+  var _exportBtn = document.getElementById("btn-export-map-jpg");
+  if (_exportBtn) {
+    _exportBtn.hidden = false;
+    if (!_exportBtn._wired) {
+      _exportBtn._wired = true;
+      _exportBtn.addEventListener("click", exportMapAsJpg);
+    }
+  }
 
   var allValues = [];
   mapJobs.forEach(function (job) {
