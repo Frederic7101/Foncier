@@ -1215,6 +1215,8 @@ def _tuple_params_indicateurs_communes(row: dict) -> tuple:
 def _append_tranche_floats_from_db_row(r: dict, dest: dict) -> None:
     for k in TRANCHE_RENTA_COLS:
         dest[k] = float(r[k]) if r.get(k) is not None else None
+    for k in NB_LOCAUX_TRANCHE_COLS:
+        dest[k] = int(r[k]) if r.get(k) is not None else None
 
 
 def _build_upsert_indicateurs_depts_sql() -> str:
@@ -2646,6 +2648,8 @@ def _indicators_from_fiche_payload(
         taux_tfb = fiche["fiscalite"][0].get("taux_tfb")
         taux_teom = fiche["fiscalite"][0].get("taux_teom")
     tr_flat = _flatten_tranche_nested_to_indicator_row(fiche.get("rentabilite_tranches"))
+    _debug_log("[indicators] code_insee=%s nb_locaux_maisons_s1=%s nb_locaux_agg_s1=%s from tr_flat",
+               code_insee, tr_flat.get("nb_locaux_maisons_s1"), tr_flat.get("nb_locaux_agg_s1"))
     nb_ventes_dvf = None
     mpp0 = fiche.get("rentabilite_mediane_par_periode") or {}
     if isinstance(mpp0, dict) and mpp0.get("1"):
@@ -2817,7 +2821,8 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
         "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
         "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
         "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
-        + ", ".join(TRANCHE_RENTA_COLS)
+        + ", ".join(TRANCHE_RENTA_COLS) + ", "
+        + ", ".join(NB_LOCAUX_TRANCHE_COLS)
         + ", taux_tfb, taux_teom FROM foncier.indicateurs_communes WHERE code_insee IN "
     )
     for i in range(0, len(code_insee_list), _READ_INDIC_CHUNK_SIZE):
@@ -2892,6 +2897,12 @@ _INDIC_ALL_SCORE_COLS = _INDIC_RENTA_BASE_COLS + TRANCHE_RENTA_COLS + NB_LOCAUX_
 _indic_communes_cols_cache: Optional[Set[str]] = None
 
 
+def _invalidate_indic_cols_cache() -> None:
+    """Force le rechargement du cache de colonnes au prochain appel."""
+    global _indic_communes_cols_cache
+    _indic_communes_cols_cache = None
+
+
 def _get_indic_communes_existing_cols(cur) -> Optional[Set[str]]:
     """Retourne l'ensemble des colonnes existantes dans foncier.indicateurs_communes (mis en cache).
     Retourne None si la requête échoue (on inclura alors toutes les colonnes sans filtrage)."""
@@ -2904,6 +2915,8 @@ def _get_indic_communes_existing_cols(cur) -> Optional[Set[str]]:
             "WHERE table_schema = 'foncier' AND table_name = 'indicateurs_communes'"
         )
         _indic_communes_cols_cache = {r["column_name"] for r in cur.fetchall()}
+        _debug_log("[col-cache] colonnes indicateurs_communes: %d colonnes, nb_locaux_maisons_s1 present=%s",
+                   len(_indic_communes_cols_cache), "nb_locaux_maisons_s1" in _indic_communes_cols_cache)
         return _indic_communes_cols_cache
     except psycopg2.Error:
         return None  # Ne pas mettre en cache l'échec — réessayera à la prochaine requête
@@ -2969,6 +2982,9 @@ def _read_indicateurs_by_scope(
         data_cols = _requested_data
         extra = ["indicateurs_par_periode"] if need_periode else []
     all_cols = id_cols + extra + data_cols
+    _nb_loc_in_data = [c for c in data_cols if c.startswith("nb_locaux")]
+    _debug_log("[read-indic] score_cols=%s data_cols(nb_locaux)=%s existing_cols_has_cache=%s",
+               score_cols, _nb_loc_in_data, existing_cols is not None)
     select_sql = "SELECT " + ", ".join(all_cols) + " FROM foncier.indicateurs_communes"
 
     # Construire WHERE
@@ -4124,6 +4140,7 @@ def refresh_indicateurs(
             status_code=400,
             detail=f"Paramètre inconnu: '{bad}'. Utilisez 'code_insee_list' (sans 'e' final). {_REFRESH_INDICATEURS_USAGE}",
         )
+    _invalidate_indic_cols_cache()
     return _refresh_indicateurs_impl(code_insee_list, limit, batch_commit, workers)
 
 
@@ -4242,6 +4259,8 @@ def force_recalcul_indicateurs(
             raise HTTPException(status_code=400, detail="En mode régions, fournir au moins un code_region.")
         return refresh_indicateurs_agreges(code_dept_list=None, code_region_list=targets, refresh_all=False, force=True)
 
+    # Invalider le cache de colonnes (les migrations ont pu ajouter des colonnes depuis le dernier appel)
+    _invalidate_indic_cols_cache()
     # mode=communes
     depts = [str(x or "").strip() for x in (code_dept or [])]
     postals = [str(x or "").strip() for x in (code_postal or [])]

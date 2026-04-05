@@ -102,8 +102,10 @@ export function jobHasDisplayableData(rows, job, cat, displayIndicators) {
   if (!rows || !rows.length) return false;
   var tableIndicators = computeTableIndicatorsForJob(job, cat, displayIndicators);
   if (!tableIndicators.length) return false;
+  // Au moins une ligne doit avoir un indicateur score non-NULL
+  // (on ignore les raccourcis nb_locaux globaux qui sont presque toujours renseignés)
   return rows.some(function (r) {
-    return rowHasNumericIndicator(r, tableIndicators);
+    return rowHasNumericScoreInTableColumns(r, tableIndicators);
   });
 }
 

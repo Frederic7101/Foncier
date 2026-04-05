@@ -188,6 +188,50 @@ export function buildMapJobs(scorePrincipal, cat) {
       });
     });
   }
+  // --- Croisements 2 dimensions ---
+  if (showType && showSurf) {
+    types.forEach(function (t) {
+      if (t.code === "TOUS") return;
+      surfs.forEach(function (s) {
+        if (s.code === "TOUTES") return;
+        jobs.push({
+          groupTitle: "Type de local \u00d7 Surface",
+          cardTitle: t.libelle + " / " + s.libelle,
+          scoreKey: resolveFullRentabiliteScoreKey(scorePrincipal, t.code, s.code, selP, cat),
+          footnote:
+            cat === "rentabilite" && !isRentabiliteTypeSupported(t.code)
+              ? "Rentabilit\u00e9 non calcul\u00e9e pour ce code de type."
+              : null,
+          criteriaLine: "Pi\u00e8ces : " + refLibelle(pieces, selP),
+          filterKey: makeFilterKey(t.code, s.code, selP),
+          typeCodeForColumns: t.code
+        });
+      });
+    });
+  }
+  if (showType && showPieces) {
+    types.forEach(function (t) {
+      if (t.code === "TOUS") return;
+      pieces.forEach(function (p) {
+        if (p.code === "TOUS") return;
+        jobs.push({
+          groupTitle: "Type de local \u00d7 Nombre de pi\u00e8ces",
+          cardTitle: t.libelle + " / " + p.libelle,
+          scoreKey: resolveFullRentabiliteScoreKey(scorePrincipal, t.code, selS, p.code, cat),
+          footnote:
+            cat === "rentabilite" && !isRentabiliteTypeSupported(t.code)
+              ? "Rentabilit\u00e9 non calcul\u00e9e pour ce code de type."
+              : null,
+          criteriaLine: "Surface : " + refLibelle(surfs, selS),
+          filterKey: makeFilterKey(t.code, selS, p.code),
+          typeCodeForColumns: t.code
+        });
+      });
+    });
+  }
+  // Note : les croisements Surface \u00d7 Pi\u00e8ces et Type \u00d7 Surface \u00d7 Pi\u00e8ces
+  // ne sont pas g\u00e9n\u00e9r\u00e9s car la base ne dispose pas de colonnes crois\u00e9es s_t
+  // (ex. renta_nette_agg_s3_t2). Les donn\u00e9es seraient identiques \u00e0 la tranche surface seule.
   return jobs;
 }
 
