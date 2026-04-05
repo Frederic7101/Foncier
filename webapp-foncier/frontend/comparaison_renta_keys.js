@@ -48,6 +48,25 @@ export function resolveTypeScoreKey(scorePrincipal, typeCode, cat) {
  * Priorité surface si les deux sont renseignés (aligné vf_communes / backend).
  * Pas de repli sur l’agrégat sans tranche : clés dédiées ou indisponible.
  */
+/**
+ * Retourne la colonne nb_locaux appropriée pour un score_principal donné.
+ * Phase 1 : type de local (maisons / appts). Phase 2 étend aux tranches s/t.
+ */
+export function resolveNbLocauxKey(scoreKey) {
+  if (!scoreKey) return "nb_locaux";
+  if (scoreKey === S.RENTA_UNAVAILABLE_KEY) return "nb_locaux_na";
+  var m = scoreKey.match(/_(maisons|appts|agg)_(s[1-5]|t[1-5])$/);
+  if (m) return "nb_locaux_" + m[1] + "_" + m[2];
+  if (scoreKey.indexOf("_maisons") !== -1) return "nb_locaux_maisons";
+  if (scoreKey.indexOf("_appts") !== -1) return "nb_locaux_appts";
+  // Types sans colonne nb_locaux dédiée → clé inexistante dans les données → affiche "—"
+  if (scoreKey.indexOf("_parking") !== -1) return "nb_locaux_parking";
+  if (scoreKey.indexOf("_local_indus") !== -1) return "nb_locaux_local_indus";
+  if (scoreKey.indexOf("_terrain") !== -1) return "nb_locaux_terrain";
+  if (scoreKey.indexOf("_immeuble") !== -1) return "nb_locaux_immeuble";
+  return "nb_locaux";
+}
+
 export function resolveFullRentabiliteScoreKey(scorePrincipal, typeLogt, typeSurf, nbPieces, cat) {
   if (cat !== "rentabilite") return scorePrincipal;
   var sp = String(scorePrincipal || "renta_nette");

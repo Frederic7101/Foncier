@@ -15,7 +15,8 @@ import {
 import {
   rentaKeyPairForTypeLogt,
   isRentabiliteTypeSupported,
-  resolveFullRentabiliteScoreKey
+  resolveFullRentabiliteScoreKey,
+  resolveNbLocauxKey
 } from "./comparaison_renta_keys.js";
 
 function getTableKeyMapForTypeCode(typeCode, cat, typeSurf, nbPieces) {
@@ -75,6 +76,8 @@ function computeTableIndicatorsForJob(job, cat, displayIndicators) {
 
 function rowHasNumericIndicator(row, tableIndicators) {
   if (row.nb_locaux != null && row.nb_locaux !== "" && Number.isFinite(Number(row.nb_locaux))) return true;
+  if (row.nb_locaux_maisons != null && Number.isFinite(Number(row.nb_locaux_maisons))) return true;
+  if (row.nb_locaux_appts != null && Number.isFinite(Number(row.nb_locaux_appts))) return true;
   for (var i = 0; i < tableIndicators.length; i++) {
     var k = tableIndicators[i].key;
     if (k === S.RENTA_UNAVAILABLE_KEY) continue;
@@ -116,7 +119,7 @@ function getMapScoreColumnKeysForJob(job, cat, displayIndicators) {
         return ti.key;
       })
       .filter(function (k) {
-        return k && k !== S.RENTA_UNAVAILABLE_KEY && k !== "nb_locaux";
+        return k && k !== S.RENTA_UNAVAILABLE_KEY && k.indexOf("nb_locaux") !== 0;
       });
   }
   /* Même repli que getEffectiveMapScoreKeyForJob : si le keyMap ne donne que des colonnes
@@ -220,7 +223,7 @@ function renderTablePage(tbodyEl, sorted, indicators, displayMode, page) {
     var region = row.region || row.reg_nom || "—";
     var cells = indicators.map(function (ind) {
       var v = row[ind.key];
-      if (ind.key === "nb_locaux") {
+      if (ind.key === "nb_locaux" || ind.key.indexOf("nb_locaux_") === 0) {
         return "<td class=\"col-num\">" + formatNbLocaux(v) + "</td>";
       }
       if (ind.key === "_distance_km") {
@@ -650,12 +653,13 @@ export function renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat,
     if (tableIndicators.length === 0) return;
     if (!jobHasDisplayableData(rowsRaw, job, cat, displayIndicators)) return;
     if (cat === "rentabilite") {
+      var nbLocauxKey = resolveNbLocauxKey(job.scoreKey);
       tableIndicators = [
-        { key: "nb_locaux", label: "Nb locaux vendus" }
+        { key: nbLocauxKey, label: "Nb locaux vendus" }
       ].concat(tableIndicators);
       var firstScoreIdx = -1;
       for (var si = 0; si < tableIndicators.length; si++) {
-        if (tableIndicators[si].key !== "nb_locaux") {
+        if (tableIndicators[si].key !== nbLocauxKey) {
           firstScoreIdx = si;
           break;
         }

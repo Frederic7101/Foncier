@@ -43,6 +43,8 @@ BEGIN
     prix_med_T5, surf_med_T5, prix_m2_w_T5,
     nb_ventes_var_pct, prix_moyen_var_pct, surface_moyenne_var_pct,
     prix_moyen_m2_var_pct, prix_m2_mediane_var_pct, surface_mediane_var_pct,
+    nb_ventes_s1, nb_ventes_s2, nb_ventes_s3, nb_ventes_s4, nb_ventes_s5,
+    nb_ventes_t1, nb_ventes_t2, nb_ventes_t3, nb_ventes_t4, nb_ventes_t5,
     last_refreshed
   )
   SELECT
@@ -64,6 +66,8 @@ BEGIN
     LEAST(GREATEST(ROUND((g.prix_m2_moyenne - IFNULL(p.prix_moyen_m2_prev,0))    / NULLIF(p.prix_moyen_m2_prev,0)    * 100, 2), -9999999.99), 9999999.99),
     LEAST(GREATEST(ROUND((q.prix_m2_mediane - IFNULL(p.prix_m2_mediane_prev,0))  / NULLIF(p.prix_m2_mediane_prev,0)  * 100, 2), -9999999.99), 9999999.99),
     LEAST(GREATEST(ROUND((ms.surface_mediane - IFNULL(p.surface_mediane_prev,0))  / NULLIF(p.surface_mediane_prev,0)  * 100, 2), -9999999.99), 9999999.99),
+    cnt_s.nb_ventes_s1, cnt_s.nb_ventes_s2, cnt_s.nb_ventes_s3, cnt_s.nb_ventes_s4, cnt_s.nb_ventes_s5,
+    cnt_t.nb_ventes_t1, cnt_t.nb_ventes_t2, cnt_t.nb_ventes_t3, cnt_t.nb_ventes_t4, cnt_t.nb_ventes_t5,
     CURRENT_TIMESTAMP
   FROM
   ( SELECT
@@ -313,6 +317,57 @@ BEGIN
     ) allt GROUP BY code_dept, code_postal, commune, type_local
   ) pvt_t ON pvt_t.code_dept=g.code_dept AND pvt_t.code_postal=g.code_postal AND pvt_t.commune=g.commune AND pvt_t.type_local=g.type_local
   LEFT JOIN (
+    -- Comptages par tranche surface S1..S5
+    SELECT code_dept, code_postal, commune, type_local,
+      SUM(CASE WHEN bucket='S1' THEN cnt ELSE 0 END) AS nb_ventes_s1,
+      SUM(CASE WHEN bucket='S2' THEN cnt ELSE 0 END) AS nb_ventes_s2,
+      SUM(CASE WHEN bucket='S3' THEN cnt ELSE 0 END) AS nb_ventes_s3,
+      SUM(CASE WHEN bucket='S4' THEN cnt ELSE 0 END) AS nb_ventes_s4,
+      SUM(CASE WHEN bucket='S5' THEN cnt ELSE 0 END) AS nb_ventes_s5
+    FROM (
+      SELECT code_dept, code_postal, commune, type_local,
+        CASE WHEN surface_reelle_bati < 25 THEN 'S1'
+             WHEN surface_reelle_bati < 35 THEN 'S2'
+             WHEN surface_reelle_bati < 45 THEN 'S3'
+             WHEN surface_reelle_bati <= 55 THEN 'S4'
+             ELSE 'S5' END AS bucket,
+        COUNT(*) AS cnt
+      FROM vf_all_ventes v
+      WHERE v.date_mutation >= CONCAT(p_year, '-01-01') AND v.date_mutation < CONCAT(p_year+1, '-01-01')
+        AND (p_code_dept IS NULL OR v.code_dept = p_code_dept)
+        AND (p_code_postal IS NULL OR v.code_postal = p_code_postal)
+        AND v.type_local IN ('Appartement','Maison') AND v.valeur_fonciere > 0 AND v.surface_reelle_bati > 0
+      GROUP BY code_dept, code_postal, commune, type_local, bucket
+    ) sc WHERE bucket IS NOT NULL
+    GROUP BY code_dept, code_postal, commune, type_local
+  ) cnt_s ON cnt_s.code_dept=g.code_dept AND cnt_s.code_postal=g.code_postal AND cnt_s.commune=g.commune AND cnt_s.type_local=g.type_local
+  LEFT JOIN (
+    -- Comptages par tranche pièces T1..T5
+    SELECT code_dept, code_postal, commune, type_local,
+      SUM(CASE WHEN bucket='T1' THEN cnt ELSE 0 END) AS nb_ventes_t1,
+      SUM(CASE WHEN bucket='T2' THEN cnt ELSE 0 END) AS nb_ventes_t2,
+      SUM(CASE WHEN bucket='T3' THEN cnt ELSE 0 END) AS nb_ventes_t3,
+      SUM(CASE WHEN bucket='T4' THEN cnt ELSE 0 END) AS nb_ventes_t4,
+      SUM(CASE WHEN bucket='T5' THEN cnt ELSE 0 END) AS nb_ventes_t5
+    FROM (
+      SELECT code_dept, code_postal, commune, type_local,
+        CASE WHEN COALESCE(nombre_pieces_principales,0) < 1.5 THEN 'T1'
+             WHEN nombre_pieces_principales < 2.5 THEN 'T2'
+             WHEN nombre_pieces_principales < 3.5 THEN 'T3'
+             WHEN nombre_pieces_principales < 4.5 THEN 'T4'
+             ELSE 'T5' END AS bucket,
+        COUNT(*) AS cnt
+      FROM vf_all_ventes v
+      WHERE v.date_mutation >= CONCAT(p_year, '-01-01') AND v.date_mutation < CONCAT(p_year+1, '-01-01')
+        AND (p_code_dept IS NULL OR v.code_dept = p_code_dept)
+        AND (p_code_postal IS NULL OR v.code_postal = p_code_postal)
+        AND v.type_local IN ('Appartement','Maison') AND v.valeur_fonciere > 0 AND v.surface_reelle_bati > 0
+        AND v.nombre_pieces_principales IS NOT NULL
+      GROUP BY code_dept, code_postal, commune, type_local, bucket
+    ) tc WHERE bucket IS NOT NULL
+    GROUP BY code_dept, code_postal, commune, type_local
+  ) cnt_t ON cnt_t.code_dept=g.code_dept AND cnt_t.code_postal=g.code_postal AND cnt_t.commune=g.commune AND cnt_t.type_local=g.type_local
+  LEFT JOIN (
     SELECT a.code_dept, a.code_postal, a.commune, a.type_local,
       a.nb_ventes_prev, a.prix_moyen_prev, a.surface_moyenne_prev, a.prix_moyen_m2_prev,
       mpr.prix_m2_mediane_prev, msr.surface_mediane_prev
@@ -393,6 +448,10 @@ BEGIN
     nb_ventes_var_pct = VALUES(nb_ventes_var_pct), prix_moyen_var_pct = VALUES(prix_moyen_var_pct),
     surface_moyenne_var_pct = VALUES(surface_moyenne_var_pct), prix_moyen_m2_var_pct = VALUES(prix_moyen_m2_var_pct),
     prix_m2_mediane_var_pct = VALUES(prix_m2_mediane_var_pct), surface_mediane_var_pct = VALUES(surface_mediane_var_pct),
+    nb_ventes_s1 = VALUES(nb_ventes_s1), nb_ventes_s2 = VALUES(nb_ventes_s2), nb_ventes_s3 = VALUES(nb_ventes_s3),
+    nb_ventes_s4 = VALUES(nb_ventes_s4), nb_ventes_s5 = VALUES(nb_ventes_s5),
+    nb_ventes_t1 = VALUES(nb_ventes_t1), nb_ventes_t2 = VALUES(nb_ventes_t2), nb_ventes_t3 = VALUES(nb_ventes_t3),
+    nb_ventes_t4 = VALUES(nb_ventes_t4), nb_ventes_t5 = VALUES(nb_ventes_t5),
     last_refreshed = VALUES(last_refreshed);
 END$$
 

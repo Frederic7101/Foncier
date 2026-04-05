@@ -14,7 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional, List, Any, Literal, Tuple, Dict
+from typing import Optional, List, Any, Literal, Tuple, Dict, Set
 
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
@@ -802,7 +802,9 @@ _VF_COMMUNES_SELECT_COLS = (
     "prix_med_s5, surf_med_s5, prix_m2_w_s5, "
     "prix_med_t1, surf_med_t1, prix_m2_w_t1, prix_med_t2, surf_med_t2, prix_m2_w_t2, "
     "prix_med_t3, surf_med_t3, prix_m2_w_t3, prix_med_t4, surf_med_t4, prix_m2_w_t4, "
-    "prix_med_t5, surf_med_t5, prix_m2_w_t5"
+    "prix_med_t5, surf_med_t5, prix_m2_w_t5, "
+    "nb_ventes_s1, nb_ventes_s2, nb_ventes_s3, nb_ventes_s4, nb_ventes_s5, "
+    "nb_ventes_t1, nb_ventes_t2, nb_ventes_t3, nb_ventes_t4, nb_ventes_t5"
 )
 
 
@@ -1014,6 +1016,11 @@ def _pick_tranche_renta_line(lignes: Optional[List[dict]]) -> dict:
     rb_m, rn_m = p("Maisons")
     rb_a, rn_a = p("Appartements")
     rb_g, rn_g = p("Maisons/Appart.")
+
+    def nb(tb: str):
+        r = by_tb.get(tb)
+        return r.get("nb_locaux") if r else None
+
     return {
         "renta_brute_maisons": rb_m,
         "renta_nette_maisons": rn_m,
@@ -1021,6 +1028,9 @@ def _pick_tranche_renta_line(lignes: Optional[List[dict]]) -> dict:
         "renta_nette_appts": rn_a,
         "renta_brute_agg": rb_g,
         "renta_nette_agg": rn_g,
+        "nb_locaux_maisons": nb("Maisons"),
+        "nb_locaux_appts": nb("Appartements"),
+        "nb_locaux_agg": nb("Maisons/Appart."),
     }
 
 
@@ -1055,6 +1065,20 @@ def _iter_tranche_renta_column_names() -> List[str]:
 
 TRANCHE_RENTA_COLS: Tuple[str, ...] = tuple(_iter_tranche_renta_column_names())
 
+
+def _iter_nb_locaux_tranche_column_names() -> List[str]:
+    out: List[str] = []
+    for i in range(1, 6):
+        s = f"s{i}"
+        out.extend([f"nb_locaux_maisons_{s}", f"nb_locaux_appts_{s}", f"nb_locaux_agg_{s}"])
+    for i in range(1, 6):
+        t = f"t{i}"
+        out.extend([f"nb_locaux_maisons_{t}", f"nb_locaux_appts_{t}", f"nb_locaux_agg_{t}"])
+    return out
+
+
+NB_LOCAUX_TRANCHE_COLS: Tuple[str, ...] = tuple(_iter_nb_locaux_tranche_column_names())
+
 _INDICATEURS_COMMUNES_DATA_COLS: Tuple[str, ...] = (
     "code_insee",
     "code_dept",
@@ -1079,7 +1103,7 @@ _INDICATEURS_COMMUNES_DATA_COLS: Tuple[str, ...] = (
     "renta_nette_terrain",
     "renta_brute_immeuble",
     "renta_nette_immeuble",
-) + TRANCHE_RENTA_COLS + ("taux_tfb", "taux_teom")
+) + TRANCHE_RENTA_COLS + NB_LOCAUX_TRANCHE_COLS + ("taux_tfb", "taux_teom")
 
 
 def _build_upsert_indicateurs_communes_sql() -> str:
@@ -1100,9 +1124,10 @@ def _build_upsert_indicateurs_communes_sql() -> str:
         "renta_nette_immeuble",
     ]
     all_cols = (
-        ["code_insee", "code_dept", "code_postal", "commune", "reg_nom", "dep_nom", "population", "nb_locaux", "nb_ventes_dvf", "indicateurs_par_periode"]
+        ["code_insee", "code_dept", "code_postal", "commune", "reg_nom", "dep_nom", "population", "nb_locaux", "nb_locaux_maisons", "nb_locaux_appts", "nb_ventes_dvf", "indicateurs_par_periode"]
         + renta_cols
         + list(TRANCHE_RENTA_COLS)
+        + list(NB_LOCAUX_TRANCHE_COLS)
         + ["taux_tfb", "taux_teom", "updated_at"]
     )
     insert_cols = ", ".join(all_cols)
@@ -1162,6 +1187,8 @@ def _tuple_params_indicateurs_communes(row: dict) -> tuple:
         row.get("dep_nom"),
         row.get("population"),
         row.get("nb_locaux"),
+        row.get("nb_locaux_maisons"),
+        row.get("nb_locaux_appts"),
         row.get("nb_ventes_dvf"),
         Json(row["indicateurs_par_periode"]) if row.get("indicateurs_par_periode") is not None else None,
         _clamp_numeric_6_2(row.get("renta_brute")),
@@ -1179,6 +1206,7 @@ def _tuple_params_indicateurs_communes(row: dict) -> tuple:
         _clamp_numeric_6_2(row.get("renta_brute_immeuble")),
         _clamp_numeric_6_2(row.get("renta_nette_immeuble")),
         *tuple(_clamp_numeric_6_2(row.get(k)) for k in TRANCHE_RENTA_COLS),
+        *tuple(row.get(k) for k in NB_LOCAUX_TRANCHE_COLS),
         row.get("taux_tfb"),
         row.get("taux_teom"),
     )
@@ -1207,9 +1235,10 @@ def _build_upsert_indicateurs_depts_sql() -> str:
         "renta_nette_immeuble",
     ]
     all_cols = (
-        ["code_dept", "dep_nom", "reg_nom", "code_region", "population", "nb_locaux", "nb_ventes_dvf", "indicateurs_par_periode"]
+        ["code_dept", "dep_nom", "reg_nom", "code_region", "population", "nb_locaux", "nb_locaux_maisons", "nb_locaux_appts", "nb_ventes_dvf", "indicateurs_par_periode"]
         + renta_cols
         + list(TRANCHE_RENTA_COLS)
+        + list(NB_LOCAUX_TRANCHE_COLS)
         + ["taux_tfb", "taux_teom", "updated_at"]
     )
     insert_cols = ", ".join(all_cols)
@@ -1245,6 +1274,8 @@ def _tuple_params_indicateurs_depts(row: dict) -> tuple:
         row.get("code_region"),
         row.get("population"),
         row.get("nb_locaux"),
+        row.get("nb_locaux_maisons"),
+        row.get("nb_locaux_appts"),
         row.get("nb_ventes_dvf"),
         Json(row["indicateurs_par_periode"]) if row.get("indicateurs_par_periode") is not None else None,
         _clamp_numeric_6_2(row.get("renta_brute")),
@@ -1262,6 +1293,7 @@ def _tuple_params_indicateurs_depts(row: dict) -> tuple:
         _clamp_numeric_6_2(row.get("renta_brute_immeuble")),
         _clamp_numeric_6_2(row.get("renta_nette_immeuble")),
         *tuple(_clamp_numeric_6_2(row.get(k)) for k in TRANCHE_RENTA_COLS),
+        *tuple(row.get(k) for k in NB_LOCAUX_TRANCHE_COLS),
         row.get("taux_tfb"),
         row.get("taux_teom"),
     )
@@ -1285,9 +1317,10 @@ def _build_upsert_indicateurs_regions_sql() -> str:
         "renta_nette_immeuble",
     ]
     all_cols = (
-        ["code_region", "reg_nom", "population", "nb_locaux", "nb_ventes_dvf", "indicateurs_par_periode"]
+        ["code_region", "reg_nom", "population", "nb_locaux", "nb_locaux_maisons", "nb_locaux_appts", "nb_ventes_dvf", "indicateurs_par_periode"]
         + renta_cols
         + list(TRANCHE_RENTA_COLS)
+        + list(NB_LOCAUX_TRANCHE_COLS)
         + ["taux_tfb", "taux_teom", "updated_at"]
     )
     insert_cols = ", ".join(all_cols)
@@ -1321,6 +1354,8 @@ def _tuple_params_indicateurs_regions(row: dict) -> tuple:
         row.get("region"),
         row.get("population"),
         row.get("nb_locaux"),
+        row.get("nb_locaux_maisons"),
+        row.get("nb_locaux_appts"),
         row.get("nb_ventes_dvf"),
         Json(row["indicateurs_par_periode"]) if row.get("indicateurs_par_periode") is not None else None,
         _clamp_numeric_6_2(row.get("renta_brute")),
@@ -1338,6 +1373,7 @@ def _tuple_params_indicateurs_regions(row: dict) -> tuple:
         _clamp_numeric_6_2(row.get("renta_brute_immeuble")),
         _clamp_numeric_6_2(row.get("renta_nette_immeuble")),
         *tuple(_clamp_numeric_6_2(row.get(k)) for k in TRANCHE_RENTA_COLS),
+        *tuple(row.get(k) for k in NB_LOCAUX_TRANCHE_COLS),
         row.get("taux_tfb"),
         row.get("taux_teom"),
     )
@@ -1399,6 +1435,9 @@ def _flatten_tranche_nested_to_indicator_row(nested: Optional[dict]) -> dict:
         row[f"renta_nette_appts_{ss}"] = d.get("renta_nette_appts")
         row[f"renta_brute_agg_{ss}"] = d.get("renta_brute_agg")
         row[f"renta_nette_agg_{ss}"] = d.get("renta_nette_agg")
+        row[f"nb_locaux_maisons_{ss}"] = d.get("nb_locaux_maisons")
+        row[f"nb_locaux_appts_{ss}"] = d.get("nb_locaux_appts")
+        row[f"nb_locaux_agg_{ss}"] = d.get("nb_locaux_agg")
     pie = nested.get("pieces") or {}
     for i in range(1, 6):
         t = f"T{i}"
@@ -1410,6 +1449,9 @@ def _flatten_tranche_nested_to_indicator_row(nested: Optional[dict]) -> dict:
         row[f"renta_nette_appts_{tt}"] = d.get("renta_nette_appts")
         row[f"renta_brute_agg_{tt}"] = d.get("renta_brute_agg")
         row[f"renta_nette_agg_{tt}"] = d.get("renta_nette_agg")
+        row[f"nb_locaux_maisons_{tt}"] = d.get("nb_locaux_maisons")
+        row[f"nb_locaux_appts_{tt}"] = d.get("nb_locaux_appts")
+        row[f"nb_locaux_agg_{tt}"] = d.get("nb_locaux_agg")
     return row
 
 
@@ -1582,6 +1624,8 @@ def _extract_rentas_from_lignes(lignes: Optional[List[dict]]) -> dict:
     """Lit renta_brute / renta_nette par type_bien (dont types DVF extra)."""
     keys_out = {
         "nb_locaux": None,
+        "nb_locaux_maisons": None,
+        "nb_locaux_appts": None,
         "renta_nette": None,
         "renta_brute": None,
         "renta_brute_maisons": None,
@@ -1624,6 +1668,8 @@ def _extract_rentas_from_lignes(lignes: Optional[List[dict]]) -> dict:
     keys_out["renta_nette"] = pick("Maisons/Appart.", "renta_nette")
     keys_out["renta_brute"] = pick("Maisons/Appart.", "renta_brute")
     keys_out["nb_locaux"] = pick("Maisons/Appart.", "nb_locaux")
+    keys_out["nb_locaux_maisons"] = pick("Maisons", "nb_locaux")
+    keys_out["nb_locaux_appts"] = pick("Appartements", "nb_locaux")
     keys_out["renta_brute_maisons"] = pick("Maisons", "renta_brute")
     keys_out["renta_nette_maisons"] = pick("Maisons", "renta_nette")
     keys_out["renta_brute_appts"] = pick("Appartements", "renta_brute")
@@ -1702,6 +1748,30 @@ def _aggregate_indicator_snapshots_weighted(buckets: List[Tuple[dict, float]]) -
                 pass
     out["nb_locaux"] = nl_sum if nl_sum else None
     out["nb_ventes_dvf"] = nv_sum if nv_sum else None
+    nl_m_sum = 0
+    nl_a_sum = 0
+    for snap, _ in buckets:
+        if snap.get("nb_locaux_maisons") is not None:
+            try:
+                nl_m_sum += int(snap["nb_locaux_maisons"])
+            except (TypeError, ValueError):
+                pass
+        if snap.get("nb_locaux_appts") is not None:
+            try:
+                nl_a_sum += int(snap["nb_locaux_appts"])
+            except (TypeError, ValueError):
+                pass
+    out["nb_locaux_maisons"] = nl_m_sum if nl_m_sum else None
+    out["nb_locaux_appts"] = nl_a_sum if nl_a_sum else None
+    for col in NB_LOCAUX_TRANCHE_COLS:
+        col_sum = 0
+        for snap, _ in buckets:
+            if snap.get(col) is not None:
+                try:
+                    col_sum += int(snap[col])
+                except (TypeError, ValueError):
+                    pass
+        out[col] = col_sum if col_sum else None
     return out
 
 
@@ -1789,8 +1859,14 @@ def _agg_rows(rows: List[dict], surface_cat: Optional[str], pieces_cat: Optional
         return round(total / sum_w, 2) if total else None
 
     if use_s or use_t:
+        # Utiliser le comptage spécifique à la tranche si disponible (Phase 2)
+        if use_s:
+            tranche_key = f"nb_ventes_{s}"
+        else:
+            tranche_key = f"nb_ventes_{t}"
+        tranche_cnt = sum(_int(r.get(tranche_key)) for r in rows)
         return {
-            "nb_ventes": total_ventes,
+            "nb_ventes": tranche_cnt if tranche_cnt > 0 else total_ventes,
             "prix_moyen": wavg(col_prix),
             "prix_median": wavg(col_prix),
             "prix_q1": None,
@@ -2542,11 +2618,13 @@ def _indicators_from_fiche_payload(
     renta_brute_local_indus = renta_nette_local_indus = None
     renta_brute_terrain = renta_nette_terrain = None
     renta_brute_immeuble = renta_nette_immeuble = None
-    nb_locaux = None
+    nb_locaux = nb_locaux_maisons = nb_locaux_appts = None
     if fiche.get("rentabilite_mediane") and fiche["rentabilite_mediane"].get("lignes"):
         lignes = fiche["rentabilite_mediane"]["lignes"]
         rx = _extract_rentas_from_lignes(lignes)
         nb_locaux = rx.get("nb_locaux")
+        nb_locaux_maisons = rx.get("nb_locaux_maisons")
+        nb_locaux_appts = rx.get("nb_locaux_appts")
         renta_nette = rx.get("renta_nette")
         renta_brute_maisons = rx.get("renta_brute_maisons")
         renta_nette_maisons = rx.get("renta_nette_maisons")
@@ -2585,6 +2663,8 @@ def _indicators_from_fiche_payload(
         "commune": commune,
         "region": reg_nom or "",
         "nb_locaux": int(nb_locaux) if nb_locaux is not None else None,
+        "nb_locaux_maisons": int(nb_locaux_maisons) if nb_locaux_maisons is not None else None,
+        "nb_locaux_appts": int(nb_locaux_appts) if nb_locaux_appts is not None else None,
         "nb_ventes_dvf": nb_ventes_dvf,
         "indicateurs_par_periode": indicateurs_par_periode,
         "renta_brute": renta_brute,
@@ -2608,6 +2688,9 @@ def _indicators_from_fiche_payload(
     }
     for k in TRANCHE_RENTA_COLS:
         out[k] = _round_indicator_optional(tr_flat.get(k))
+    for k in NB_LOCAUX_TRANCHE_COLS:
+        v = tr_flat.get(k)
+        out[k] = int(v) if v is not None else None
     return out
 
 
@@ -2721,8 +2804,16 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
     if not code_insee_list:
         return {}
     out: dict = {}
-    select_sql = (
+    _base_select_communes = (
         "SELECT code_insee, code_dept, code_postal, commune, reg_nom, dep_nom, population, nb_locaux, nb_ventes_dvf, indicateurs_par_periode, "
+        "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
+        "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
+        "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
+        + ", ".join(TRANCHE_RENTA_COLS)
+        + ", taux_tfb, taux_teom FROM foncier.indicateurs_communes WHERE code_insee IN "
+    )
+    _full_select_communes = (
+        "SELECT code_insee, code_dept, code_postal, commune, reg_nom, dep_nom, population, nb_locaux, nb_locaux_maisons, nb_locaux_appts, nb_ventes_dvf, indicateurs_par_periode, "
         "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
         "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
         "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
@@ -2733,8 +2824,16 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
         chunk = code_insee_list[i: i + _READ_INDIC_CHUNK_SIZE]
         try:
             placeholders = ",".join(["%s"] * len(chunk))
-            cur.execute(select_sql + "(" + placeholders + ")", chunk)
-            rows = cur.fetchall()
+            cur.execute("SAVEPOINT _rc_communes")
+            try:
+                cur.execute(_full_select_communes + "(" + placeholders + ")", chunk)
+                rows = cur.fetchall()
+                cur.execute("RELEASE SAVEPOINT _rc_communes")
+            except psycopg2.Error:
+                cur.execute("ROLLBACK TO SAVEPOINT _rc_communes")
+                cur.execute("RELEASE SAVEPOINT _rc_communes")
+                cur.execute(_base_select_communes + "(" + placeholders + ")", chunk)
+                rows = cur.fetchall()
             for r in rows:
                 ci = r.get("code_insee")
                 if ci:
@@ -2751,6 +2850,8 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
                         "commune": r.get("commune"),
                         "region": r.get("reg_nom") or "",
                         "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
+                        "nb_locaux_maisons": int(r["nb_locaux_maisons"]) if r.get("nb_locaux_maisons") is not None else None,
+                        "nb_locaux_appts": int(r["nb_locaux_appts"]) if r.get("nb_locaux_appts") is not None else None,
                         "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
                         "indicateurs_par_periode": ipp if isinstance(ipp, dict) else None,
                         "renta_brute": float(r["renta_brute"]) if r.get("renta_brute") is not None else None,
@@ -2777,7 +2878,7 @@ def _read_indicateurs_communes(cur, code_insee_list: List[str]) -> dict:
     return out
 
 
-_INDIC_IDENTITY_COLS = ("code_insee", "code_dept", "code_postal", "commune", "reg_nom", "dep_nom", "population", "nb_locaux", "nb_ventes_dvf")
+_INDIC_IDENTITY_COLS = ("code_insee", "code_dept", "code_postal", "commune", "reg_nom", "dep_nom", "population", "nb_locaux", "nb_locaux_maisons", "nb_locaux_appts", "nb_ventes_dvf")
 _INDIC_RENTA_BASE_COLS = (
     "renta_brute", "renta_nette",
     "renta_brute_maisons", "renta_nette_maisons", "renta_brute_appts", "renta_nette_appts",
@@ -2785,7 +2886,27 @@ _INDIC_RENTA_BASE_COLS = (
     "renta_brute_terrain", "renta_nette_terrain", "renta_brute_immeuble", "renta_nette_immeuble",
     "taux_tfb", "taux_teom",
 )
-_INDIC_ALL_SCORE_COLS = _INDIC_RENTA_BASE_COLS + TRANCHE_RENTA_COLS
+_INDIC_ALL_SCORE_COLS = _INDIC_RENTA_BASE_COLS + TRANCHE_RENTA_COLS + NB_LOCAUX_TRANCHE_COLS
+
+# Cache des colonnes existantes dans indicateurs_communes (peuplé au premier appel)
+_indic_communes_cols_cache: Optional[Set[str]] = None
+
+
+def _get_indic_communes_existing_cols(cur) -> Optional[Set[str]]:
+    """Retourne l'ensemble des colonnes existantes dans foncier.indicateurs_communes (mis en cache).
+    Retourne None si la requête échoue (on inclura alors toutes les colonnes sans filtrage)."""
+    global _indic_communes_cols_cache
+    if _indic_communes_cols_cache is not None:
+        return _indic_communes_cols_cache
+    try:
+        cur.execute(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = 'foncier' AND table_name = 'indicateurs_communes'"
+        )
+        _indic_communes_cols_cache = {r["column_name"] for r in cur.fetchall()}
+        return _indic_communes_cols_cache
+    except psycopg2.Error:
+        return None  # Ne pas mettre en cache l'échec — réessayera à la prochaine requête
 
 
 def _compute_needed_columns(score_principal: str, scores_secondaires: Optional[List[str]], periode_annees: int) -> Tuple[List[str], bool]:
@@ -2794,6 +2915,9 @@ def _compute_needed_columns(score_principal: str, scores_secondaires: Optional[L
     needed = set()
     needed.add(score_principal)
     needed.add("nb_locaux")  # toujours utile pour filtrage nb_locaux_min
+    # Ajouter automatiquement la colonne nb_locaux correspondante au score principal
+    nb_locaux_col = _nb_locaux_col_for_score_key(score_principal)
+    needed.add(nb_locaux_col)
     if scores_secondaires:
         needed.update(scores_secondaires)
     # Toujours inclure taux_tfb/taux_teom si demandés via scores_secondaires
@@ -2802,7 +2926,8 @@ def _compute_needed_columns(score_principal: str, scores_secondaires: Optional[L
     score_cols = [c for c in _INDIC_ALL_SCORE_COLS if c in needed]
     # Si un score demandé n'est pas dans les colonnes connues, inclure toutes les colonnes
     # (sécurité pour ne pas casser un appel avec un score inconnu)
-    unknown = needed - all_valid - {"nb_locaux"}
+    _always_known = {"nb_locaux", "nb_locaux_maisons", "nb_locaux_appts"} | set(NB_LOCAUX_TRANCHE_COLS)
+    unknown = needed - all_valid - _always_known
     if unknown:
         score_cols = list(_INDIC_ALL_SCORE_COLS)
     need_periode = (periode_annees != 1)
@@ -2831,13 +2956,19 @@ def _read_indicateurs_by_scope(
     """
     t0 = _time.monotonic()
 
-    # Colonnes à sélectionner
-    id_cols = list(_INDIC_IDENTITY_COLS)
-    data_cols = list(score_cols) if score_cols else list(_INDIC_ALL_SCORE_COLS)
-    if need_periode:
-        all_cols = id_cols + ["indicateurs_par_periode"] + data_cols
+    # Colonnes à sélectionner — filtrer celles qui n'existent pas encore en DB (migrations non exécutées)
+    existing_cols = _get_indic_communes_existing_cols(cur)
+    if existing_cols is not None:
+        id_cols = [c for c in _INDIC_IDENTITY_COLS if c in existing_cols]
+        _requested_data = list(score_cols) if score_cols else list(_INDIC_ALL_SCORE_COLS)
+        data_cols = [c for c in _requested_data if c in existing_cols]
+        extra = ["indicateurs_par_periode"] if (need_periode and "indicateurs_par_periode" in existing_cols) else []
     else:
-        all_cols = id_cols + data_cols
+        id_cols = list(_INDIC_IDENTITY_COLS)
+        _requested_data = list(score_cols) if score_cols else list(_INDIC_ALL_SCORE_COLS)
+        data_cols = _requested_data
+        extra = ["indicateurs_par_periode"] if need_periode else []
+    all_cols = id_cols + extra + data_cols
     select_sql = "SELECT " + ", ".join(all_cols) + " FROM foncier.indicateurs_communes"
 
     # Construire WHERE
@@ -2935,6 +3066,8 @@ def _build_indicateur_row_from_db(r: dict, data_cols: List[str], need_periode: b
         "commune": r.get("commune"),
         "region": r.get("reg_nom") or "",
         "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
+        "nb_locaux_maisons": int(r["nb_locaux_maisons"]) if r.get("nb_locaux_maisons") is not None else None,
+        "nb_locaux_appts": int(r["nb_locaux_appts"]) if r.get("nb_locaux_appts") is not None else None,
         "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
     }
     if need_periode:
@@ -2984,16 +3117,31 @@ def _read_indicateurs_depts(cur, code_dept_list: List[str]) -> dict:
         return {}
     try:
         placeholders = ",".join(["%s"] * len(code_dept_list))
-        cur.execute(
+        _suffix = ", taux_tfb, taux_teom FROM foncier.indicateurs_depts WHERE code_dept IN (" + placeholders + ")"
+        _base_select = (
             "SELECT code_dept, dep_nom, reg_nom, code_region, population, nb_locaux, nb_ventes_dvf, indicateurs_par_periode, "
             "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
             "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
             "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
-            + ", ".join(TRANCHE_RENTA_COLS)
-            + ", taux_tfb, taux_teom FROM foncier.indicateurs_depts WHERE code_dept IN (" + placeholders + ")",
-            code_dept_list,
+            + ", ".join(TRANCHE_RENTA_COLS) + _suffix
         )
-        rows = cur.fetchall()
+        _full_select = (
+            "SELECT code_dept, dep_nom, reg_nom, code_region, population, nb_locaux, nb_locaux_maisons, nb_locaux_appts, nb_ventes_dvf, indicateurs_par_periode, "
+            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
+            "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
+            "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
+            + ", ".join(TRANCHE_RENTA_COLS) + _suffix
+        )
+        cur.execute("SAVEPOINT _rd_depts")
+        try:
+            cur.execute(_full_select, code_dept_list)
+            rows = cur.fetchall()
+            cur.execute("RELEASE SAVEPOINT _rd_depts")
+        except psycopg2.Error:
+            cur.execute("ROLLBACK TO SAVEPOINT _rd_depts")
+            cur.execute("RELEASE SAVEPOINT _rd_depts")
+            cur.execute(_base_select, code_dept_list)
+            rows = cur.fetchall()
         out = {}
         for r in rows:
             code_d = r.get("code_dept")
@@ -3013,6 +3161,8 @@ def _read_indicateurs_depts(cur, code_dept_list: List[str]) -> dict:
                 "code_region": r.get("code_region"),
                 "population": int(r["population"]) if r.get("population") is not None else None,
                 "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
+                "nb_locaux_maisons": int(r["nb_locaux_maisons"]) if r.get("nb_locaux_maisons") is not None else None,
+                "nb_locaux_appts": int(r["nb_locaux_appts"]) if r.get("nb_locaux_appts") is not None else None,
                 "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
                 "indicateurs_par_periode": ipp_d if isinstance(ipp_d, dict) else None,
                 "renta_brute": float(r["renta_brute"]) if r.get("renta_brute") is not None else None,
@@ -3056,16 +3206,31 @@ def _read_indicateurs_regions(cur, code_region_list: List[str]) -> dict:
         return {}
     try:
         placeholders = ",".join(["%s"] * len(code_region_list))
-        cur.execute(
+        _suffix = ", taux_tfb, taux_teom FROM foncier.indicateurs_regions WHERE code_region IN (" + placeholders + ")"
+        _base_select = (
             "SELECT code_region, reg_nom, population, nb_locaux, nb_ventes_dvf, indicateurs_par_periode, "
             "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
             "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
             "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
-            + ", ".join(TRANCHE_RENTA_COLS)
-            + ", taux_tfb, taux_teom FROM foncier.indicateurs_regions WHERE code_region IN (" + placeholders + ")",
-            code_region_list,
+            + ", ".join(TRANCHE_RENTA_COLS) + _suffix
         )
-        rows = cur.fetchall()
+        _full_select = (
+            "SELECT code_region, reg_nom, population, nb_locaux, nb_locaux_maisons, nb_locaux_appts, nb_ventes_dvf, indicateurs_par_periode, "
+            "renta_brute, renta_nette, renta_brute_maisons, renta_nette_maisons, renta_brute_appts, renta_nette_appts, "
+            "renta_brute_parking, renta_nette_parking, renta_brute_local_indus, renta_nette_local_indus, "
+            "renta_brute_terrain, renta_nette_terrain, renta_brute_immeuble, renta_nette_immeuble, "
+            + ", ".join(TRANCHE_RENTA_COLS) + _suffix
+        )
+        cur.execute("SAVEPOINT _rd_regions")
+        try:
+            cur.execute(_full_select, code_region_list)
+            rows = cur.fetchall()
+            cur.execute("RELEASE SAVEPOINT _rd_regions")
+        except psycopg2.Error:
+            cur.execute("ROLLBACK TO SAVEPOINT _rd_regions")
+            cur.execute("RELEASE SAVEPOINT _rd_regions")
+            cur.execute(_base_select, code_region_list)
+            rows = cur.fetchall()
         out = {}
         for r in rows:
             code_r = r.get("code_region")
@@ -3083,6 +3248,8 @@ def _read_indicateurs_regions(cur, code_region_list: List[str]) -> dict:
                 "region": r.get("reg_nom") or str(code_r),
                 "population": int(r["population"]) if r.get("population") is not None else None,
                 "nb_locaux": int(r["nb_locaux"]) if r.get("nb_locaux") is not None else None,
+                "nb_locaux_maisons": int(r["nb_locaux_maisons"]) if r.get("nb_locaux_maisons") is not None else None,
+                "nb_locaux_appts": int(r["nb_locaux_appts"]) if r.get("nb_locaux_appts") is not None else None,
                 "nb_ventes_dvf": int(r["nb_ventes_dvf"]) if r.get("nb_ventes_dvf") is not None else None,
                 "indicateurs_par_periode": ipp_r if isinstance(ipp_r, dict) else None,
                 "renta_brute": float(r["renta_brute"]) if r.get("renta_brute") is not None else None,
@@ -3393,9 +3560,27 @@ def _normalize_comparaison_score_key(score_principal: Optional[str]) -> str:
     return "renta_nette"
 
 
-def _row_matches_nb_locaux_min(row: dict, nb_min: int) -> bool:
-    """True si la ligne a un nb_locaux numérique >= nb_min (sinon exclue du filtre)."""
-    v = row.get("nb_locaux")
+def _nb_locaux_col_for_score_key(score_key: str) -> str:
+    """Retourne la colonne nb_locaux appropriée pour un score_principal donné."""
+    import re
+    if not score_key or score_key == "__indicateur_non_calcule__":
+        return "nb_locaux"
+    m = re.search(r"_(maisons|appts|agg)_(s[1-5]|t[1-5])$", score_key)
+    if m:
+        return f"nb_locaux_{m.group(1)}_{m.group(2)}"
+    if "_maisons" in score_key:
+        return "nb_locaux_maisons"
+    if "_appts" in score_key:
+        return "nb_locaux_appts"
+    return "nb_locaux"
+
+
+def _row_matches_nb_locaux_min(row: dict, nb_min: int, score_key: str = "renta_nette") -> bool:
+    """True si la ligne a un nb_locaux numérique >= nb_min pour le score donné (sinon exclue)."""
+    col = _nb_locaux_col_for_score_key(score_key)
+    v = row.get(col)
+    if v is None:
+        v = row.get("nb_locaux")  # fallback global si la colonne spécifique est absente
     if v is None:
         return False
     try:
@@ -3503,7 +3688,7 @@ def get_comparaison_scores(
             cur.close()
             rows = [_merge_periode_into_row(dict(r), periode_annees) for r in rows]
             if nb_locaux_min is not None:
-                rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
+                rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min, score_key)]
             rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
             if n_max and len(rows) > n_max:
                 rows = rows[:n_max]
@@ -3529,7 +3714,7 @@ def get_comparaison_scores(
             cur.close()
             rows = [_merge_periode_into_row(dict(r), periode_annees) for r in rows]
             if nb_locaux_min is not None:
-                rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
+                rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min, score_key)]
             rows = [r for r in rows if _row_matches_renta_mins(r, renta_brute_min, renta_nette_min)]
             rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
             if n_max and len(rows) > n_max:
@@ -3600,7 +3785,7 @@ def get_comparaison_scores(
         _debug_log("[comparaison_scores] merge_periode: %.3fs", t_merge - t_filter_start)
 
         if nb_locaux_min is not None:
-            rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
+            rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min, score_key)]
         rows = [r for r in rows if _row_matches_renta_mins(r, renta_brute_min, renta_nette_min)]
         rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
         if n_max and len(rows) > n_max:
@@ -3662,7 +3847,7 @@ def get_comparaison_scores(
     rows = [_merge_periode_into_row(dict(r), periode_annees) for r in rows]
 
     if nb_locaux_min is not None:
-        rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min)]
+        rows = [r for r in rows if _row_matches_nb_locaux_min(r, nb_locaux_min, score_key)]
     rows = [r for r in rows if _row_matches_renta_mins(r, renta_brute_min, renta_nette_min)]
     rows.sort(key=lambda r: (r.get(score_key) is None, -(r.get(score_key) or 0)))
     if n_max and len(rows) > n_max:
@@ -4092,7 +4277,7 @@ def force_recalcul_indicateurs(
     out = _refresh_indicateurs_impl(
         code_insee_list=code_insee_list,
         limit=None,
-        batch_commit=batch_commit,
+        _batch_commit=batch_commit,
         workers=workers,
     )
     out["requested"] = len(communes_in)
