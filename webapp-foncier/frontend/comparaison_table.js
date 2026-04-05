@@ -644,6 +644,10 @@ export function renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat,
   dyn.innerHTML = "";
   S.sortByTable = {};
 
+  var isDetailMode = jobs.some(function (j) { return j.groupTitle !== "Vue synthétique"; });
+  var currentGroupTitle = null;
+  var groupIndex = -1;
+
   jobs.forEach(function (job, idx) {
     var rowsRaw = rowsByFilterKey[job.filterKey] || [];
     var distFilt = S.lastDistanceOverlay ? parseDistanceFilterInputs() : { maxKm: null, maxMin: null };
@@ -654,6 +658,21 @@ export function renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat,
     var tableIndicators = computeTableIndicatorsForJob(job, cat, displayIndicators);
     if (tableIndicators.length === 0) return;
     if (!jobHasDisplayableData(rowsRaw, job, cat, displayIndicators)) return;
+
+    if (isDetailMode && job.groupTitle !== currentGroupTitle) {
+      currentGroupTitle = job.groupTitle;
+      groupIndex++;
+      if (groupIndex > 0) {
+        var sep = document.createElement("div");
+        sep.className = "comparaison-group-separator";
+        dyn.appendChild(sep);
+      }
+      var grpHeader = document.createElement("div");
+      grpHeader.className = "comparaison-group-header";
+      grpHeader.innerHTML = '<span class="comparaison-group-title">' + escapeHtml(job.groupTitle) + '</span>';
+      dyn.appendChild(grpHeader);
+    }
+
     if (cat === "rentabilite") {
       var nbLocauxKey = resolveNbLocauxKey(job.scoreKey);
       tableIndicators = [
@@ -704,7 +723,7 @@ export function renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat,
       : "";
 
     var section = document.createElement("section");
-    section.className = "comparaison-table-block";
+    section.className = "comparaison-table-block" + (isDetailMode ? (" comparaison-group--" + (groupIndex % 2 === 0 ? "even" : "odd")) : "");
     section.id = jobId;
     section.setAttribute("aria-hidden", "false");
     section.innerHTML =

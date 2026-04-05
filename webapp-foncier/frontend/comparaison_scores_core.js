@@ -626,6 +626,10 @@ import {
                 };
                 if (hasRenderableTable) {
                   renderComparaisonTables(jobs, rowsByFilterKey, displayMode, cat, displayIndicators, theadPrefix);
+                  setTimeout(function () {
+                    var tabsEl = document.querySelector(".comparaison-view-tabs");
+                    if (tabsEl) tabsEl.scrollIntoView({ behavior: "smooth", block: "start" });
+                  }, 80);
                 } else {
                   var dynNoTab = document.getElementById("comparaison-tables-dynamic");
                   if (dynNoTab) dynNoTab.innerHTML = "";

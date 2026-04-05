@@ -808,3 +808,35 @@
 .distances-btn-calc:disabled { background: #9ca3af; cursor: not-allowed; }
 .distances-status { font-size: 0.85rem; color: #6b7280; margin-top: 0.5rem; }
 .distances-status.error { color: #dc2626; }
+
+/* --- Groupes en mode détaillé --- */
+.comparaison-group-separator {
+  height: 2px;
+  background: #cbd5e1;
+  margin: 1.5rem 0 1rem;
+  border-radius: 1px;
+}
+.comparaison-group-header {
+  margin: 0 0 0.5rem;
+  padding: 0.4rem 0.75rem;
+  border-left: 3px solid #2563eb;
+  background: #f1f5f9;
+  border-radius: 0 4px 4px 0;
+}
+.comparaison-group-title {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: #1e40af;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.comparaison-table-block.comparaison-group--even {
+  background-color: #ffffff;
+  border-radius: 6px;
+  padding: 0.5rem;
+}
+.comparaison-table-block.comparaison-group--odd {
+  background-color: #f0f6ff;
+  border-radius: 6px;
+  padding: 0.5rem;
+}
