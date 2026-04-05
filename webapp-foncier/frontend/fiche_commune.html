@@ -346,14 +346,29 @@
       <h2 class="section-title" id="panorama-ventes" data-panorama-title="Panorama Ventes">Panorama Ventes</h2>
       <section class="panorama-ventes-section">
         <div class="panorama-filters">
-          <label>Type de biens <select id="panorama-ventes-type" multiple><option value="Maison">Maison</option><option value="Appartement">Appartement</option><option value="Local">Local</option></select></label>
+          <label>Période <select id="panorama-ventes-periode"><option value="1" selected>1 an</option><option value="2">2 ans</option><option value="3">3 ans</option><option value="5">5 ans</option></select></label>
           <label>Catégorie surface <select id="panorama-ventes-surface"><option value="">Toutes</option><option value="S1">S1</option><option value="S2">S2</option><option value="S3">S3</option><option value="S4">S4</option><option value="S5">S5</option></select></label>
           <label>Nb pièces <select id="panorama-ventes-pieces"><option value="">Toutes</option><option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option><option value="T4">T4</option><option value="T5">T5</option></select></label>
         </div>
         <div class="sub-sections">
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>Ventes <span class="logement-annee">2024</span></h4>
+          <h4>Ventes DVF <span id="dvf-periode-label">(1 an)</span></h4>
+          <div class="zone-content">
+            <table class="table-ventes">
+              <thead>
+                <tr><th>Type</th><th>Nb ventes</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody id="dvf-ventes-tbody">
+                <tr><td colspan="10">—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>Ventes enchères Licitor.fr <span id="licitor-periode-label">(1 an)</span></h4>
           <div class="zone-content">
             <table class="table-ventes">
               <thead>
@@ -370,24 +385,7 @@
         </div>
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>Ventes enchères Licitor.fr (5 dernières années)</h4>
-          <div class="zone-content">
-            <table class="table-ventes">
-              <thead>
-                <tr><th>Type</th><th>Nb ventes</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
-              </thead>
-              <tbody>
-                <tr><td>Maisons / Appart.</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        </div>
-        <div class="sub-section">
-        <div class="panorama-sub-block">
-          <h4>Ventes Enchères-Publiques.fr (5 dernières années)</h4>
+          <h4>Ventes Enchères-Publiques.fr <span id="ep-periode-label">(1 an)</span></h4>
           <div class="zone-content">
             <table class="table-ventes">
               <thead>
@@ -975,8 +973,65 @@
             } catch (e) {
               console.error("Erreur chargement fiche logement", e);
             }
+            loadPanoramaVentesTable();
           } catch (e) {
             console.error("Erreur chargement fiche commune", e);
+          }
+        }
+
+        async function loadPanoramaVentesTable() {
+          const sp = new URLSearchParams(window.location.search || "");
+          const code_dept = sp.get("code_dept");
+          const code_postal = sp.get("code_postal");
+          const commune = sp.get("commune");
+          if (!code_dept || !code_postal || !commune) return;
+
+          const periode = document.getElementById("panorama-ventes-periode") ? document.getElementById("panorama-ventes-periode").value : "1";
+          const surfaceCat = document.getElementById("panorama-ventes-surface") ? document.getElementById("panorama-ventes-surface").value : "";
+          const piecesCat = document.getElementById("panorama-ventes-pieces") ? document.getElementById("panorama-ventes-pieces").value : "";
+
+          const periodeMap = { "1": "1 an", "2": "2 ans", "3": "3 ans", "5": "5 ans" };
+          const periodeLabel = "(" + (periodeMap[periode] || periode + " an(s)") + ")";
+          ["dvf-periode-label", "licitor-periode-label", "ep-periode-label"].forEach(function(id) {
+            const el = document.getElementById(id);
+            if (el) el.textContent = periodeLabel;
+          });
+
+          const tbody = document.getElementById("dvf-ventes-tbody");
+          if (!tbody) return;
+          tbody.innerHTML = "<tr><td colspan=\"10\">Chargement\u2026</td></tr>";
+
+          try {
+            const qs = new URLSearchParams({ code_dept: code_dept, code_postal: code_postal, commune: commune,
+              periode_annees: periode, surface_cat: surfaceCat, pieces_cat: piecesCat });
+            const res = await fetch(API_BASE + "/api/panorama-ventes?" + qs.toString());
+            if (!res.ok) { tbody.innerHTML = "<tr><td colspan=\"10\">\u2014</td></tr>"; return; }
+            const data = await res.json();
+            const lignes = data.lignes || [];
+
+            const rows = lignes.filter(function(l) { return l.type !== "Maisons/Appart."; });
+
+            if (rows.length === 0) {
+              tbody.innerHTML = "<tr><td colspan=\"10\">Aucune donn\u00e9e</td></tr>";
+              return;
+            }
+
+            tbody.innerHTML = rows.map(function(r) {
+              var sep = "<td class=\"col-sep\"></td>";
+              return "<tr><td>" + (r.type || "\u2014") + "</td>"
+                + "<td>" + (r.nb_ventes != null ? formatInt(r.nb_ventes) : "\u2014") + "</td>" + sep
+                + "<td>" + (r.prix_median != null ? formatEuro(r.prix_median) : "\u2014") + "</td>"
+                + "<td>" + (r.prix_m2_mediane != null ? formatEuroM2(r.prix_m2_mediane) : "\u2014") + "</td>"
+                + "<td>" + (r.surface_mediane != null ? formatInt(r.surface_mediane) + " m\u00b2" : "\u2014") + "</td>" + sep
+                + "<td>" + (r.prix_moyen != null ? formatEuro(r.prix_moyen) : "\u2014") + "</td>"
+                + "<td>" + (r.prix_m2_moyenne != null ? formatEuroM2(r.prix_m2_moyenne) : "\u2014") + "</td>"
+                + "<td>" + (r.surface_moyenne != null ? formatInt(r.surface_moyenne) + " m\u00b2" : "\u2014") + "</td>"
+                + "</tr>";
+            }).join("");
+          } catch (e) {
+            console.error("Erreur panorama ventes DVF", e);
+            var tb = document.getElementById("dvf-ventes-tbody");
+            if (tb) tb.innerHTML = "<tr><td colspan=\"10\">Erreur</td></tr>";
           }
         }
 
@@ -1006,16 +1061,25 @@
           }
         }
 
+        function initPanoramaVentesListeners() {
+          ["panorama-ventes-periode", "panorama-ventes-surface", "panorama-ventes-pieces"].forEach(function(id) {
+            var el = document.getElementById(id);
+            if (el) el.addEventListener("change", loadPanoramaVentesTable);
+          });
+        }
+
         if (document.readyState === "loading") {
           document.addEventListener("DOMContentLoaded", function () {
             updateNavLinksFromParams();
             initCommuneSearch();
             loadCommuneFiche();
+            initPanoramaVentesListeners();
           });
         } else {
           updateNavLinksFromParams();
           initCommuneSearch();
           loadCommuneFiche();
+          initPanoramaVentesListeners();
         }
       })();
     </script>

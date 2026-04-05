@@ -2555,6 +2555,70 @@ def get_fiche_logement(
             conn.close()
 
 
+@app.get("/api/panorama-ventes")
+def get_panorama_ventes(
+    code_dept: str = Query(..., description="Code département"),
+    code_postal: str = Query(..., description="Code postal"),
+    commune: str = Query(..., description="Nom de la commune"),
+    periode_annees: int = Query(1, ge=1, le=5, description="Période en années (1, 2, 3 ou 5)"),
+    surface_cat: str = Query("", description="Catégorie surface (S1-S5) ou vide"),
+    pieces_cat: str = Query("", description="Catégorie pièces (T1-T5) ou vide"),
+):
+    """Retourne les lignes de ventes DVF agrégées pour la commune, la période et les filtres demandés."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        code_dept_vf = _normalize_code_dept_for_vf(code_dept)
+        commune_norm = _normalize_name_canonical(commune)
+        where_commune = _sql_norm_name_canonical_commune_vf("commune") + " = %s"
+        params_commune = (commune_norm,)
+
+        # Année max disponible dans vf_communes pour cette commune
+        cur.execute(
+            "SELECT MAX(annee) AS annee_max FROM foncier.vf_communes "
+            "WHERE code_dept = %s AND " + where_commune,
+            (code_dept_vf,) + params_commune,
+        )
+        row = cur.fetchone()
+        annee_max = int(row["annee_max"]) if row and row.get("annee_max") else None
+
+        # Réessayer sans le 0 initial si rien trouvé
+        if annee_max is None and code_dept_vf and len(code_dept_vf) == 2 and code_dept_vf.isdigit() and code_dept_vf.startswith("0"):
+            code_dept_alt = code_dept_vf[1:]
+            cur.execute(
+                "SELECT MAX(annee) AS annee_max FROM foncier.vf_communes "
+                "WHERE code_dept = %s AND " + where_commune,
+                (code_dept_alt,) + params_commune,
+            )
+            row2 = cur.fetchone()
+            if row2 and row2.get("annee_max"):
+                annee_max = int(row2["annee_max"])
+                code_dept_vf = code_dept_alt
+
+        if not annee_max:
+            return {"annee_min": None, "annee_max": None, "lignes": []}
+
+        annee_min = annee_max - periode_annees + 1
+        vf_rows = _fetch_vf_communes_range(cur, code_dept_vf, where_commune, params_commune, annee_min, annee_max)
+
+        sc = surface_cat.strip() or None
+        pc = pieces_cat.strip() or None
+        if sc or pc:
+            _, by_type = _build_ventes_lignes_from_vf_rows(vf_rows)
+            lignes = _build_ventes_lignes_for_tranche(vf_rows, by_type, sc, pc)
+        else:
+            lignes, _ = _build_ventes_lignes_from_vf_rows(vf_rows)
+
+        return {"annee_min": annee_min, "annee_max": annee_max, "lignes": lignes}
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _indicators_from_fiche_payload(
     fiche: dict,
     code_insee: str,
