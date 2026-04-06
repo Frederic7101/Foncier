@@ -40,7 +40,7 @@ export const S = {
     { code: "MAISON", libelle: "Maisons" },
     { code: "APPART", libelle: "Appartements" },
     { code: "LOCAL_INDUS", libelle: "Locaux indus. / comm." },
-    { code: "PARKING", libelle: "Parkings / garages" },
+    { code: "PARKING", libelle: "Dépendances" },
     { code: "TERRAIN", libelle: "Terrains" },
     { code: "IMMEUBLE", libelle: "Immeubles" }
   ],
@@ -100,7 +100,11 @@ export const S = {
   TABLE_BLOCKS: [
     { id: "all", keyMap: { renta_brute: "renta_brute", renta_nette: "renta_nette", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
     { id: "maisons", keyMap: { renta_brute: "renta_brute_maisons", renta_nette: "renta_nette_maisons", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
-    { id: "appts", keyMap: { renta_brute: "renta_brute_appts", renta_nette: "renta_nette_appts", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } }
+    { id: "appts", keyMap: { renta_brute: "renta_brute_appts", renta_nette: "renta_nette_appts", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
+    { id: "parking", keyMap: { renta_brute: "renta_brute_parking", renta_nette: "renta_nette_parking", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
+    { id: "local_indus", keyMap: { renta_brute: "renta_brute_local_indus", renta_nette: "renta_nette_local_indus", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
+    { id: "terrain", keyMap: { renta_brute: "renta_brute_terrain", renta_nette: "renta_nette_terrain", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } },
+    { id: "immeuble", keyMap: { renta_brute: "renta_brute_immeuble", renta_nette: "renta_nette_immeuble", taux_tfb: "taux_tfb", taux_teom: "taux_teom" } }
   ],
   RENTA_UNAVAILABLE_KEY: "__indicateur_non_calcule__",
   FILTER_KEY_SEP: "\u0001",

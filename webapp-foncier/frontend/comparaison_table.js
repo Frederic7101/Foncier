@@ -53,6 +53,10 @@ function getTableKeyMapForTypeCode(typeCode, cat, typeSurf, nbPieces) {
   var u = String(typeCode || "TOUS").toUpperCase();
   if (u === "MAISON") return S.TABLE_BLOCKS[1].keyMap;
   if (u === "APPART") return S.TABLE_BLOCKS[2].keyMap;
+  if (u === "PARKING") return S.TABLE_BLOCKS[3].keyMap;
+  if (u === "LOCAL_INDUS") return S.TABLE_BLOCKS[4].keyMap;
+  if (u === "TERRAIN") return S.TABLE_BLOCKS[5].keyMap;
+  if (u === "IMMEUBLE") return S.TABLE_BLOCKS[6].keyMap;
   return S.TABLE_BLOCKS[0].keyMap;
 }
 

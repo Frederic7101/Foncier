@@ -9,7 +9,11 @@ ALTER TABLE foncier.indicateurs_communes
   ADD COLUMN IF NOT EXISTS renta_brute_terrain NUMERIC(6,2),
   ADD COLUMN IF NOT EXISTS renta_nette_terrain NUMERIC(6,2),
   ADD COLUMN IF NOT EXISTS renta_brute_immeuble NUMERIC(6,2),
-  ADD COLUMN IF NOT EXISTS renta_nette_immeuble NUMERIC(6,2);
+  ADD COLUMN IF NOT EXISTS renta_nette_immeuble NUMERIC(6,2),
+  ADD COLUMN IF NOT EXISTS nb_locaux_parking INTEGER,
+  ADD COLUMN IF NOT EXISTS nb_locaux_local_indus INTEGER,
+  ADD COLUMN IF NOT EXISTS nb_locaux_terrain INTEGER,
+  ADD COLUMN IF NOT EXISTS nb_locaux_immeuble INTEGER;
 
 ALTER TABLE foncier.indicateurs_depts
   ADD COLUMN IF NOT EXISTS renta_brute_parking NUMERIC(6,2),
@@ -19,7 +23,11 @@ ALTER TABLE foncier.indicateurs_depts
   ADD COLUMN IF NOT EXISTS renta_brute_terrain NUMERIC(6,2),
   ADD COLUMN IF NOT EXISTS renta_nette_terrain NUMERIC(6,2),
   ADD COLUMN IF NOT EXISTS renta_brute_immeuble NUMERIC(6,2),
-  ADD COLUMN IF NOT EXISTS renta_nette_immeuble NUMERIC(6,2);
+  ADD COLUMN IF NOT EXISTS renta_nette_immeuble NUMERIC(6,2),
+  ADD COLUMN IF NOT EXISTS nb_locaux_parking INTEGER,
+  ADD COLUMN IF NOT EXISTS nb_locaux_local_indus INTEGER,
+  ADD COLUMN IF NOT EXISTS nb_locaux_terrain INTEGER,
+  ADD COLUMN IF NOT EXISTS nb_locaux_immeuble INTEGER;
 
 ALTER TABLE foncier.indicateurs_regions
   ADD COLUMN IF NOT EXISTS renta_brute_parking NUMERIC(6,2),
@@ -29,12 +37,16 @@ ALTER TABLE foncier.indicateurs_regions
   ADD COLUMN IF NOT EXISTS renta_brute_terrain NUMERIC(6,2),
   ADD COLUMN IF NOT EXISTS renta_nette_terrain NUMERIC(6,2),
   ADD COLUMN IF NOT EXISTS renta_brute_immeuble NUMERIC(6,2),
-  ADD COLUMN IF NOT EXISTS renta_nette_immeuble NUMERIC(6,2);
+  ADD COLUMN IF NOT EXISTS renta_nette_immeuble NUMERIC(6,2),
+  ADD COLUMN IF NOT EXISTS nb_locaux_parking INTEGER,
+  ADD COLUMN IF NOT EXISTS nb_locaux_local_indus INTEGER,
+  ADD COLUMN IF NOT EXISTS nb_locaux_terrain INTEGER,
+  ADD COLUMN IF NOT EXISTS nb_locaux_immeuble INTEGER;
 
--- Patterns pour regrouper foncier.vf_communes.type_local (libellés DVF)
-UPDATE foncier.ref_type_logts SET type_local_pattern = '%Dépendance%' WHERE code = 'PARKING';
+-- Patterns pour regrouper foncier.vf_communes.type_local (libellés DVF) + libellé d'affichage
+UPDATE foncier.ref_type_logts SET libelle = 'Dépendances', type_local_pattern = '%Dépendance%' WHERE code = 'PARKING';
 UPDATE foncier.ref_type_logts SET type_local_pattern = '%Local%industriel%' WHERE code = 'LOCAL_INDUS';
 UPDATE foncier.ref_type_logts SET type_local_pattern = '%Terrain%' WHERE code = 'TERRAIN';
 UPDATE foncier.ref_type_logts SET type_local_pattern = '%Immeuble%' WHERE code = 'IMMEUBLE';
 
-COMMENT ON COLUMN foncier.indicateurs_communes.renta_nette_parking IS 'Rentabilité nette estimée (prix DVF dépendances / parkings × loyer ref. appartements ANIL en proxy)';
+COMMENT ON COLUMN foncier.indicateurs_communes.renta_nette_parking IS 'Rentabilité nette estimée pour les Dépendances (type_local DVF) — loyer proxy = appartements ANIL';

@@ -16,7 +16,7 @@ INSERT INTO foncier.ref_type_logts (code, libelle, sort_order, type_local_patter
     ('MAISON', 'Maisons', 1, 'Maison'),
     ('APPART', 'Appartements', 2, 'Appartement'),
     ('LOCAL_INDUS', 'Locaux indus. / comm.', 3, '%Local%industriel%'),
-    ('PARKING', 'Parkings / garages', 4, '%Dépendance%'),
+    ('PARKING', 'Dépendances', 4, '%Dépendance%'),
     ('TERRAIN', 'Terrains', 5, '%Terrain%'),
     ('IMMEUBLE', 'Immeubles', 6, '%Immeuble%')
 ON CONFLICT (code) DO UPDATE SET
