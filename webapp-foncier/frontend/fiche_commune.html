@@ -372,14 +372,8 @@
               <thead>
                 <tr><th>Type</th><th>Nb ventes</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
               </thead>
-              <tbody>
-                <tr><td>Total</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Dépendances</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Locaux indus. / comm.</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Terrains</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Immeubles</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+              <tbody id="licitor-ventes-tbody">
+                <tr><td colspan="10">—</td></tr>
               </tbody>
             </table>
           </div>
@@ -981,6 +975,7 @@
               console.error("Erreur chargement fiche logement", e);
             }
             loadPanoramaVentesTable();
+            loadLicitorVentesTable();
           } catch (e) {
             console.error("Erreur chargement fiche commune", e);
           }
@@ -1040,6 +1035,49 @@
           }
         }
 
+        async function loadLicitorVentesTable() {
+          const sp = new URLSearchParams(window.location.search || "");
+          const code_dept = sp.get("code_dept");
+          const commune = sp.get("commune");
+          if (!code_dept || !commune) return;
+
+          const periode = document.getElementById("panorama-ventes-periode") ? document.getElementById("panorama-ventes-periode").value : "1";
+
+          const tbody = document.getElementById("licitor-ventes-tbody");
+          if (!tbody) return;
+          tbody.innerHTML = "<tr><td colspan=\"10\">Chargement\u2026</td></tr>";
+
+          try {
+            const qs = new URLSearchParams({ code_dept: code_dept, commune: commune, periode_annees: periode });
+            const res = await fetch(API_BASE + "/api/licitor-ventes?" + qs.toString());
+            if (!res.ok) { tbody.innerHTML = "<tr><td colspan=\"10\">\u2014</td></tr>"; return; }
+            const data = await res.json();
+            const lignes = data.lignes || [];
+
+            if (lignes.length === 0) {
+              tbody.innerHTML = "<tr><td colspan=\"10\">Aucune donn\u00e9e</td></tr>";
+              return;
+            }
+
+            tbody.innerHTML = lignes.map(function(r) {
+              var sep = "<td class=\"col-sep\"></td>";
+              return "<tr><td>" + (r.type || "\u2014") + "</td>"
+                + "<td>" + (r.nb_ventes != null ? formatInt(r.nb_ventes) : "\u2014") + "</td>" + sep
+                + "<td>" + (r.prix_median != null ? formatEuro(r.prix_median) : "\u2014") + "</td>"
+                + "<td>" + (r.prix_m2_mediane != null ? formatEuroM2(r.prix_m2_mediane) : "\u2014") + "</td>"
+                + "<td>" + (r.surface_mediane != null ? formatInt(r.surface_mediane) + " m\u00b2" : "\u2014") + "</td>" + sep
+                + "<td>" + (r.prix_moyen != null ? formatEuro(r.prix_moyen) : "\u2014") + "</td>"
+                + "<td>" + (r.prix_m2_moyenne != null ? formatEuroM2(r.prix_m2_moyenne) : "\u2014") + "</td>"
+                + "<td>" + (r.surface_moyenne != null ? formatInt(r.surface_moyenne) + " m\u00b2" : "\u2014") + "</td>"
+                + "</tr>";
+            }).join("");
+          } catch (e) {
+            console.error("Erreur licitor ventes", e);
+            var tb = document.getElementById("licitor-ventes-tbody");
+            if (tb) tb.innerHTML = "<tr><td colspan=\"10\">Erreur</td></tr>";
+          }
+        }
+
         function initCommuneSearch() {
           initCommuneAutocomplete({
             inputId: "commune-search",
@@ -1071,6 +1109,9 @@
             var el = document.getElementById(id);
             if (el) el.addEventListener("change", loadPanoramaVentesTable);
           });
+          // La période s'applique aussi au tableau Licitor
+          var periodeEl = document.getElementById("panorama-ventes-periode");
+          if (periodeEl) periodeEl.addEventListener("change", loadLicitorVentesTable);
         }
 
         if (document.readyState === "loading") {

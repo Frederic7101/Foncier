@@ -1524,12 +1524,8 @@ def _build_renta_lignes(
     loyer_key = "loyer_med_m2"
     ventes_by_type = {r["type"]: r for r in ventes_lignes}
     loc_by_type = {r["type"]: r for r in loc_lignes}
-    # Proxy interne : loyer appartements pour types DVF sans série ANIL dédiée (calcul charges uniquement)
-    _loc_appart_proxy = loc_by_type.get("Appartements")
-    if _loc_appart_proxy:
-        for _plbl in (VENTE_TYPE_PARKING, VENTE_TYPE_LOCAL_INDUS):
-            if _plbl not in loc_by_type:
-                loc_by_type[_plbl] = _loc_appart_proxy
+    # Pas de proxy loyer pour Dépendances / Locaux indus. / comm. : loyers_communes ne contient
+    # que les maisons et appartements — rentabilité doit rester NULL pour les autres types.
     charges_pre: dict = {}
     for type_label in ["Maisons", "Appartements"]:
         v = ventes_by_type.get(type_label, {})
@@ -2667,6 +2663,125 @@ def get_panorama_ventes(
             if r.get("type") == "Maisons/Appart.":
                 r["type"] = "Total"
         return {"annee_min": annee_min, "annee_max": annee_max, "lignes": lignes}
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+# ── Mapping type_local licitor_brut → libellés d'affichage ──────────────────
+# parking + dependance sont fusionnés en "Dépendances" (même label que DVF)
+_LICITOR_TYPE_DISPLAY_ORDER: List[Tuple[str, str]] = [
+    ("Total",                  "total"),
+    ("Maisons",                "maison"),
+    ("Appartements",           "appartement"),
+    ("Dépendances",            "dependances"),   # parking + dependance fusionnés
+    ("Locaux indus. / comm.",  "local_indus_comm"),
+    ("Terrains",               "terrain"),
+    ("Immeubles",              "immeuble"),
+]
+
+
+@app.get("/api/licitor-ventes")
+def get_licitor_ventes(
+    code_dept: str = Query(..., description="Code département"),
+    commune: str = Query(..., description="Nom de la commune"),
+    periode_annees: int = Query(1, ge=1, le=5, description="Période en années (1-5)"),
+):
+    """Retourne les ventes enchères Licitor agrégées par type pour la commune et la période."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        commune_norm = _normalize_name_canonical(commune)
+        sql_norm_col = _sql_norm_name_canonical("commune")
+
+        sql = f"""
+WITH base AS (
+    SELECT
+        CASE
+            WHEN type_local IN ('parking', 'dependance') THEN 'dependances'
+            ELSE type_local
+        END AS type_key,
+        montant_adjudication,
+        CASE
+            WHEN type_local = 'terrain' THEN surf_non_bati
+            ELSE surf_bati
+        END AS surface
+    FROM foncier.licitor_brut
+    WHERE LOWER(code_dept) = LOWER(%s)
+      AND {sql_norm_col} = %s
+      AND type_local IS NOT NULL
+      AND type_local NOT IN ('autre')
+      AND montant_adjudication IS NOT NULL
+      AND date_scraping >= CURRENT_DATE - INTERVAL '{periode_annees} years'
+),
+par_type AS (
+    SELECT
+        type_key,
+        COUNT(*) AS nb_ventes,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY montant_adjudication))  AS prix_median,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY surface))               AS surface_mediane,
+        ROUND(AVG(montant_adjudication))                                          AS prix_moyen,
+        ROUND(AVG(surface))                                                       AS surface_moyenne,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
+            CASE WHEN surface > 0 THEN montant_adjudication::float / surface ELSE NULL END
+        ))                                                                        AS prix_m2_mediane,
+        ROUND(AVG(
+            CASE WHEN surface > 0 THEN montant_adjudication::float / surface ELSE NULL END
+        ))                                                                        AS prix_m2_moyenne
+    FROM base
+    GROUP BY type_key
+),
+total AS (
+    SELECT
+        'total'::text AS type_key,
+        COUNT(*)                                                                  AS nb_ventes,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY montant_adjudication)) AS prix_median,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY surface))              AS surface_mediane,
+        ROUND(AVG(montant_adjudication))                                         AS prix_moyen,
+        ROUND(AVG(surface))                                                      AS surface_moyenne,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
+            CASE WHEN surface > 0 THEN montant_adjudication::float / surface ELSE NULL END
+        ))                                                                       AS prix_m2_mediane,
+        ROUND(AVG(
+            CASE WHEN surface > 0 THEN montant_adjudication::float / surface ELSE NULL END
+        ))                                                                       AS prix_m2_moyenne
+    FROM base
+)
+SELECT * FROM par_type
+UNION ALL
+SELECT * FROM total
+"""
+        cur.execute(sql, (code_dept, commune_norm))
+        rows = cur.fetchall()
+
+        if not rows:
+            return {"lignes": []}
+
+        by_key = {r["type_key"]: r for r in rows}
+
+        def _to_ligne(label: str, key: str) -> Optional[dict]:
+            row = by_key.get(key)
+            if row is None or not row.get("nb_ventes"):
+                return None
+            return {
+                "type": label,
+                "nb_ventes":       int(row["nb_ventes"]),
+                "prix_median":     int(row["prix_median"])     if row.get("prix_median")     is not None else None,
+                "surface_mediane": float(row["surface_mediane"]) if row.get("surface_mediane") is not None else None,
+                "prix_moyen":      int(row["prix_moyen"])      if row.get("prix_moyen")      is not None else None,
+                "surface_moyenne": float(row["surface_moyenne"]) if row.get("surface_moyenne") is not None else None,
+                "prix_m2_mediane": int(row["prix_m2_mediane"]) if row.get("prix_m2_mediane") is not None else None,
+                "prix_m2_moyenne": int(row["prix_m2_moyenne"]) if row.get("prix_m2_moyenne") is not None else None,
+            }
+
+        lignes = [ln for label, key in _LICITOR_TYPE_DISPLAY_ORDER
+                  if (ln := _to_ligne(label, key)) is not None]
+        return {"lignes": lignes}
+
     except psycopg2.Error as e:
         raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
     finally:
