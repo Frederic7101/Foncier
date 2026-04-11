@@ -39,7 +39,7 @@ import sys
 import time
 from datetime import datetime, date as date_type
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests
 from bs4 import BeautifulSoup
@@ -479,6 +479,40 @@ def _load_existing_urls(conn) -> Set[str]:
         return {r[0] for r in cur.fetchall()}
 
 
+def _safe_integer(value: Any, max_value: int = 9223372036854775807) -> Optional[int]:
+    """Convertit une valeur en entier sécurisé pour BIGINT PostgreSQL.
+
+    - Accepte int, float, string
+    - Retourne None si conversion échoue ou valeur invalide
+    - Vérifie que la valeur est dans les limites BIGINT
+    """
+    if value is None:
+        return None
+
+    try:
+        # Convertir en float d'abord pour gérer les décimales (ex: "123.45" → 123)
+        if isinstance(value, str):
+            # Nettoyer les espaces
+            value = value.strip()
+            if not value:
+                return None
+            # Convertir en float
+            num = float(value)
+        else:
+            num = float(value)
+
+        # Arrondir à l'entier le plus proche
+        result = int(round(num))
+
+        # Vérifier les limites BIGINT
+        if result > max_value or result < -max_value:
+            return None
+
+        return result
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
 def _build_insert_row(source_region: str, listing: dict, detail: Optional[dict], now: datetime) -> tuple:
     """Construit le tuple INSERT à partir des données listing + éventuel détail."""
     d = detail or {}
@@ -489,8 +523,8 @@ def _build_insert_row(source_region: str, listing: dict, detail: Optional[dict],
         listing["commune"],
         # desc_courte : préférer la version complète du détail si disponible
         d.get("desc_courte") or listing["desc_courte"],
-        # montant : préférer le détail (plus précis)
-        d.get("montant_adjudication") if d.get("montant_adjudication") is not None else listing["montant_adjudication"],
+        # montant : préférer le détail (plus précis), convertir en entier sûr
+        _safe_integer(d.get("montant_adjudication") if d.get("montant_adjudication") is not None else listing["montant_adjudication"]),
         # date_vente_texte : préférer le détail (texte complet)
         d.get("date_vente_texte") or listing.get("date_vente_texte"),
         now,
@@ -498,7 +532,7 @@ def _build_insert_row(source_region: str, listing: dict, detail: Optional[dict],
         d.get("date_vente") or listing.get("date_vente"),
         d.get("description_longue"),
         d.get("adresse"),
-        d.get("mise_a_prix"),
+        _safe_integer(d.get("mise_a_prix")),
         d.get("tribunal"),
         d.get("statut_occupation"),
         d.get("avocat_nom"),
@@ -641,9 +675,9 @@ def backfill_details(conn, *, max_rows: int = 200, dry_run: bool = False) -> int
                 "date_vente_texte": detail.get("date_vente_texte"),
                 "description_longue": detail.get("description_longue"),
                 "desc_courte": detail.get("desc_courte"),
-                "montant_adjudication": detail.get("montant_adjudication"),
+                "montant_adjudication": _safe_integer(detail.get("montant_adjudication")),
                 "adresse": detail.get("adresse"),
-                "mise_a_prix": detail.get("mise_a_prix"),
+                "mise_a_prix": _safe_integer(detail.get("mise_a_prix")),
                 "tribunal": detail.get("tribunal"),
                 "statut_occupation": detail.get("statut_occupation"),
                 "avocat_nom": detail.get("avocat_nom"),
