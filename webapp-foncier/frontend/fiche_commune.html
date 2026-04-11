@@ -367,7 +367,7 @@
         <div class="sub-sections">
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>Ventes DVF <span id="dvf-periode-label">(1 an)</span></h4>
+          <h4>Ventes DVF <span id="dvf-periode-label">(5 ans)</span></h4>
           <div class="zone-content">
             <table class="table-ventes">
               <thead>
@@ -382,7 +382,7 @@
         </div>
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>Ventes enchères Licitor.fr <span id="licitor-periode-label">(1 an)</span></h4>
+          <h4>Ventes enchères Licitor.fr <span id="licitor-periode-label">(5 ans)</span></h4>
           <div class="zone-content">
             <table class="table-ventes">
               <thead>
@@ -397,7 +397,22 @@
         </div>
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>Ventes Enchères-Publiques.fr <span id="ep-periode-label">(1 an)</span></h4>
+          <h4>Annonces de ventes Castorus <span id="castorus-periode-label">(5 ans)</span></h4>
+          <div class="zone-content">
+            <table class="table-ventes">
+              <thead>
+                <tr><th>Type</th><th>Nb annonces</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody id="castorus-ventes-tbody">
+                <tr><td colspan="10">—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>Ventes Enchères-Publiques.fr <span id="ep-periode-label">(5 ans)</span></h4>
           <div class="zone-content">
             <table class="table-ventes">
               <thead>
@@ -1012,6 +1027,7 @@
             }
             loadPanoramaVentesTable();
             loadLicitorVentesTable();
+            loadCastorusVentesTable();
           } catch (e) {
             console.error("Erreur chargement fiche commune", e);
           }
@@ -1030,7 +1046,7 @@
 
           const periodeMap = { "1": "1 an", "2": "2 ans", "3": "3 ans", "5": "5 ans" };
           const periodeLabel = "(" + (periodeMap[periode] || periode + " an(s)") + ")";
-          ["dvf-periode-label", "licitor-periode-label", "ep-periode-label"].forEach(function(id) {
+          ["dvf-periode-label", "licitor-periode-label", "castorus-periode-label", "ep-periode-label"].forEach(function(id) {
             const el = document.getElementById(id);
             if (el) el.textContent = periodeLabel;
           });
@@ -1114,6 +1130,56 @@
           }
         }
 
+        async function loadCastorusVentesTable() {
+          const sp = new URLSearchParams(window.location.search || "");
+          const code_dept = sp.get("code_dept");
+          const commune = sp.get("commune");
+          if (!code_dept || !commune) return;
+
+          const periode = document.getElementById("panorama-ventes-periode") ? document.getElementById("panorama-ventes-periode").value : "1";
+          const surfaceCat = document.getElementById("panorama-ventes-surface") ? document.getElementById("panorama-ventes-surface").value : "";
+          const piecesCat = document.getElementById("panorama-ventes-pieces") ? document.getElementById("panorama-ventes-pieces").value : "";
+
+          const periodeMap = { "1": "1 an", "2": "2 ans", "3": "3 ans", "5": "5 ans" };
+          var castLabel = document.getElementById("castorus-periode-label");
+          if (castLabel) castLabel.textContent = "(" + (periodeMap[periode] || periode + " an(s)") + ")";
+
+          const tbody = document.getElementById("castorus-ventes-tbody");
+          if (!tbody) return;
+          tbody.innerHTML = "<tr><td colspan=\"10\">Chargement\u2026</td></tr>";
+
+          try {
+            const qs = new URLSearchParams({ code_dept: code_dept, commune: commune,
+              periode_annees: periode, surface_cat: surfaceCat, pieces_cat: piecesCat });
+            const res = await fetch(API_BASE + "/api/castorus-ventes?" + qs.toString());
+            if (!res.ok) { tbody.innerHTML = "<tr><td colspan=\"10\">\u2014</td></tr>"; return; }
+            const data = await res.json();
+            const lignes = data.lignes || [];
+
+            if (lignes.length === 0) {
+              tbody.innerHTML = "<tr><td colspan=\"10\">Aucune donn\u00e9e</td></tr>";
+              return;
+            }
+
+            tbody.innerHTML = lignes.map(function(r) {
+              var sep = "<td class=\"col-sep\"></td>";
+              return "<tr><td>" + (r.type || "\u2014") + "</td>"
+                + "<td>" + (r.nb_ventes != null ? formatInt(r.nb_ventes) : "\u2014") + "</td>" + sep
+                + "<td>" + (r.prix_median != null ? formatEuro(r.prix_median) : "\u2014") + "</td>"
+                + "<td>" + (r.prix_m2_mediane != null ? formatEuroM2(r.prix_m2_mediane) : "\u2014") + "</td>"
+                + "<td>" + (r.surface_mediane != null ? formatInt(r.surface_mediane) + " m\u00b2" : "\u2014") + "</td>" + sep
+                + "<td>" + (r.prix_moyen != null ? formatEuro(r.prix_moyen) : "\u2014") + "</td>"
+                + "<td>" + (r.prix_m2_moyenne != null ? formatEuroM2(r.prix_m2_moyenne) : "\u2014") + "</td>"
+                + "<td>" + (r.surface_moyenne != null ? formatInt(r.surface_moyenne) + " m\u00b2" : "\u2014") + "</td>"
+                + "</tr>";
+            }).join("");
+          } catch (e) {
+            console.error("Erreur castorus ventes", e);
+            var tb = document.getElementById("castorus-ventes-tbody");
+            if (tb) tb.innerHTML = "<tr><td colspan=\"10\">Erreur</td></tr>";
+          }
+        }
+
         function initCommuneSearch() {
           initCommuneAutocomplete({
             inputId: "commune-search",
@@ -1143,9 +1209,12 @@
         function initPanoramaVentesListeners() {
           ["panorama-ventes-periode", "panorama-ventes-surface", "panorama-ventes-pieces"].forEach(function(id) {
             var el = document.getElementById(id);
-            if (el) el.addEventListener("change", loadPanoramaVentesTable);
+            if (el) {
+              el.addEventListener("change", loadPanoramaVentesTable);
+              el.addEventListener("change", loadCastorusVentesTable);
+            }
           });
-          // La période s'applique aussi au tableau Licitor
+          // La période s'applique aussi aux tableaux Licitor et Castorus
           var periodeEl = document.getElementById("panorama-ventes-periode");
           if (periodeEl) periodeEl.addEventListener("change", loadLicitorVentesTable);
         }

@@ -2788,6 +2788,180 @@ SELECT * FROM total
             conn.close()
 
 
+# ── Castorus : mapping type_bien → libellés d'affichage ──────────────────────
+_CASTORUS_TYPE_MAP: Dict[str, str] = {
+    "appartement": "Appartements",
+    "maison": "Maisons",
+    "terrain": "Terrains",
+    "parking": "Parkings / garages",
+    "garage": "Parkings / garages",
+    "commerce": "Locaux indus. / comm.",
+    "local": "Locaux indus. / comm.",
+    "bureau": "Locaux indus. / comm.",
+    "immeuble": "Immeubles",
+    "château": "Maisons",
+    "loft": "Appartements",
+    "studio": "Appartements",
+    "duplex": "Appartements",
+    "triplex": "Appartements",
+}
+
+_CASTORUS_TYPE_DISPLAY_ORDER: List[str] = [
+    "Total", "Maisons", "Appartements", "Terrains",
+    "Parkings / garages", "Immeubles", "Locaux indus. / comm.",
+]
+
+# Tranches surface (mêmes bornes que DVF)
+_SURFACE_TRANCHES = {
+    "S1": (None, 25),
+    "S2": (25, 35),
+    "S3": (35, 45),
+    "S4": (45, 55),
+    "S5": (55, None),
+}
+# Tranches pièces
+_PIECES_TRANCHES = {
+    "T1": (None, 2),    # 1 pièce
+    "T2": (2, 3),       # 2 pièces
+    "T3": (3, 4),       # 3 pièces
+    "T4": (4, 5),       # 4 pièces
+    "T5": (5, None),    # 5+ pièces
+}
+
+
+@app.get("/api/castorus-ventes")
+def get_castorus_ventes(
+    code_dept: str = Query(..., description="Code département"),
+    commune: str = Query(..., description="Nom de la commune"),
+    periode_annees: int = Query(1, ge=1, le=5, description="Période en années (1-5)"),
+    surface_cat: str = Query("", description="Catégorie surface (S1-S5) ou vide"),
+    pieces_cat: str = Query("", description="Catégorie pièces (T1-T5) ou vide"),
+):
+    """Retourne les annonces Castorus agrégées par type pour la commune et la période."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        commune_norm = _normalize_name_canonical(commune)
+        sql_norm_col = _sql_norm_name_canonical("commune")
+
+        # Filtres surface/pièces
+        surface_filter = ""
+        pieces_filter = ""
+        sc = surface_cat.strip().upper()
+        pc = pieces_cat.strip().upper()
+        if sc in _SURFACE_TRANCHES:
+            lo, hi = _SURFACE_TRANCHES[sc]
+            if lo is not None and hi is not None:
+                surface_filter = f"AND surface >= {lo} AND surface < {hi}"
+            elif lo is not None:
+                surface_filter = f"AND surface >= {lo}"
+            elif hi is not None:
+                surface_filter = f"AND surface < {hi}"
+        if pc in _PIECES_TRANCHES:
+            lo, hi = _PIECES_TRANCHES[pc]
+            if lo is not None and hi is not None:
+                pieces_filter = f"AND nb_pieces >= {lo} AND nb_pieces < {hi}"
+            elif lo is not None:
+                pieces_filter = f"AND nb_pieces >= {lo}"
+            elif hi is not None:
+                pieces_filter = f"AND nb_pieces < {hi}"
+
+        sql = f"""
+WITH base AS (
+    SELECT
+        LOWER(COALESCE(type_bien, 'autre')) AS type_raw,
+        prix,
+        surface,
+        nb_pieces,
+        CASE WHEN surface > 0 THEN prix::float / surface ELSE NULL END AS prix_m2_calc
+    FROM foncier.castorus_brut
+    WHERE LOWER(code_dept) = LOWER(%s)
+      AND {sql_norm_col} = %s
+      AND prix IS NOT NULL
+      AND COALESCE(EXTRACT(YEAR FROM date_publication), EXTRACT(YEAR FROM CURRENT_DATE) - 1)
+          >= EXTRACT(YEAR FROM CURRENT_DATE) - {periode_annees}
+      {surface_filter}
+      {pieces_filter}
+),
+typed AS (
+    SELECT
+        CASE
+            WHEN type_raw IN ('appartement', 'loft', 'studio', 'duplex', 'triplex') THEN 'Appartements'
+            WHEN type_raw IN ('maison', 'château') THEN 'Maisons'
+            WHEN type_raw = 'terrain' THEN 'Terrains'
+            WHEN type_raw IN ('parking', 'garage') THEN 'Parkings / garages'
+            WHEN type_raw IN ('commerce', 'local', 'bureau') THEN 'Locaux indus. / comm.'
+            WHEN type_raw = 'immeuble' THEN 'Immeubles'
+            ELSE 'Autres'
+        END AS type_label,
+        prix, surface, prix_m2_calc
+    FROM base
+),
+par_type AS (
+    SELECT
+        type_label,
+        COUNT(*)                                                                  AS nb_ventes,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY prix))                AS prix_median,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY surface))             AS surface_mediane,
+        ROUND(AVG(prix))                                                         AS prix_moyen,
+        ROUND(AVG(surface))                                                      AS surface_moyenne,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY prix_m2_calc))        AS prix_m2_mediane,
+        ROUND(AVG(prix_m2_calc))                                                 AS prix_m2_moyenne
+    FROM typed
+    GROUP BY type_label
+),
+total AS (
+    SELECT
+        'Total'::text AS type_label,
+        COUNT(*)                                                                  AS nb_ventes,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY prix))                AS prix_median,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY surface))             AS surface_mediane,
+        ROUND(AVG(prix))                                                         AS prix_moyen,
+        ROUND(AVG(surface))                                                      AS surface_moyenne,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY prix_m2_calc))        AS prix_m2_mediane,
+        ROUND(AVG(prix_m2_calc))                                                 AS prix_m2_moyenne
+    FROM typed
+)
+SELECT * FROM par_type
+UNION ALL
+SELECT * FROM total
+"""
+        cur.execute(sql, (code_dept, commune_norm))
+        rows = cur.fetchall()
+
+        if not rows:
+            return {"lignes": []}
+
+        by_label = {r["type_label"]: r for r in rows}
+
+        def _to_ligne(label: str) -> Optional[dict]:
+            row = by_label.get(label)
+            if row is None or not row.get("nb_ventes"):
+                return None
+            return {
+                "type": label,
+                "nb_ventes":       int(row["nb_ventes"]),
+                "prix_median":     int(row["prix_median"])     if row.get("prix_median")     is not None else None,
+                "surface_mediane": float(row["surface_mediane"]) if row.get("surface_mediane") is not None else None,
+                "prix_moyen":      int(row["prix_moyen"])      if row.get("prix_moyen")      is not None else None,
+                "surface_moyenne": float(row["surface_moyenne"]) if row.get("surface_moyenne") is not None else None,
+                "prix_m2_mediane": int(row["prix_m2_mediane"]) if row.get("prix_m2_mediane") is not None else None,
+                "prix_m2_moyenne": int(row["prix_m2_moyenne"]) if row.get("prix_m2_moyenne") is not None else None,
+            }
+
+        lignes = [ln for label in _CASTORUS_TYPE_DISPLAY_ORDER
+                  if (ln := _to_ligne(label)) is not None]
+        return {"lignes": lignes}
+
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
 def _indicators_from_fiche_payload(
     fiche: dict,
     code_insee: str,
