@@ -148,10 +148,16 @@ def _login(pseudo: str, password: str) -> bool:
 # ─────────────────────────────────────────────────────────────────────────────
 # Recherche de commune (API suggestions)
 # ─────────────────────────────────────────────────────────────────────────────
+def _slug_base(slug: str) -> str:
+    """Retire le code postal final d'un slug : 'arcey-21410' → 'arcey'."""
+    return re.sub(r"-\d{5}$", "", slug)
+
+
 def _search_commune_slug(commune: str, code_postal: str) -> Optional[str]:
     """Cherche le slug complet Castorus pour une commune via l'API suggestions.
 
     Retourne le slug complet incluant le code postal (ex: 'laon-02000').
+    Gère le cas de communes homonymes avec des codes postaux différents.
     """
     try:
         resp = _safe_request(
@@ -169,32 +175,16 @@ def _search_commune_slug(commune: str, code_postal: str) -> Optional[str]:
                 urls = item.get("urls", {})
                 recherche_url = urls.get("recherche", urls.get("listings", ""))
                 if recherche_url:
-                    # Extraire le chemin complet : "/recherche/laon-02000" → "laon-02000"
                     m = re.search(r"/recherche/(.+?)(?:\?|$)", recherche_url)
                     if m:
                         return m.group(1)
-                # Fallback : slug + code postal
+                # Fallback : slug → retirer l'éventuel code postal existant et mettre le bon
                 slug = item.get("slug")
                 if slug:
-                    # Si le slug contient déjà le code postal, le retourner tel quel
-                    if code_postal in slug:
-                        return slug
-                    return f"{slug}-{code_postal}"
+                    return f"{_slug_base(slug)}-{code_postal}"
 
-        # Fallback : prendre le premier résultat
-        if results:
-            item = results[0]
-            urls = item.get("urls", {})
-            recherche_url = urls.get("recherche", urls.get("listings", ""))
-            if recherche_url:
-                m = re.search(r"/recherche/(.+?)(?:\?|$)", recherche_url)
-                if m:
-                    return m.group(1)
-            slug = item.get("slug")
-            if slug:
-                if code_postal in slug:
-                    return slug
-                return f"{slug}-{code_postal}"
+        # Pas de match par code postal — ne PAS utiliser le premier résultat
+        # car c'est probablement une commune homonyme d'un autre département
 
     except Exception as exc:
         print(f"  [!] Erreur recherche commune '{commune}': {exc}")
@@ -644,8 +634,10 @@ def main():
     parser.add_argument("--code-postal", type=str, help="Code postal de la commune")
     parser.add_argument("--from-db", action="store_true",
                         help="Scraper les communes présentes dans vf_communes")
+    parser.add_argument("--from-file", type=str, default=None,
+                        help="Fichier CSV (commune,code_postal) de communes à scraper")
     parser.add_argument("--max-communes", type=int, default=None,
-                        help="Nombre max de communes à scraper (avec --from-db)")
+                        help="Nombre max de communes à scraper (avec --from-db ou --from-file)")
     parser.add_argument("--with-details", action="store_true",
                         help="Scraper aussi les pages détail (agence, lien source)")
     parser.add_argument("--max-details", type=int, default=50,
@@ -656,8 +648,8 @@ def main():
                         help="Ne pas tenter de se connecter (données limitées)")
     args = parser.parse_args()
 
-    if not args.commune and not args.from_db:
-        parser.error("Spécifiez --commune NOM --code-postal CP ou --from-db")
+    if not args.commune and not args.from_db and not args.from_file:
+        parser.error("Spécifiez --commune NOM --code-postal CP, --from-db ou --from-file FICHIER.csv")
     if args.commune and not args.code_postal:
         parser.error("--code-postal requis avec --commune")
 
@@ -683,6 +675,17 @@ def main():
     communes: List[Tuple[str, str]] = []
     if args.commune:
         communes = [(args.commune, args.code_postal)]
+    elif args.from_file:
+        import csv
+        with open(args.from_file, encoding="utf-8") as f:
+            reader = csv.reader(f)
+            header = next(reader, None)
+            for row in reader:
+                if len(row) >= 2:
+                    communes.append((row[0].strip(), row[1].strip()))
+        if args.max_communes:
+            communes = communes[:args.max_communes]
+        print(f"{len(communes)} communes lues depuis {args.from_file}")
     elif args.from_db:
         with conn.cursor() as cur:
             communes = _get_communes_from_db(cur, args.max_communes)
