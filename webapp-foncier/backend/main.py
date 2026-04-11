@@ -2702,7 +2702,7 @@ def get_licitor_ventes(
 WITH base AS (
     SELECT
         CASE
-            WHEN type_local IN ('parking', 'dependance') THEN 'dependances'
+            WHEN type_local IN ('parking', 'dependance', 'autre') THEN 'dependances'
             ELSE type_local
         END AS type_key,
         montant_adjudication,
@@ -2714,9 +2714,8 @@ WITH base AS (
     WHERE LOWER(code_dept) = LOWER(%s)
       AND {sql_norm_col} = %s
       AND type_local IS NOT NULL
-      AND type_local NOT IN ('autre')
       AND montant_adjudication IS NOT NULL
-      AND date_scraping >= CURRENT_DATE - INTERVAL '{periode_annees} years'
+      AND COALESCE(EXTRACT(YEAR FROM date_vente), EXTRACT(YEAR FROM CURRENT_DATE) - 1) >= EXTRACT(YEAR FROM CURRENT_DATE) - {periode_annees}
 ),
 par_type AS (
     SELECT

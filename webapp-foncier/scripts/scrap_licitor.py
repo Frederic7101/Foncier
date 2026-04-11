@@ -7,32 +7,37 @@ Licitor.fr et insère les nouvelles annonces dans la table PostgreSQL
 foncier.licitor_brut.  Les annonces déjà présentes en base sont ignorées
 (détection par url_annonce + ON CONFLICT DO NOTHING en filet de sécurité).
 
+Par défaut, la page détail de chaque *nouvelle* annonce est scrapée pour
+récupérer la description longue, la date de vente exacte, l'adresse, la mise
+à prix, le tribunal, le statut d'occupation, l'avocat et les dépendances.
+
 Usage :
     python scrap_licitor.py --region paris-et-ile-de-france
     python scrap_licitor.py --all
     python scrap_licitor.py --list-regions
     python scrap_licitor.py --region sud-est-mediterrannee --max-pages 10
-    python scrap_licitor.py --region paris-et-ile-de-france --with-details
-    python scrap_licitor.py --all --start-page 50
+    python scrap_licitor.py --region paris-et-ile-de-france --no-details
+    python scrap_licitor.py --backfill-details --max-rows 500
 
 Options :
-    --region SLUG     Scraper une seule région (voir --list-regions)
-    --all             Scraper toutes les régions
-    --list-regions    Lister les régions disponibles et quitter
-    --with-details    Scraper aussi la page détail de chaque nouvelle annonce
-                      (descriptions complètes, montant adjudication précis ;
-                       beaucoup plus lent : 1 requête / annonce)
-    --max-pages N     Limiter le nombre de pages à scraper par région
-    --start-page N    Page de départ (défaut 1, utile pour reprendre après crash)
-    --dry-run         Afficher ce qui serait inséré, sans écrire en base
+    --region SLUG       Scraper une seule région (voir --list-regions)
+    --all               Scraper toutes les régions
+    --list-regions      Lister les régions disponibles et quitter
+    --no-details        Ne pas scraper les pages détail (plus rapide, moins de données)
+    --max-pages N       Limiter le nombre de pages listing par région
+    --start-page N      Page de départ (défaut 1, utile pour reprendre après crash)
+    --dry-run           Scraper sans écrire en base
+    --backfill-details  Compléter les annonces existantes sans description_longue
+    --max-rows N        Nombre max de lignes à compléter en mode backfill (défaut 200)
 """
 
 import argparse
 import json
 import random
+import re
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, date as date_type
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -129,6 +134,29 @@ def _parse_montant(value) -> Optional[int]:
     return int(n) if n.is_integer() else int(n) + 1
 
 
+_RE_DATE_LISTING = re.compile(r"(\d{2})[-/](\d{2})[-/](\d{4})")
+
+
+def _clean_ws(text: Optional[str]) -> Optional[str]:
+    """Normalise les espaces multiples (tabs/newlines internes) en un seul espace."""
+    if not text:
+        return text
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _parse_listing_date(text: str) -> Tuple[Optional[str], Optional[date_type]]:
+    """Extrait DD-MM-YYYY du texte p.Result du listing → (texte, date)."""
+    m = _RE_DATE_LISTING.search(text or "")
+    if not m:
+        return None, None
+    dd, mm, yyyy = int(m.group(1)), int(m.group(2)), int(m.group(3))
+    try:
+        d = date_type(yyyy, mm, dd)
+        return m.group(0), d
+    except ValueError:
+        return m.group(0), None
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # URLs historique
 # ─────────────────────────────────────────────────────────────────────────────
@@ -140,7 +168,7 @@ def _historique_url(region_slug: str, page: int = 1) -> str:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Extraction des données depuis le HTML
+# Extraction des données depuis la page listing
 # ─────────────────────────────────────────────────────────────────────────────
 def _extract_pagination(soup: BeautifulSoup) -> Tuple[int, int]:
     """Retourne (total_annonces, nb_pages) depuis le HTML de la page listing."""
@@ -155,7 +183,15 @@ def _extract_pagination(soup: BeautifulSoup) -> Tuple[int, int]:
 
 
 def _extract_listings(soup: BeautifulSoup) -> List[dict]:
-    """Extrait les annonces depuis le HTML d'une page listing."""
+    """Extrait les annonces depuis le HTML d'une page listing.
+
+    Structure HTML de chaque annonce :
+        <a class="Ad Archives" href="/annonce/...">
+            <p class="Location"><span class="Number">75</span><span class="City">Paris 13ème</span></p>
+            <p class="Description"><span class="Name">Un appartement</span><span class="Text">au 24ème étage …[...]</span></p>
+            <div class="Footer"><div class="Price"><p class="Result">09-04-2026 : <span class="PriceNumber">100 001 €</span></p></div></div>
+        </a>
+    """
     links = soup.select("a[href*='/annonce/']")
     results = []
 
@@ -181,22 +217,12 @@ def _extract_listings(soup: BeautifulSoup) -> List[dict]:
             prix_el = a_tag.select_one(".PriceNumber")
             montant = _parse_montant(prix_el.text.strip() if prix_el else None)
 
-            # Date : chercher dans/autour du lien
-            date_texte = None
-            # 1) <time> avec attribut datetime (le plus fiable)
-            time_el = a_tag.select_one("time")
-            if time_el:
-                date_texte = time_el.get("datetime") or time_el.text.strip()
-            # 2) élément .Date à l'intérieur du lien
-            if not date_texte:
-                date_el = a_tag.select_one(".Date")
-                if date_el:
-                    date_texte = date_el.text.strip()
-            # 3) PublishingDate (frère suivant du lien)
-            if not date_texte:
-                pub = a_tag.find_next(class_="PublishingDate")
-                if pub:
-                    date_texte = pub.text.strip()
+            # Date de vente : dans <p class="Result">DD-MM-YYYY : <span class="PriceNumber">…</span></p>
+            date_vente_texte = None
+            date_vente = None
+            result_el = a_tag.select_one("p.Result")
+            if result_el:
+                date_vente_texte, date_vente = _parse_listing_date(result_el.get_text())
 
             results.append({
                 "url_annonce": url,
@@ -204,7 +230,8 @@ def _extract_listings(soup: BeautifulSoup) -> List[dict]:
                 "commune": commune,
                 "desc_courte": desc,
                 "montant_adjudication": montant,
-                "date_vente_texte": date_texte,
+                "date_vente_texte": date_vente_texte,
+                "date_vente": date_vente,
             })
         except Exception as exc:
             print(f"  [!] Erreur parsing annonce : {exc}")
@@ -212,8 +239,90 @@ def _extract_listings(soup: BeautifulSoup) -> List[dict]:
     return results
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Scraping de la page détail
+# ─────────────────────────────────────────────────────────────────────────────
+def _compose_description_longue(article) -> str:
+    """Compose le texte de description longue depuis les éléments HTML structurés."""
+    parts: List[str] = []
+
+    # Tribunal
+    court = article.select_one("p.Court")
+    if court:
+        parts.append(_clean_ws(court.get_text(strip=True)))
+
+    # Type de vente
+    type_el = article.select_one("p.Type")
+    if type_el:
+        parts.append(_clean_ws(type_el.get_text(strip=True)))
+
+    # Date et heure
+    date_el = article.select_one("p.Date")
+    if date_el:
+        parts.append(date_el.get_text(strip=True))
+
+    # Description des lots (SousLot inclut FirstSousLot car il a aussi la classe SousLot)
+    for lot in article.select(".SousLot"):
+        h2 = lot.find("h2")
+        p = lot.find("p")
+        h2_t = h2.get_text(strip=True) if h2 else ""
+        p_t = p.get_text(separator="\n", strip=True) if p else ""
+        parts.append(f"{h2_t}\n{p_t}" if p_t else h2_t)
+
+    # Adjudication + Mise à prix
+    adj = article.select_one("div.Lot > h3")
+    if adj:
+        parts.append(adj.get_text(strip=True))
+    mep = article.select_one("div.Lot > h4")
+    if mep:
+        parts.append(mep.get_text(strip=True))
+
+    # Localisation
+    city = article.select_one("div.Location p.City")
+    street = article.select_one("div.Location p.Street")
+    loc = []
+    if city:
+        loc.append(city.get_text(strip=True))
+    if street:
+        loc.append(street.get_text(separator="\n", strip=True))
+    if loc:
+        parts.append("\n".join(loc))
+
+    # Avocats
+    for trust in article.select("div.Trust"):
+        h3 = trust.find("h3")
+        p_tags = trust.find_all("p")
+        h3_t = h3.get_text(strip=True) if h3 else ""
+        p_texts = []
+        for p in p_tags:
+            t = p.get_text(separator="\n", strip=True)
+            # Exclure les liens (« Pour plus de détails : www... »)
+            if t and not t.startswith("www."):
+                p_texts.append(t)
+        trust_text = "\n".join([h3_t] + p_texts) if p_texts else h3_t
+        if trust_text:
+            parts.append(trust_text)
+
+    return "\n\n".join(parts)
+
+
 def _scrape_detail(url: str) -> Optional[dict]:
-    """Scrape la page détail pour obtenir la description complète et le montant exact."""
+    """Scrape la page détail d'une annonce.
+
+    Structure HTML :
+        <article class="LegalAd">
+          <p class="Court">Tribunal …</p>
+          <p class="Date"><time datetime="2026-04-07T14:00:00">mardi 7 avril 2026 à 14h</time></p>
+          <div class="Lot">
+            <div class="FirstSousLot SousLot"><h2>…</h2><p>…</p></div>
+            <div class="SousLot"><h2>Une cave</h2><p>…</p></div>
+            <h3>Adjudication : 138 000 €</h3>
+            <h4>(Mise à prix : 30 000 €)</h4>
+          </div>
+          <div class="Location"><p class="City">…</p><p class="Street">…</p></div>
+          <div class="Trusts"><div class="Trust"><h3>Maître …</h3><p>…<br/>Tél.: …</p></div></div>
+        </article>
+    """
     try:
         resp = _safe_request(url)
         soup = BeautifulSoup(resp.text, "html.parser")
@@ -221,46 +330,146 @@ def _scrape_detail(url: str) -> Optional[dict]:
         if not article:
             return None
 
-        # Description complète (concaténation des lots)
-        lots = article.select(".SousLot, .FirstSousLot")
-        descs: List[str] = []
-        for lot in lots:
-            h = lot.find("h2")
-            p = lot.find("p")
-            h_t = h.text.strip() if h else ""
-            p_t = p.text.strip() if p else ""
-            descs.append(f"{h_t} : {p_t}" if p_t else h_t)
-        desc_complete = " | ".join(descs) if descs else None
+        result: dict = {}
 
-        # Montant adjudication
-        adj_el = article.find("h3")
-        adj_text = adj_el.text.replace("Adjudication :", "").strip() if adj_el else None
+        # ── Description longue ──────────────────────────────────────────
+        result["description_longue"] = _compose_description_longue(article)
 
-        # Date adjudication
-        time_el = article.select_one(".Date time")
-        date_adj = time_el["datetime"] if time_el and time_el.get("datetime") else None
+        # ── Date de vente (ISO depuis l'attribut datetime) ──────────────
+        time_el = article.select_one("p.Date time")
+        if time_el and time_el.get("datetime"):
+            try:
+                dt_str = time_el["datetime"]  # ex. "2026-04-07T14:00:00"
+                result["date_vente"] = datetime.fromisoformat(dt_str).date()
+                result["date_vente_texte"] = time_el.get_text(strip=True)
+            except (ValueError, TypeError):
+                pass
 
-        return {
-            "desc_courte": desc_complete,
-            "montant_adjudication": _parse_montant(adj_text),
-            "date_vente_texte": date_adj,
-        }
+        # ── desc_courte complète (1er lot, non tronquée) ────────────────
+        first_lot = article.select_one(".FirstSousLot")
+        if first_lot:
+            h2 = first_lot.find("h2")
+            p = first_lot.find("p")
+            h2_t = h2.get_text(strip=True) if h2 else ""
+            p_t = p.get_text(separator=" ", strip=True) if p else ""
+            result["desc_courte"] = f"{h2_t} {p_t}".strip() if p_t else h2_t
+
+        # ── Tribunal ────────────────────────────────────────────────────
+        court = article.select_one("p.Court")
+        if court:
+            result["tribunal"] = _clean_ws(court.get_text(strip=True))
+
+        # ── Montant adjudication (plus précis que le listing) ──────────
+        adj = article.select_one("div.Lot > h3")
+        if adj:
+            adj_text = adj.get_text(strip=True).replace("Adjudication", "").replace(":", "").strip()
+            result["montant_adjudication"] = _parse_montant(adj_text)
+
+        # ── Mise à prix ────────────────────────────────────────────────
+        mep = article.select_one("div.Lot > h4")
+        if mep:
+            mep_text = mep.get_text(strip=True)
+            for tok in ("Mise à prix", "Mise a prix", "(", ")", ":"):
+                mep_text = mep_text.replace(tok, "")
+            result["mise_a_prix"] = _parse_montant(mep_text)
+
+        # ── Adresse ─────────────────────────────────────────────────────
+        street = article.select_one("div.Location p.Street")
+        if street:
+            result["adresse"] = _clean_ws(street.get_text(separator=", ", strip=True))
+
+        # ── Statut occupation ───────────────────────────────────────────
+        full_text = article.get_text(separator="\n")
+        if re.search(r"\boccup[eé]", full_text, re.I):
+            result["statut_occupation"] = "occupé"
+        elif re.search(r"\b(?:libre|inoccu|vacant)", full_text, re.I):
+            result["statut_occupation"] = "libre"
+
+        # ── Avocat (premier trust) ──────────────────────────────────────
+        trusts = article.select("div.Trust")
+        if trusts:
+            h3 = trusts[0].find("h3")
+            if h3:
+                result["avocat_nom"] = _clean_ws(h3.get_text(strip=True))
+            p_first = trusts[0].find("p")
+            if p_first:
+                p_text = p_first.get_text(separator="\n", strip=True)
+                lines = [ln.strip() for ln in p_text.split("\n") if ln.strip()]
+                for ln in lines:
+                    tel_m = re.search(r"T[eé]l\.?\s*:?\s*([\d\s.]+)", ln)
+                    if tel_m:
+                        result["avocat_tel"] = tel_m.group(1).strip()
+                        break
+                addr_lines = []
+                for ln in lines:
+                    if re.search(r"T[eé]l", ln):
+                        break
+                    if not re.match(r"^(?:Pour plus|www\.)", ln):
+                        addr_lines.append(ln)
+                if addr_lines:
+                    result["avocat_adresse"] = ", ".join(addr_lines)
+
+        # ── Dépendances (lots après le premier = dépendances) ──────────
+        sous_lots = article.select(".SousLot")
+        dep_titles = " | ".join(
+            lot.find("h2").get_text(strip=True)
+            for lot in sous_lots[1:]
+            if lot.find("h2")
+        ) if len(sous_lots) > 1 else ""
+        result["has_cave"] = bool(re.search(r"\bcave\b", dep_titles, re.I))
+        result["has_parking_dep"] = bool(re.search(r"\b(?:parking|stationnement)\b", dep_titles, re.I))
+        result["has_garage"] = bool(re.search(r"\bgarage\b", dep_titles, re.I))
+        # Jardin, balcon, terrasse : chercher dans l'ensemble du texte
+        result["has_jardin"] = bool(re.search(r"\bjardin\b", full_text, re.I))
+        result["has_balcon"] = bool(re.search(r"\bbalcon\b", full_text, re.I))
+        result["has_terrasse"] = bool(re.search(r"\bterrasse\b", full_text, re.I))
+
+        return result
+
     except Exception as exc:
-        print(f"  [!] Erreur détail {url} : {exc}")
+        print(f"  [!] Erreur detail {url} : {exc}")
         return None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Insertion PostgreSQL
+# Insertion & mise à jour PostgreSQL
 # ─────────────────────────────────────────────────────────────────────────────
-_INSERT_COLS = ("source_region", "url_annonce", "code_dept", "commune",
-                "desc_courte", "montant_adjudication", "date_vente_texte", "date_scraping")
+_INSERT_COLS = (
+    "source_region", "url_annonce", "code_dept", "commune",
+    "desc_courte", "montant_adjudication", "date_vente_texte", "date_scraping",
+    "date_vente", "description_longue", "adresse", "mise_a_prix",
+    "tribunal", "statut_occupation",
+    "avocat_nom", "avocat_tel", "avocat_adresse",
+    "has_cave", "has_parking_dep", "has_jardin",
+    "has_balcon", "has_terrasse", "has_garage",
+)
 
 _INSERT_SQL = (
     f"INSERT INTO foncier.licitor_brut ({', '.join(_INSERT_COLS)}) "
     f"VALUES ({', '.join(['%s'] * len(_INSERT_COLS))}) "
     "ON CONFLICT (url_annonce, desc_courte, montant_adjudication) DO NOTHING"
 )
+
+_UPDATE_DETAIL_SQL = """
+    UPDATE foncier.licitor_brut SET
+        date_vente          = %(date_vente)s,
+        date_vente_texte    = COALESCE(%(date_vente_texte)s, date_vente_texte),
+        description_longue  = %(description_longue)s,
+        adresse             = %(adresse)s,
+        mise_a_prix         = %(mise_a_prix)s,
+        tribunal            = %(tribunal)s,
+        statut_occupation   = %(statut_occupation)s,
+        avocat_nom          = %(avocat_nom)s,
+        avocat_tel          = %(avocat_tel)s,
+        avocat_adresse      = %(avocat_adresse)s,
+        has_cave            = %(has_cave)s,
+        has_parking_dep     = %(has_parking_dep)s,
+        has_jardin          = %(has_jardin)s,
+        has_balcon          = %(has_balcon)s,
+        has_terrasse        = %(has_terrasse)s,
+        has_garage          = %(has_garage)s
+    WHERE id = %(id)s
+"""
 
 
 def _load_existing_urls(conn) -> Set[str]:
@@ -270,20 +479,55 @@ def _load_existing_urls(conn) -> Set[str]:
         return {r[0] for r in cur.fetchall()}
 
 
+def _build_insert_row(source_region: str, listing: dict, detail: Optional[dict], now: datetime) -> tuple:
+    """Construit le tuple INSERT à partir des données listing + éventuel détail."""
+    d = detail or {}
+    return (
+        source_region,
+        listing["url_annonce"],
+        listing["code_dept"],
+        listing["commune"],
+        # desc_courte : préférer la version complète du détail si disponible
+        d.get("desc_courte") or listing["desc_courte"],
+        # montant : préférer le détail (plus précis)
+        d.get("montant_adjudication") if d.get("montant_adjudication") is not None else listing["montant_adjudication"],
+        # date_vente_texte : préférer le détail (texte complet)
+        d.get("date_vente_texte") or listing.get("date_vente_texte"),
+        now,
+        # date_vente : préférer le détail (ISO), sinon listing (DD-MM-YYYY)
+        d.get("date_vente") or listing.get("date_vente"),
+        d.get("description_longue"),
+        d.get("adresse"),
+        d.get("mise_a_prix"),
+        d.get("tribunal"),
+        d.get("statut_occupation"),
+        d.get("avocat_nom"),
+        d.get("avocat_tel"),
+        d.get("avocat_adresse"),
+        d.get("has_cave"),
+        d.get("has_parking_dep"),
+        d.get("has_jardin"),
+        d.get("has_balcon"),
+        d.get("has_terrasse"),
+        d.get("has_garage"),
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Boucle principale de scraping d'une région
 # ─────────────────────────────────────────────────────────────────────────────
 def scrape_region(conn, region_slug: str, *,
-                  with_details: bool = False,
+                  no_details: bool = False,
                   max_pages: Optional[int] = None,
                   start_page: int = 1,
                   dry_run: bool = False) -> int:
     source_region = REGIONS[region_slug]
     print(f"\n{'=' * 60}")
     print(f"Region : {source_region}  ({region_slug})")
+    print(f"Mode   : {'listing seul' if no_details else 'listing + detail'}")
     print(f"{'=' * 60}")
 
-    # Page 1 : récupérer la pagination ET les premières annonces en une seule requête
+    # Page de départ : récupérer pagination ET premières annonces en une seule requête
     resp = _safe_request(_historique_url(region_slug, start_page))
     soup = BeautifulSoup(resp.text, "html.parser")
     total, nb_pages = _extract_pagination(soup)
@@ -291,11 +535,13 @@ def scrape_region(conn, region_slug: str, *,
         print("  Aucune annonce trouvee.")
         return 0
 
-    last_page = min(nb_pages, max_pages) if max_pages else nb_pages
+    last_page = min(nb_pages, start_page + max_pages - 1) if max_pages else nb_pages
     print(f"  {total} annonces au total, pages {start_page}..{last_page} a parcourir")
 
     existing_urls = _load_existing_urls(conn)
     print(f"  {len(existing_urls)} annonces deja en base (toutes regions)")
+
+    from psycopg2.extras import execute_batch
 
     inserted_total = 0
     skipped_total = 0
@@ -311,46 +557,33 @@ def scrape_region(conn, region_slug: str, *,
                 BeautifulSoup(_safe_request(_historique_url(region_slug, page)).text, "html.parser")
             )
 
-        new_annonces: List[dict] = []
+        rows_to_insert: list = []
         for a in annonces:
             if a["url_annonce"] in existing_urls:
                 skipped_total += 1
                 continue
 
-            # Page détail si demandé
-            if with_details:
+            detail = None
+            if not no_details:
                 detail = _scrape_detail(a["url_annonce"])
-                if detail:
-                    if detail.get("desc_courte"):
-                        a["desc_courte"] = detail["desc_courte"]
-                    if detail.get("montant_adjudication") is not None:
-                        a["montant_adjudication"] = detail["montant_adjudication"]
-                    if detail.get("date_vente_texte"):
-                        a["date_vente_texte"] = detail["date_vente_texte"]
 
-            new_annonces.append(a)
+            rows_to_insert.append(_build_insert_row(source_region, a, detail, now))
             existing_urls.add(a["url_annonce"])
 
-        # Insertion par lot (par page)
-        if new_annonces and not dry_run:
-            from psycopg2.extras import execute_batch
-            rows = [
-                (source_region, a["url_annonce"], a["code_dept"], a["commune"],
-                 a["desc_courte"], a["montant_adjudication"], a["date_vente_texte"], now)
-                for a in new_annonces
-            ]
+        # Insertion par lot (par page) → commit immédiat pour résilience
+        if rows_to_insert and not dry_run:
             with conn.cursor() as cur:
-                execute_batch(cur, _INSERT_SQL, rows, page_size=200)
+                execute_batch(cur, _INSERT_SQL, rows_to_insert, page_size=200)
             conn.commit()
 
-        inserted_total += len(new_annonces)
-        nb_exist = len(annonces) - len(new_annonces)
+        inserted_total += len(rows_to_insert)
+        nb_exist = len(annonces) - len(rows_to_insert)
         marker = " (dry-run)" if dry_run else ""
         print(f"  Page {page:>5}/{last_page}  |  {len(annonces)} ann.  "
-              f"{len(new_annonces)} nouvelles  {nb_exist} existantes{marker}")
+              f"{len(rows_to_insert)} nouvelles  {nb_exist} existantes{marker}")
 
         # Indicateur : si plusieurs pages consécutives n'apportent rien de nouveau
-        if len(new_annonces) == 0:
+        if len(rows_to_insert) == 0:
             consecutive_empty += 1
             if consecutive_empty >= 5:
                 print(f"\n  [info] 5 pages consecutives sans nouvelle annonce.")
@@ -365,13 +598,86 @@ def scrape_region(conn, region_slug: str, *,
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Mode backfill : compléter les lignes existantes sans description_longue
+# ─────────────────────────────────────────────────────────────────────────────
+def backfill_details(conn, *, max_rows: int = 200, dry_run: bool = False) -> int:
+    """Récupère la page détail pour les annonces existantes sans description_longue.
+
+    Le matching est sûr : on lit (id, url_annonce) depuis la base, on scrape
+    l'url_annonce correspondante, et on met à jour la ligne par son id (PK).
+    """
+    print(f"\n{'=' * 60}")
+    print(f"Backfill details  (max {max_rows} lignes)")
+    print(f"{'=' * 60}")
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, url_annonce FROM foncier.licitor_brut "
+            "WHERE description_longue IS NULL "
+            "ORDER BY id DESC LIMIT %s",
+            (max_rows,),
+        )
+        rows = cur.fetchall()
+
+    if not rows:
+        print("  Aucune ligne a completer.")
+        return 0
+
+    print(f"  {len(rows)} lignes a completer")
+
+    updated = 0
+    errors = 0
+    for i, (row_id, url) in enumerate(rows, 1):
+        detail = _scrape_detail(url)
+        if not detail or not detail.get("description_longue"):
+            errors += 1
+            print(f"  [{i}/{len(rows)}] id={row_id}  SKIP (page indisponible)")
+            continue
+
+        if not dry_run:
+            params = {
+                "id": row_id,
+                "date_vente": detail.get("date_vente"),
+                "date_vente_texte": detail.get("date_vente_texte"),
+                "description_longue": detail.get("description_longue"),
+                "desc_courte": detail.get("desc_courte"),
+                "montant_adjudication": detail.get("montant_adjudication"),
+                "adresse": detail.get("adresse"),
+                "mise_a_prix": detail.get("mise_a_prix"),
+                "tribunal": detail.get("tribunal"),
+                "statut_occupation": detail.get("statut_occupation"),
+                "avocat_nom": detail.get("avocat_nom"),
+                "avocat_tel": detail.get("avocat_tel"),
+                "avocat_adresse": detail.get("avocat_adresse"),
+                "has_cave": detail.get("has_cave"),
+                "has_parking_dep": detail.get("has_parking_dep"),
+                "has_jardin": detail.get("has_jardin"),
+                "has_balcon": detail.get("has_balcon"),
+                "has_terrasse": detail.get("has_terrasse"),
+                "has_garage": detail.get("has_garage"),
+            }
+            with conn.cursor() as cur:
+                cur.execute(_UPDATE_DETAIL_SQL, params)
+            conn.commit()
+
+        updated += 1
+        marker = " (dry-run)" if dry_run else ""
+        if i % 10 == 0 or i == len(rows):
+            print(f"  [{i}/{len(rows)}]  {updated} mises a jour, {errors} erreurs{marker}")
+
+    print(f"\n  Bilan backfill : {updated} mises a jour, {errors} erreurs")
+    return updated
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Point d'entrée
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
-        description="Scraping des adjudications Licitor.fr → PostgreSQL (foncier.licitor_brut)",
+        description="Scraping des adjudications Licitor.fr -> PostgreSQL (foncier.licitor_brut)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="Apres le scraping, lancer enrich_licitor_brut.py pour parser type_local / surfaces.",
+        epilog="Apres le scraping, lancer enrich_licitor_brut.py pour parser type_local / surfaces.\n"
+               "Puis enrich_licitor_detail.py pour re-parser description_longue si besoin.",
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--region", choices=list(REGIONS.keys()),
@@ -380,15 +686,19 @@ def main():
                        help="Scraper toutes les regions")
     group.add_argument("--list-regions", action="store_true",
                        help="Afficher les regions disponibles")
+    group.add_argument("--backfill-details", action="store_true",
+                       help="Completer les lignes existantes sans description_longue")
 
-    parser.add_argument("--with-details", action="store_true",
-                        help="Scraper aussi les pages detail (descriptions completes ; plus lent)")
+    parser.add_argument("--no-details", action="store_true",
+                        help="Ne pas scraper les pages detail (plus rapide)")
     parser.add_argument("--max-pages", type=int, default=None,
                         help="Nombre max de pages par region")
     parser.add_argument("--start-page", type=int, default=1,
                         help="Page de depart (defaut 1, utile pour reprendre)")
+    parser.add_argument("--max-rows", type=int, default=200,
+                        help="Nombre max de lignes en mode backfill (defaut 200)")
     parser.add_argument("--dry-run", action="store_true",
-                        help="Scraper sans inserer en base")
+                        help="Scraper sans ecrire en base")
 
     args = parser.parse_args()
 
@@ -398,28 +708,30 @@ def main():
             print(f"  {slug:<35} {label}")
         return
 
-    slugs = list(REGIONS.keys()) if args.all else [args.region]
-
     import psycopg2
     cfg = _get_db_config()
     conn = psycopg2.connect(**cfg)
     conn.autocommit = False
 
     try:
-        grand_total = 0
-        for slug in slugs:
-            grand_total += scrape_region(
-                conn, slug,
-                with_details=args.with_details,
-                max_pages=args.max_pages,
-                start_page=args.start_page,
-                dry_run=args.dry_run,
-            )
-        print(f"\n{'=' * 60}")
-        print(f"Total : {grand_total} nouvelles annonces inserees.")
-        if grand_total > 0 and not args.dry_run:
-            print("Conseil : lancer  python scripts/import/enrich_licitor_brut.py  "
-                  "pour parser type_local / surfaces.")
+        if args.backfill_details:
+            backfill_details(conn, max_rows=args.max_rows, dry_run=args.dry_run)
+        else:
+            slugs = list(REGIONS.keys()) if args.all else [args.region]
+            grand_total = 0
+            for slug in slugs:
+                grand_total += scrape_region(
+                    conn, slug,
+                    no_details=args.no_details,
+                    max_pages=args.max_pages,
+                    start_page=args.start_page,
+                    dry_run=args.dry_run,
+                )
+            print(f"\n{'=' * 60}")
+            print(f"Total : {grand_total} nouvelles annonces inserees.")
+            if grand_total > 0 and not args.dry_run:
+                print("Conseil : lancer  python scripts/import/enrich_licitor_brut.py  "
+                      "pour parser type_local / surfaces.")
     except KeyboardInterrupt:
         print("\n\nInterrompu par l'utilisateur. Les pages deja traitees sont commitees.")
     finally:
