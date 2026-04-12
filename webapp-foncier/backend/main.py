@@ -4,6 +4,8 @@ import json
 import math
 import os
 import re
+import subprocess
+import sys
 import threading
 import time as _time
 import unicodedata
@@ -18,7 +20,7 @@ from typing import Optional, List, Any, Literal, Tuple, Dict, Set
 
 import psycopg2
 from psycopg2.extras import RealDictCursor, Json
-from fastapi import FastAPI, Query, HTTPException, Response, Request
+from fastapi import FastAPI, Query, HTTPException, Response, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
@@ -1016,10 +1018,16 @@ def _pick_tranche_renta_line(lignes: Optional[List[dict]]) -> dict:
     rb_m, rn_m = p("Maisons")
     rb_a, rn_a = p("Appartements")
     rb_g, rn_g = p("Maisons/Appart.")
+    if rb_g is None and rn_g is None:
+        rb_g, rn_g = p("Total")
 
     def nb(tb: str):
         r = by_tb.get(tb)
         return r.get("nb_locaux") if r else None
+
+    nb_agg = nb("Maisons/Appart.")
+    if nb_agg is None:
+        nb_agg = nb("Total")
 
     return {
         "renta_brute_maisons": rb_m,
@@ -1030,7 +1038,7 @@ def _pick_tranche_renta_line(lignes: Optional[List[dict]]) -> dict:
         "renta_nette_agg": rn_g,
         "nb_locaux_maisons": nb("Maisons"),
         "nb_locaux_appts": nb("Appartements"),
-        "nb_locaux_agg": nb("Maisons/Appart."),
+        "nb_locaux_agg": nb_agg,
     }
 
 
@@ -1524,12 +1532,19 @@ def _build_renta_lignes(
     loyer_key = "loyer_med_m2"
     ventes_by_type = {r["type"]: r for r in ventes_lignes}
     loc_by_type = {r["type"]: r for r in loc_lignes}
+
+    def _loc_for_label(type_label: str) -> dict:
+        """Ligne loyer ANIL pour ce type (agrégat : accepte Total en alias legacy)."""
+        r = loc_by_type.get(type_label, {})
+        if r or type_label != "Maisons/Appart.":
+            return r
+        return loc_by_type.get("Total", {})
     # Pas de proxy loyer pour Dépendances / Locaux indus. / comm. : loyers_communes ne contient
     # que les maisons et appartements — rentabilité doit rester NULL pour les autres types.
     charges_pre: dict = {}
     for type_label in ["Maisons", "Appartements"]:
         v = ventes_by_type.get(type_label, {})
-        l = loc_by_type.get(type_label, {})
+        l = _loc_for_label(type_label)
         surf = _float(v.get(surface_key))
         loyer_m2 = _float(l.get(loyer_key))
         if type_label == "Maisons":
@@ -1555,7 +1570,7 @@ def _build_renta_lignes(
         if type_label not in ventes_by_type:
             continue
         v = ventes_by_type[type_label]
-        l = loc_by_type.get(type_label, {})
+        l = _loc_for_label(type_label)
         loyer_m2 = _float(l.get(loyer_key))
         surf = _float(v.get(surface_key))
         if surf is None and not use_median:
@@ -1574,7 +1589,7 @@ def _build_renta_lignes(
     out: List[dict] = []
     for type_label, _poids in row_plan:
         v = ventes_by_type.get(type_label, {})
-        l = loc_by_type.get(type_label, {})
+        l = _loc_for_label(type_label)
         nl = _nb_locaux_for_type(type_label, ventes_by_type, nb_maisons_agreg, nb_apparts_agreg)
         prix_m2 = _float(v.get(prix_m2_key))
         if (prix_m2 is None or prix_m2 <= 0) and not use_median:
@@ -2187,8 +2202,10 @@ def _normalize_fiche_payload(pl: dict) -> dict:
 
 
 def _relabel_agreg_in_payload(payload: dict, old: str = "Maisons/Appart.", new: str = "Total") -> dict:
-    """Renomme le libellé agrégat ('Maisons/Appart.' → 'Total') dans tous les champs type/type_bien du payload fiche.
-    Les clés de dict internes restent inchangées ; seuls les champs affichés sont renommés."""
+    """Renomme le libellé agrégat ('Maisons/Appart.' → 'Total') dans les champs type/type_bien du payload fiche.
+
+    locations.lignes n'est pas renommée : la fiche commune et _build_renta_lignes attendent la clé stable
+    « Maisons/Appart. » (l'affichage « Total » est géré côté HTML)."""
     def _fix(lignes: Optional[list], key: str) -> None:
         for r in (lignes or []):
             if r.get(key) == old:
@@ -2196,8 +2213,6 @@ def _relabel_agreg_in_payload(payload: dict, old: str = "Maisons/Appart.", new: 
 
     if payload.get("ventes"):
         _fix(payload["ventes"].get("lignes"), "type")
-    if payload.get("locations"):
-        _fix(payload["locations"].get("lignes"), "type")
     for section in ("rentabilite_mediane", "rentabilite_moyenne"):
         if payload.get(section):
             _fix(payload[section].get("lignes"), "type_bien")
@@ -2402,34 +2417,78 @@ def get_fiche_logement(
                 )
             loc_rows = cur.fetchall()
             _debug_log("[fiche] code_insee=%s locations: annee=%s nb_lignes=%s", code_insee, loc_annee, len(loc_rows))
-            # segment_surface: 'all', '1-2_pieces', '3_plus_pieces'
-            # type_bien: 'maison', 'appartement'
-            def loc_key(r):
-                tb = (r.get("type_bien") or "").strip().lower()
-                seg = (r.get("segment_surface") or "").strip()
-                if seg == "1-2_pieces":
+            # segment_surface: 'all', '1-2_pieces', '3_plus_pieces' (insensible à la casse / espaces)
+            # type_bien: import DHUP 'appartement'/'maison' ; en base on peut aussi avoir 'Appartements'/'Maisons'.
+
+            def _norm_lc_type_bien_loyers(raw: Any) -> str:
+                t = (str(raw).strip().lower() if raw is not None else "")
+                if t in ("appartement", "appartements"):
+                    return "appartement"
+                if t in ("maison", "maisons"):
+                    return "maison"
+                return t
+
+            def _norm_lc_seg(r: dict) -> str:
+                s = (r.get("segment_surface") or "").strip().lower().replace(" ", "_").replace("-", "_")
+                for a, b in (("é", "e"), ("è", "e"), ("ê", "e")):
+                    s = s.replace(a, b)
+                return s
+
+            def loc_key(r: dict) -> str:
+                tb = _norm_lc_type_bien_loyers(r.get("type_bien"))
+                seg = _norm_lc_seg(r)
+                # Segments DHUP (loyers_communes) : 1-2 / 3+ ne concernent que les appartements ;
+                # on s'appuie sur segment_surface pour alimenter la ligne ANIL même si type_bien est vide ou atypique.
+                if seg in ("1-2_pieces", "1_2_pieces", "12_pieces"):
                     return "Apparts 1/2 pièces"
-                if seg == "3_plus_pieces":
-                    return "Apparts. 3p+"
+                if seg in (
+                    "3_plus_pieces",
+                    "3_plus_piece",
+                    "plus_3_pieces",
+                    "3plus_pieces",
+                ):
+                    return "Apparts +3 pièces"
+                if seg == "all":
+                    if tb == "maison":
+                        return "Maisons"
+                    if tb == "appartement":
+                        return "Appartements"
+                    return "Maisons/Appart."
                 if tb == "maison":
                     return "Maisons"
                 if tb == "appartement":
                     return "Appartements"
-                return "Maisons/Appart." if seg == "all" else tb
-            # Agrégat "Maisons/Appart." = lignes type_bien all + segment all (ou somme maison+appart segment all)
-            by_loc_key = {}
+                return tb or "Maisons/Appart."
+
+            def _weighted_loc_stats(rows: List[dict]) -> Tuple[int, float, float, float]:
+                nb = sum(_int(x.get("nbobs_com")) for x in rows)
+                if nb <= 0:
+                    return 0, 0.0, 0.0, 0.0
+                tl = tq1 = tq3 = 0.0
+                for x in rows:
+                    n = _int(x.get("nbobs_com"))
+                    lv = _float(x.get("loypredm2"))
+                    q1v = _float(x.get("lwr_ipm2"))
+                    q3v = _float(x.get("upr_ipm2"))
+                    if lv is not None:
+                        tl += lv * n
+                    if q1v is not None:
+                        tq1 += q1v * n
+                    if q3v is not None:
+                        tq3 += q3v * n
+                return nb, tl, tq1, tq3
+
+            # Agrégat "Maisons/Appart." = somme des lignes segment_surface = all (maison + appartement)
+            by_loc_key: Dict[str, List[dict]] = {}
             for r in loc_rows:
                 k = loc_key(r)
-                if k not in by_loc_key:
-                    by_loc_key[k] = []
-                by_loc_key[k].append(r)
+                by_loc_key.setdefault(k, []).append(r)
             total_nb = 0
-            total_loy = 0
-            total_q1 = 0
-            total_q3 = 0
+            total_loy = 0.0
+            total_q1 = 0.0
+            total_q3 = 0.0
             for r in loc_rows:
-                seg = (r.get("segment_surface") or "").strip()
-                if seg != "all":
+                if _norm_lc_seg(r) != "all":
                     continue
                 n = _int(r.get("nbobs_com"))
                 total_nb += n
@@ -2442,18 +2501,33 @@ def get_fiche_logement(
                     total_q1 += q1 * n
                 if q3 is not None:
                     total_q3 += q3 * n
+            # Repli : certaines communes n'ont pas de fichier pred-app (tous segments) mais ont app12 + app3
+            if total_nb <= 0:
+                fallback_rows: List[dict] = []
+                for r in loc_rows:
+                    tb = _norm_lc_type_bien_loyers(r.get("type_bien"))
+                    seg = _norm_lc_seg(r)
+                    if tb == "maison" and seg == "all":
+                        fallback_rows.append(r)
+                    elif tb == "appartement" and seg in ("1-2_pieces", "1_2_pieces", "12_pieces"):
+                        fallback_rows.append(r)
+                    elif tb == "appartement" and seg in (
+                        "3_plus_pieces", "3_plus_piece", "plus_3_pieces", "3plus_pieces",
+                    ):
+                        fallback_rows.append(r)
+                total_nb, total_loy, total_q1, total_q3 = _weighted_loc_stats(fallback_rows)
             if total_nb > 0:
                 loc_lignes.append({
                     "type": "Maisons/Appart.",
                     "nb_loyers": total_nb,
-                    "loyer_med_m2": round(total_loy / total_nb, 2),
+                    "loyer_med_m2": round(total_loy / total_nb, 2) if total_loy else None,
                     "loyer_q1_m2": round(total_q1 / total_nb, 2) if total_q1 else None,
                     "loyer_q3_m2": round(total_q3 / total_nb, 2) if total_q3 else None,
                 })
-            for label, key in [("Maisons", "Maisons"), ("Appartements", "Appartements"), ("Apparts 1/2 pièces", "Apparts 1/2 pièces"), ("Apparts. 3p+", "Apparts. 3p+")]:
+            for label, key in [("Maisons", "Maisons"), ("Appartements", "Appartements"), ("Apparts 1/2 pièces", "Apparts 1/2 pièces"), ("Apparts +3 pièces", "Apparts +3 pièces")]:
                 rows = by_loc_key.get(key, [])
                 if not rows:
-                    if key in ("Apparts 1/2 pièces", "Apparts. 3p+"):
+                    if key in ("Apparts 1/2 pièces", "Apparts +3 pièces"):
                         loc_lignes.append({"type": label, "nb_loyers": 0, "loyer_med_m2": None, "loyer_q1_m2": None, "loyer_q3_m2": None})
                     continue
                 sn = sum(_int(r.get("nbobs_com")) for r in rows) or 1
@@ -2960,6 +3034,307 @@ SELECT * FROM total
     finally:
         if conn is not None:
             conn.close()
+
+
+# ── Leboncoin locations : mapping type_bien → libellés ────────────────────────
+_LBC_TYPE_MAP: Dict[str, str] = {
+    "appartement": "Appartements",
+    "maison": "Maisons",
+    "studio": "Appartements",
+    "loft": "Appartements",
+    "parking": "Parkings / garages",
+    "garage": "Parkings / garages",
+    "local": "Locaux indus. / comm.",
+    "commerce": "Locaux indus. / comm.",
+    "bureau": "Locaux indus. / comm.",
+    "terrain": "Terrains",
+}
+
+_LBC_LOC_TYPE_DISPLAY_ORDER: List[str] = [
+    "Total", "Maisons", "Appartements",
+    "Parkings / garages", "Locaux indus. / comm.",
+]
+
+
+@app.get("/api/leboncoin-locations")
+def get_leboncoin_locations(
+    code_dept: str = Query(..., description="Code département"),
+    commune: str = Query(..., description="Nom de la commune"),
+    surface_cat: str = Query("", description="Catégorie surface (S1-S5) ou vide"),
+    pieces_cat: str = Query("", description="Catégorie pièces (T1-T5) ou vide"),
+):
+    """Retourne les locations Leboncoin agrégées par type pour la commune (toutes dates)."""
+    conn = None
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor(cursor_factory=RealDictCursor)
+
+        commune_norm = _normalize_name_canonical(commune)
+        sql_norm_col = _sql_norm_name_canonical("commune")
+
+        # Filtres surface/pièces
+        surface_filter = ""
+        pieces_filter = ""
+        sc = surface_cat.strip().upper()
+        pc = pieces_cat.strip().upper()
+        if sc in _SURFACE_TRANCHES:
+            lo, hi = _SURFACE_TRANCHES[sc]
+            if lo is not None and hi is not None:
+                surface_filter = f"AND surface >= {lo} AND surface < {hi}"
+            elif lo is not None:
+                surface_filter = f"AND surface >= {lo}"
+            elif hi is not None:
+                surface_filter = f"AND surface < {hi}"
+        if pc in _PIECES_TRANCHES:
+            lo, hi = _PIECES_TRANCHES[pc]
+            if lo is not None and hi is not None:
+                pieces_filter = f"AND nb_pieces >= {lo} AND nb_pieces < {hi}"
+            elif lo is not None:
+                pieces_filter = f"AND nb_pieces >= {lo}"
+            elif hi is not None:
+                pieces_filter = f"AND nb_pieces < {hi}"
+
+        sql = f"""
+WITH base AS (
+    SELECT
+        LOWER(COALESCE(type_bien, 'autre')) AS type_raw,
+        loyer,
+        COALESCE(loyer_hc, loyer) AS loyer_hc_calc,
+        charges,
+        surface,
+        nb_pieces,
+        meuble,
+        charges_incluses,
+        CASE WHEN surface > 0 THEN (loyer::numeric / surface) ELSE NULL END AS loyer_m2_calc,
+        CASE WHEN surface > 0 THEN (COALESCE(loyer_hc, loyer)::numeric / surface) ELSE NULL END AS loyer_hc_m2_calc
+    FROM foncier.leboncoin_locations_brut
+    WHERE LOWER(code_dept) = LOWER(%s)
+      AND {sql_norm_col} = %s
+      AND loyer IS NOT NULL
+      {surface_filter}
+      {pieces_filter}
+),
+typed AS (
+    SELECT
+        CASE
+            WHEN type_raw IN ('appartement', 'studio', 'loft') THEN 'Appartements'
+            WHEN type_raw = 'maison' THEN 'Maisons'
+            WHEN type_raw IN ('parking', 'garage') THEN 'Parkings / garages'
+            WHEN type_raw IN ('local', 'commerce', 'bureau') THEN 'Locaux indus. / comm.'
+            ELSE 'Autres'
+        END AS type_label,
+        loyer, loyer_hc_calc, charges, surface, meuble,
+        charges_incluses, loyer_m2_calc, loyer_hc_m2_calc
+    FROM base
+),
+par_type AS (
+    SELECT
+        type_label,
+        COUNT(*)                                                                     AS nb_biens,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY loyer))                  AS loyer_median,
+        ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY loyer_m2_calc))::numeric, 2)       AS loyer_med_m2,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY surface))                AS surface_mediane,
+        ROUND(AVG(loyer))                                                           AS loyer_moyen,
+        ROUND((AVG(loyer_m2_calc))::numeric, 2)                                                AS loyer_moy_m2,
+        ROUND(AVG(surface))                                                         AS surface_moyenne,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY loyer_hc_calc))          AS loyer_hc_median,
+        ROUND(AVG(loyer_hc_calc))                                                   AS loyer_hc_moyen,
+        ROUND(AVG(charges) FILTER (WHERE charges IS NOT NULL))                      AS charges_moy,
+        ROUND((PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY loyer_m2_calc))::numeric, 2)      AS loyer_m2_q1,
+        ROUND((PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY loyer_m2_calc))::numeric, 2)      AS loyer_m2_q3,
+        ROUND((100.0 * COUNT(*) FILTER (WHERE meuble = true) / NULLIF(COUNT(*), 0))::numeric, 1) AS pct_meubles
+    FROM typed
+    GROUP BY type_label
+),
+total AS (
+    SELECT
+        'Total'::text AS type_label,
+        COUNT(*)                                                                     AS nb_biens,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY loyer))                  AS loyer_median,
+        ROUND((PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY loyer_m2_calc))::numeric, 2)       AS loyer_med_m2,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY surface))                AS surface_mediane,
+        ROUND(AVG(loyer))                                                           AS loyer_moyen,
+        ROUND((AVG(loyer_m2_calc))::numeric, 2)                                                AS loyer_moy_m2,
+        ROUND(AVG(surface))                                                         AS surface_moyenne,
+        ROUND(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY loyer_hc_calc))          AS loyer_hc_median,
+        ROUND(AVG(loyer_hc_calc))                                                   AS loyer_hc_moyen,
+        ROUND(AVG(charges) FILTER (WHERE charges IS NOT NULL))                      AS charges_moy,
+        ROUND((PERCENTILE_CONT(0.25) WITHIN GROUP (ORDER BY loyer_m2_calc))::numeric, 2)      AS loyer_m2_q1,
+        ROUND((PERCENTILE_CONT(0.75) WITHIN GROUP (ORDER BY loyer_m2_calc))::numeric, 2)      AS loyer_m2_q3,
+        ROUND((100.0 * COUNT(*) FILTER (WHERE meuble = true) / NULLIF(COUNT(*), 0))::numeric, 1) AS pct_meubles
+    FROM typed
+)
+SELECT * FROM par_type
+UNION ALL
+SELECT * FROM total
+"""
+        cur.execute(sql, (code_dept, commune_norm))
+        rows = cur.fetchall()
+
+        if not rows:
+            return {"lignes": []}
+
+        by_label = {r["type_label"]: r for r in rows}
+
+        def _to_ligne(label: str) -> Optional[dict]:
+            row = by_label.get(label)
+            if row is None or not row.get("nb_biens"):
+                return None
+            return {
+                "type": label,
+                "nb_biens":        int(row["nb_biens"]),
+                "loyer_median":    int(row["loyer_median"])    if row.get("loyer_median")    is not None else None,
+                "loyer_med_m2":    float(row["loyer_med_m2"])  if row.get("loyer_med_m2")    is not None else None,
+                "surface_mediane": float(row["surface_mediane"]) if row.get("surface_mediane") is not None else None,
+                "loyer_moyen":     int(row["loyer_moyen"])     if row.get("loyer_moyen")     is not None else None,
+                "loyer_moy_m2":    float(row["loyer_moy_m2"]) if row.get("loyer_moy_m2")    is not None else None,
+                "surface_moyenne": float(row["surface_moyenne"]) if row.get("surface_moyenne") is not None else None,
+                "loyer_hc_median": int(row["loyer_hc_median"]) if row.get("loyer_hc_median") is not None else None,
+                "loyer_hc_moyen":  int(row["loyer_hc_moyen"])  if row.get("loyer_hc_moyen")  is not None else None,
+                "charges_moy":     int(row["charges_moy"])     if row.get("charges_moy")     is not None else None,
+                "loyer_m2_q1":     float(row["loyer_m2_q1"])   if row.get("loyer_m2_q1")     is not None else None,
+                "loyer_m2_q3":     float(row["loyer_m2_q3"])   if row.get("loyer_m2_q3")     is not None else None,
+                "pct_meubles":     float(row["pct_meubles"])   if row.get("pct_meubles")     is not None else None,
+            }
+
+        lignes = [ln for label in _LBC_LOC_TYPE_DISPLAY_ORDER
+                  if (ln := _to_ligne(label)) is not None]
+        return {"lignes": lignes}
+
+    except psycopg2.Error as e:
+        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_LBC_EXTRACT_SCRIPT = _REPO_ROOT / "scripts" / "scrap_leboncoin_api.py"
+
+
+def _normalize_code_postal_leboncoin(cp: Optional[str]) -> str:
+    """Chiffres uniquement, largeur 5 (zfill), pour URL LBC et script d'extraction."""
+    if not cp:
+        return ""
+    digits = "".join(c for c in str(cp).strip() if c.isdigit())
+    if not digits:
+        return ""
+    if len(digits) > 5:
+        return digits[:5]
+    return digits.zfill(5)
+
+
+def _sanitize_commune_for_subprocess(commune: str) -> str:
+    """Évite les métacaractères shell ; refuse les chaînes vides ou trop longues."""
+    s = (commune or "").strip()
+    if not s or len(s) > 120:
+        raise HTTPException(status_code=400, detail="Paramètre commune invalide.")
+    if re.search(r"[\n\r;|&`$<>]", s):
+        raise HTTPException(status_code=400, detail="Caractères non autorisés dans le nom de commune.")
+    return s
+
+
+def _run_leboncoin_extract_subprocess(commune: str, code_postal: str, headless: bool) -> None:
+    """Exécution en arrière-plan : logs visibles dans la console du processus uvicorn."""
+    if not _LBC_EXTRACT_SCRIPT.is_file():
+        print(f"[leboncoin-extract] Script introuvable : {_LBC_EXTRACT_SCRIPT}")
+        return
+    args = [
+        sys.executable,
+        str(_LBC_EXTRACT_SCRIPT),
+        "--commune",
+        commune,
+        "--code-postal",
+        code_postal,
+    ]
+    if headless:
+        args.append("--headless")
+    print(f"[leboncoin-extract] Démarrage : {' '.join(args[2:])}")
+    try:
+        proc = subprocess.run(
+            args,
+            cwd=str(_REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=600,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        print("[leboncoin-extract] Timeout après 600 s")
+        return
+    if proc.stdout:
+        print(proc.stdout.rstrip())
+    if proc.stderr:
+        print(proc.stderr.rstrip())
+    print(f"[leboncoin-extract] Terminé (code retour {proc.returncode})")
+
+
+@app.post("/api/leboncoin-extract")
+def post_leboncoin_extract(
+    commune: str = Query(..., description="Nom de la commune (ex. Noisy-le-Grand)"),
+    code_postal: str = Query(..., description="Code postal à 5 chiffres"),
+):
+    """Lance scrap_leboncoin_api.py pour la commune de façon synchrone (canal ouvert, peut prendre plusieurs minutes)."""
+    commune_ok = _sanitize_commune_for_subprocess(commune)
+    cp = _normalize_code_postal_leboncoin(code_postal)
+    if len(cp) != 5:
+        raise HTTPException(status_code=400, detail="code_postal doit comporter 5 chiffres (ex. 93160).")
+
+    if not _LBC_EXTRACT_SCRIPT.is_file():
+        raise HTTPException(status_code=500, detail=f"Script introuvable : {_LBC_EXTRACT_SCRIPT}")
+
+    args = [
+        sys.executable,
+        str(_LBC_EXTRACT_SCRIPT),
+        "--commune", commune_ok,
+        "--code-postal", cp,
+        "--json-output",
+    ]
+    print(f"[leboncoin-extract] Démarrage synchrone : {' '.join(args[2:])}")
+    try:
+        proc = subprocess.run(
+            args,
+            cwd=str(_REPO_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=600,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Extraction Leboncoin timeout (10 min).")
+
+    if proc.stdout:
+        print(proc.stdout.rstrip())
+    if proc.stderr:
+        print(proc.stderr.rstrip())
+
+    # Essayer d'extraire le JSON de résultat (dernière ligne JSON du stdout)
+    result = {"status": "ok", "extracted": 0, "inserted": 0, "skipped": 0}
+    for line in reversed(proc.stdout.splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            try:
+                result = json.loads(line)
+                break
+            except json.JSONDecodeError:
+                pass
+
+    if proc.returncode != 0 and result.get("extracted", 0) == 0:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Le script a échoué (code {proc.returncode}). Vérifiez les logs serveur.",
+        )
+
+    return {
+        "status": "ok",
+        "extracted": result.get("extracted", 0),
+        "inserted": result.get("inserted", 0),
+        "skipped": result.get("skipped", 0),
+        "commune": commune_ok,
+        "code_postal": cp,
+    }
 
 
 def _indicators_from_fiche_payload(

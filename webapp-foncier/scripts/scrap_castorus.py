@@ -15,6 +15,8 @@ Usage :
     python scrap_castorus.py --commune Laon --code-postal 02000 --with-details
     python scrap_castorus.py --from-db --max-communes 5
     python scrap_castorus.py --dry-run --commune Laon --code-postal 02000
+    python scrap_castorus.py --export-communes-cp-court communes_a_rescraper.csv
+      → CSV des communes dont le CP en base a moins de 5 chiffres (zéros initiaux perdus)
 """
 
 import argparse
@@ -33,6 +35,57 @@ from bs4 import BeautifulSoup
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 BASE_URL = "https://www.castorus.com"
+
+
+def _delimiter_for_csv_sample(sample: str) -> str:
+    """Choisit ';' ou ',' d'après la première ligne (fichiers FR souvent en ';')."""
+    first = (sample.splitlines() or [""])[0]
+    if first.count(";") >= first.count(",") and ";" in first:
+        return ";"
+    return ","
+
+
+def _load_communes_from_csv_file(path: str) -> List[Tuple[str, str]]:
+    """Lit commune + code_postal (2 premières colonnes), séparateur ; ou , auto."""
+    import csv
+
+    with open(path, encoding="utf-8") as f:
+        sample = f.read(8192)
+        f.seek(0)
+        try:
+            dialect = csv.Sniffer().sniff(sample, delimiters=";,")
+            reader = csv.reader(f, dialect)
+        except csv.Error:
+            reader = csv.reader(f, delimiter=_delimiter_for_csv_sample(sample))
+        next(reader, None)  # en-tête ou première ligne ignorée (comportement historique)
+        out: List[Tuple[str, str]] = []
+        for row in reader:
+            if len(row) >= 2:
+                a, b = row[0].strip(), row[1].strip()
+                if a.lower() == "commune" and b.lower().replace(" ", "_") in (
+                    "code_postal",
+                    "code-postal",
+                ):
+                    continue
+                out.append((a, b))
+    return out
+
+
+def _normalize_code_postal_fr(cp: Optional[str]) -> str:
+    """Normalise un code postal français : uniquement des chiffres, largeur 5 (zfill).
+
+    Les sources (CSV, Excel, vf_communes) perdent souvent le zéro initial (ex. 8230 → 08230).
+    Les URLs Castorus attendent toujours 5 chiffres (ex. /recherche/bourg-fidele-08230).
+    """
+    if cp is None:
+        return ""
+    digits = "".join(c for c in str(cp).strip() if c.isdigit())
+    if not digits:
+        return str(cp).strip()
+    if len(digits) > 5:
+        return digits[:5]
+    return digits.zfill(5)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Configuration
@@ -149,8 +202,8 @@ def _login(pseudo: str, password: str) -> bool:
 # Recherche de commune (API suggestions)
 # ─────────────────────────────────────────────────────────────────────────────
 def _slug_base(slug: str) -> str:
-    """Retire le code postal final d'un slug : 'arcey-21410' → 'arcey'."""
-    return re.sub(r"-\d{5}$", "", slug)
+    """Retire le suffixe code postal d'un slug : 'arcey-21410' → 'arcey', 'x-8230' → 'x'."""
+    return re.sub(r"-\d{4,5}$", "", slug)
 
 
 def _search_commune_slug(commune: str, code_postal: str) -> Optional[str]:
@@ -159,6 +212,10 @@ def _search_commune_slug(commune: str, code_postal: str) -> Optional[str]:
     Retourne le slug complet incluant le code postal (ex: 'laon-02000').
     Gère le cas de communes homonymes avec des codes postaux différents.
     """
+    code_postal = _normalize_code_postal_fr(code_postal)
+    if not code_postal:
+        return None
+
     try:
         resp = _safe_request(
             f"{BASE_URL}/api/v1/search/suggestions",
@@ -169,7 +226,8 @@ def _search_commune_slug(commune: str, code_postal: str) -> Optional[str]:
 
         # Chercher la commune correspondant au code postal
         for item in results:
-            cp = str(item.get("code_postal", item.get("cp", "")))
+            cp_raw = str(item.get("code_postal", item.get("cp", "")))
+            cp = _normalize_code_postal_fr(cp_raw)
             if cp == code_postal:
                 # Priorité : URL complète de recherche
                 urls = item.get("urls", {})
@@ -193,7 +251,7 @@ def _search_commune_slug(commune: str, code_postal: str) -> Optional[str]:
     slug = commune.lower().strip()
     slug = re.sub(r"[^a-z0-9]+", "-", slug).strip("-")
     full_slug = f"{slug}-{code_postal}"
-    print(f"  [i] Slug deviné pour {commune}: {full_slug}")
+    print(f"  [i] Slug deviné pour {commune}: {full_slug} (CP normalisé à 5 chiffres)")
     return full_slug
 
 
@@ -623,6 +681,44 @@ def _get_communes_from_db(cur, max_communes: Optional[int] = None) -> List[Tuple
     return [(row[0], row[1]) for row in cur.fetchall()]
 
 
+def export_communes_cp_moins_de_5_chiffres(out_path: str, db_cfg: dict) -> int:
+    """Écrit un CSV (séparateur ;) : commune, code_postal (normalisé), code_postal_brut.
+
+    Utile pour rescraper les communes dont le CP en base a perdu des zéros en tête (ex. 8230).
+    Les deux premières colonnes sont directement utilisables avec --from-file.
+    """
+    import csv
+
+    import psycopg2
+
+    conn = psycopg2.connect(**db_cfg)
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT DISTINCT commune, code_postal
+                FROM foncier.vf_communes
+                WHERE code_postal IS NOT NULL AND commune IS NOT NULL
+                ORDER BY commune, code_postal
+                """
+            )
+            rows_out: List[Tuple[str, str, str]] = []
+            for commune, cp in cur.fetchall():
+                digits = "".join(c for c in str(cp) if c.isdigit())
+                if 0 < len(digits) < 5:
+                    norm = _normalize_code_postal_fr(cp)
+                    rows_out.append((commune, norm, str(cp).strip()))
+    finally:
+        conn.close()
+
+    with open(out_path, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(["commune", "code_postal", "code_postal_brut"])
+        w.writerows(rows_out)
+
+    return len(rows_out)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main
 # ─────────────────────────────────────────────────────────────────────────────
@@ -635,7 +731,7 @@ def main():
     parser.add_argument("--from-db", action="store_true",
                         help="Scraper les communes présentes dans vf_communes")
     parser.add_argument("--from-file", type=str, default=None,
-                        help="Fichier CSV (commune,code_postal) de communes à scraper")
+                        help="Fichier CSV (commune + code_postal) : séparateur ',' ou ';' détecté automatiquement")
     parser.add_argument("--max-communes", type=int, default=None,
                         help="Nombre max de communes à scraper (avec --from-db ou --from-file)")
     parser.add_argument("--with-details", action="store_true",
@@ -646,7 +742,23 @@ def main():
                         help="Afficher sans écrire en base")
     parser.add_argument("--no-login", action="store_true",
                         help="Ne pas tenter de se connecter (données limitées)")
+    parser.add_argument(
+        "--export-communes-cp-court",
+        metavar="FICHIER.csv",
+        default=None,
+        help="Exporte un CSV (;) commune;code_postal;code_postal_brut pour les CP à < 5 chiffres "
+        "numériques dans vf_communes, puis quitte (réinjection : --from-file en prenant les 2 1ères colonnes)",
+    )
     args = parser.parse_args()
+
+    if args.export_communes_cp_court:
+        db_cfg = _get_db_config()
+        n = export_communes_cp_moins_de_5_chiffres(args.export_communes_cp_court, db_cfg)
+        outp = Path(args.export_communes_cp_court).resolve()
+        print(f"{n} ligne(s) écrite(s) : {outp}")
+        print("  Réinjection : python scrap_castorus.py --from-file FICHIER.csv")
+        print("  (--from-file lit les 2 premières colonnes : commune, code_postal)")
+        return
 
     if not args.commune and not args.from_db and not args.from_file:
         parser.error("Spécifiez --commune NOM --code-postal CP, --from-db ou --from-file FICHIER.csv")
@@ -676,13 +788,7 @@ def main():
     if args.commune:
         communes = [(args.commune, args.code_postal)]
     elif args.from_file:
-        import csv
-        with open(args.from_file, encoding="utf-8") as f:
-            reader = csv.reader(f)
-            header = next(reader, None)
-            for row in reader:
-                if len(row) >= 2:
-                    communes.append((row[0].strip(), row[1].strip()))
+        communes = _load_communes_from_csv_file(args.from_file)
         if args.max_communes:
             communes = communes[:args.max_communes]
         print(f"{len(communes)} communes lues depuis {args.from_file}")
@@ -702,8 +808,16 @@ def main():
     total_skipped = 0
 
     try:
-        for i, (commune, code_postal) in enumerate(communes, 1):
-            print(f"\n[{i}/{len(communes)}] {commune} ({code_postal})")
+        for i, (commune, code_postal_raw) in enumerate(communes, 1):
+            code_postal = _normalize_code_postal_fr(code_postal_raw)
+            raw_digits = "".join(c for c in str(code_postal_raw) if c.isdigit())
+            if not code_postal:
+                print(f"\n[{i}/{len(communes)}] {commune} — [!] code postal invalide : {code_postal_raw!r}")
+                continue
+            if raw_digits and raw_digits != code_postal:
+                print(f"\n[{i}/{len(communes)}] {commune} ({code_postal})  [i] CP normalisé depuis {code_postal_raw!r}")
+            else:
+                print(f"\n[{i}/{len(communes)}] {commune} ({code_postal})")
 
             # 1. Trouver le slug
             slug = _search_commune_slug(commune, code_postal)

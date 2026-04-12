@@ -100,12 +100,17 @@
       .page-section--pastel .tableaux-logement .tableau-bloc:nth-child(even) { background: #dce4f0; }
       .rentabilite-notes { margin-top: 0.5rem; padding-top: 0.5rem; border-top: 1px solid #e5e7eb; font-size: 0.75rem; color: #6b7280; }
       .rentabilite-notes p { margin: 0.2rem 0; }
-      /* Panorama Ventes / Panorama Locations (sections détaillées) */
+      .legend-note { font-size: 0.75rem; color: #6b7280; font-style: italic; margin: 0.25rem 0 0.5rem; }
+      /* Panorama ventes / Panorama locations (sections détaillées) */
       .panorama-ventes-section, .panorama-locations-section { margin-bottom: 2rem; scroll-margin-top: 0.5rem; }
       .panorama-filters { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; margin-bottom: 1rem; padding: 0.75rem; background: #f8fafc; border-radius: 0.5rem; }
       .panorama-filters label { font-size: 0.85rem; color: #374151; font-weight: 500; }
       .panorama-filters select { padding: 0.35rem 0.5rem; border: 1px solid #d1d5db; border-radius: 0.35rem; font-size: 0.85rem; min-width: 120px; }
       .panorama-filters select[multiple] { min-height: 80px; }
+      .btn-action-blue { padding: 0.5rem 1.25rem; background: #2563eb; color: #fff; border: none; border-radius: 0.4rem; font-size: 0.85rem; font-weight: 600; cursor: pointer; margin-left: auto; white-space: nowrap; }
+      .btn-action-blue:hover { background: #1d4ed8; }
+      .btn-action-blue:disabled { background: #9ca3af; cursor: not-allowed; }
+      .btn-action-blue + .btn-action-blue { margin-left: 0.5rem; }
       .panorama-sub-block { margin-bottom: 1.5rem; }
       .panorama-sub-block h4 { font-size: 0.95rem; color: #374151; margin: 0 0 0.5rem; font-weight: 600; }
       .table-ventes tr, .table-locations tr { height: 2.25rem; }
@@ -172,8 +177,8 @@
         <div class="panorama-tabs" role="tablist">
           <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
           <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
-          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama Ventes</a>
-          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama Locations</a>
+          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama ventes</a>
+          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama locations</a>
           <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
           <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
           <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
@@ -225,8 +230,8 @@
         <div class="panorama-tabs" role="tablist">
           <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
           <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
-          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama Ventes</a>
-          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama Locations</a>
+          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama ventes</a>
+          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama locations</a>
           <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
           <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
           <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
@@ -253,80 +258,6 @@
       </div>
 
       <div class="sub-section">
-      <div class="logement-block">
-        <div class="title-row">
-          <h3>Ventes <span class="logement-annee">2024</span></h3>
-          <a class="btn-plus-infos" href="#panorama-ventes">Plus d'infos</a>
-        </div>
-        <div class="zone-content">
-          <table class="table-ventes">
-            <thead>
-              <tr><th>Type</th><th>Nb ventes</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
-            </thead>
-            <tbody id="logement-ventes-tbody">
-              <tr><td colspan="10">—</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-      </div>
-
-      <div class="sub-section">
-      <div class="logement-block">
-        <div class="title-row">
-          <h3>Locations <span class="logement-annee">2024</span></h3>
-          <a class="btn-plus-infos" href="#panorama-locations">Plus d'infos</a>
-        </div>
-        <div class="zone-content">
-          <div class="tableaux-logement">
-            <div class="tableau-bloc">
-              <h4 class="tableau-bloc-title">Loyers observés par l'ANIL</h4>
-              <table class="table-locations">
-                <thead>
-                  <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian/m²</th><th>Loyer Q1/m²</th><th>Loyer Q3/m²</th></tr>
-                </thead>
-                <tbody>
-                  <tr><td>Total</td><td id="loc-total-nb">—</td><td class="col-sep"></td><td id="loc-total-loyerm2">—</td><td id="loc-total-loyerq1">—</td><td id="loc-total-loyerq3">—</td></tr>
-                  <tr><td>Maisons</td><td id="loc-maisons-nb">—</td><td class="col-sep"></td><td id="loc-maisons-loyerm2">—</td><td id="loc-maisons-loyerq1">—</td><td id="loc-maisons-loyerq3">—</td></tr>
-                  <tr><td>Appartements</td><td id="loc-appts-nb">—</td><td class="col-sep"></td><td id="loc-appts-loyerm2">—</td><td id="loc-appts-loyerq1">—</td><td id="loc-appts-loyerq3">—</td></tr>
-                  <tr><td>Apparts 1/2 pièces</td><td id="loc-appts12-nb">—</td><td class="col-sep"></td><td id="loc-appts12-loyerm2">—</td><td id="loc-appts12-loyerq1">—</td><td id="loc-appts12-loyerq3">—</td></tr>
-                  <tr><td>Apparts. 3p+</td><td id="loc-appts3p-nb">—</td><td class="col-sep"></td><td id="loc-appts3p-loyerm2">—</td><td id="loc-appts3p-loyerq1">—</td><td id="loc-appts3p-loyerq3">—</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="tableau-bloc">
-              <p class="tableau-bloc-title rentabilite-subtitle">Rentabilités basées sur les médianes</p>
-              <table class="table-rentabilite">
-                <thead>
-                  <tr><th>Type de bien</th><th>Rentabilité brute<sup>1</sup></th><th>Estimation Charges</th><th>Rentabilité HC<sup>2</sup></th><th>Rentabilité nette<sup>3</sup></th></tr>
-                </thead>
-                <tbody id="rentabilite-mediane-body">
-                  <tr><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="tableau-bloc">
-              <p class="tableau-bloc-title rentabilite-subtitle">Rentabilités basées sur les moyennes</p>
-              <table class="table-rentabilite table-rentabilite-moyenne">
-                <thead>
-                  <tr><th>Type de bien</th><th>Rentabilité brute<sup>1</sup></th><th>Estimation Charges</th><th>Rentabilité HC<sup>2</sup></th><th>Rentabilité nette<sup>3</sup></th></tr>
-                </thead>
-                <tbody id="rentabilite-moyenne-body">
-                  <tr><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-          <div class="rentabilite-notes">
-            <p><strong>1.</strong> Rentabilité brute = (Loyers annuels / Prix d'acquisition) × 100.</p>
-            <p><strong>2.</strong> Rentabilité hors charges (HC) = (Loyers annuels nets de charges récupérables / (Prix d'acquisition × (1 + taux_frais_mutation))) × 100, avec pour la simulation taux_frais_mutation = 10 %.</p>
-            <p><strong>3.</strong> Rentabilité nette = après déduction des charges, taxe foncière, assurance, gestion et provision vacance.</p>
-          </div>
-        </div>
-      </div>
-      </div>
-
-      <div class="sub-section">
       <div class="fiscalite-locale-block">
         <h3>Fiscalité locale</h3>
         <div class="zone-content">
@@ -346,12 +277,12 @@
 
       <div class="page-section page-section--base">
       <div class="section-title-row" id="panorama-ventes">
-        <h2 class="section-title" data-panorama-title="Panorama Ventes">Panorama Ventes</h2>
+        <h2 class="section-title" data-panorama-title="Panorama ventes">Panorama ventes</h2>
         <div class="panorama-tabs" role="tablist">
           <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
           <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
-          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama Ventes</a>
-          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama Locations</a>
+          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama ventes</a>
+          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama locations</a>
           <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
           <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
           <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
@@ -359,9 +290,29 @@
         </div>
       </div>
       <section class="panorama-ventes-section">
+        <!-- Section 1 : Annonces de ventes Castorus (sans filtre) -->
+        <div class="sub-sections">
+        <div class="sub-section">
+        <div class="panorama-sub-block">
+          <h4>Annonces de ventes Castorus</h4>
+          <div class="zone-content">
+            <table class="table-ventes">
+              <thead>
+                <tr><th>Type</th><th>Nb annonces</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
+              </thead>
+              <tbody id="castorus-ventes-tbody">
+                <tr><td colspan="10">—</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+        </div>
+        </div>
+        <!-- Section 2 : Ventes avec filtres Type / Période / Surface / Nb pièces -->
         <div class="panorama-filters">
+          <label>Type de biens <select id="panorama-ventes-type" multiple><option value="Maisons">Maisons</option><option value="Appartements">Appartements</option><option value="Dépendances">Dépendances</option><option value="Locaux indus. / comm.">Locaux indus. / comm.</option><option value="Terrains">Terrains</option><option value="Immeubles">Immeubles</option></select></label>
           <label>Période <select id="panorama-ventes-periode"><option value="1">1 an</option><option value="2">2 ans</option><option value="3">3 ans</option><option value="5" selected>5 ans</option></select></label>
-          <label>Catégorie surface <select id="panorama-ventes-surface"><option value="">Toutes</option><option value="S1">S1</option><option value="S2">S2</option><option value="S3">S3</option><option value="S4">S4</option><option value="S5">S5</option></select></label>
+          <label>Surface <select id="panorama-ventes-surface"><option value="">Toutes</option><option value="S1">S1</option><option value="S2">S2</option><option value="S3">S3</option><option value="S4">S4</option><option value="S5">S5</option></select></label>
           <label>Nb pièces <select id="panorama-ventes-pieces"><option value="">Toutes</option><option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option><option value="T4">T4</option><option value="T5">T5</option></select></label>
         </div>
         <div class="sub-sections">
@@ -397,21 +348,6 @@
         </div>
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>Annonces de ventes Castorus <span id="castorus-periode-label">(5 ans)</span></h4>
-          <div class="zone-content">
-            <table class="table-ventes">
-              <thead>
-                <tr><th>Type</th><th>Nb annonces</th><th class="col-sep"></th><th>Prix médian</th><th>Prix médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Prix moyen</th><th>Prix moyen/m²</th><th>Surface moyenne</th></tr>
-              </thead>
-              <tbody id="castorus-ventes-tbody">
-                <tr><td colspan="10">—</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </div>
-        </div>
-        <div class="sub-section">
-        <div class="panorama-sub-block">
           <h4>Ventes Enchères-Publiques.fr <span id="ep-periode-label">(5 ans)</span></h4>
           <div class="zone-content">
             <table class="table-ventes">
@@ -432,18 +368,17 @@
         </div>
         </div>
         </div>
-        </div>
       </section>
       </div>
 
       <div class="page-section page-section--pastel">
       <div class="section-title-row" id="panorama-locations">
-        <h2 class="section-title" data-panorama-title="Panorama Locations">Panorama Locations</h2>
+        <h2 class="section-title" data-panorama-title="Panorama locations">Panorama locations</h2>
         <div class="panorama-tabs" role="tablist">
           <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
           <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
-          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama Ventes</a>
-          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama Locations</a>
+          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama ventes</a>
+          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama locations</a>
           <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
           <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
           <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
@@ -451,77 +386,130 @@
         </div>
       </div>
       <section class="panorama-locations-section">
+        <!-- Filtres Panorama locations -->
         <div class="panorama-filters">
-          <label>Type de biens <select id="panorama-locations-type" multiple><option value="Maison">Maison</option><option value="Appartement">Appartement</option><option value="Local">Local</option></select></label>
-          <label>Catégorie surface <select id="panorama-locations-surface"><option value="">Toutes</option><option value="S1">S1</option><option value="S2">S2</option><option value="S3">S3</option><option value="S4">S4</option><option value="S5">S5</option></select></label>
+          <label>Type de biens <select id="panorama-locations-type" multiple><option value="Maisons">Maisons</option><option value="Appartements">Appartements</option><option value="Dépendances">Dépendances</option><option value="Locaux indus. / comm.">Locaux indus. / comm.</option><option value="Terrains">Terrains</option><option value="Immeubles">Immeubles</option></select></label>
+          <label>Période <select id="panorama-locations-periode"><option value="1">1 an</option><option value="2">2 ans</option><option value="3">3 ans</option><option value="5" selected>5 ans</option></select></label>
+          <label>Surface <select id="panorama-locations-surface"><option value="">Toutes</option><option value="S1">S1</option><option value="S2">S2</option><option value="S3">S3</option><option value="S4">S4</option><option value="S5">S5</option></select></label>
           <label>Nb pièces <select id="panorama-locations-pieces"><option value="">Toutes</option><option value="T1">T1</option><option value="T2">T2</option><option value="T3">T3</option><option value="T4">T4</option><option value="T5">T5</option></select></label>
+          <button type="button" class="btn-action-blue" id="btn-force-extract-lbc" title="Lance l'extraction des annonces Leboncoin pour cette commune via navigateur automatisé (peut prendre plusieurs minutes)">Forcer extraction</button>
         </div>
+        <!-- Sous-section 1 : Loyers estimés par l'ANIL -->
         <div class="sub-sections">
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>Locations agrégées <span class="logement-annee">2024</span></h4>
+          <h4>Loyers estimés ANIL</h4>
+          <p class="legend-note">Loyers charges comprises estimés par l'ADIL à partir des données Leboncoin et SeLoger. Millésime : <span id="locations-logement-annee">—</span>. La période indiquée est celle des ventes DVF utilisées pour la rentabilité.</p>
           <div class="zone-content">
-            <table class="table-locations">
+            <table class="table-locations table-locations-filterable">
               <thead>
-                <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian</th><th>Loyer médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Loyer moyen</th><th>Loyer moyen/m²</th><th>Surface moyenne</th></tr>
+                <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian/m²</th><th>Loyer Q1/m²</th><th>Loyer Q3/m²</th></tr>
               </thead>
               <tbody>
-                <tr><td>Total</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+                <tr data-type-filter="Maisons/Appart."><td>Total</td><td id="loc-total-nb">—</td><td class="col-sep"></td><td id="loc-total-loyerm2">—</td><td id="loc-total-loyerq1">—</td><td id="loc-total-loyerq3">—</td></tr>
+                <tr data-type-filter="Maisons"><td>Maisons</td><td id="loc-maisons-nb">—</td><td class="col-sep"></td><td id="loc-maisons-loyerm2">—</td><td id="loc-maisons-loyerq1">—</td><td id="loc-maisons-loyerq3">—</td></tr>
+                <tr data-type-filter="Appartements"><td>Appartements</td><td id="loc-appts-nb">—</td><td class="col-sep"></td><td id="loc-appts-loyerm2">—</td><td id="loc-appts-loyerq1">—</td><td id="loc-appts-loyerq3">—</td></tr>
+                <tr data-type-filter="Appartements"><td>Apparts 1/2 pièces</td><td id="loc-appts12-nb">—</td><td class="col-sep"></td><td id="loc-appts12-loyerm2">—</td><td id="loc-appts12-loyerq1">—</td><td id="loc-appts12-loyerq3">—</td></tr>
+                <tr data-type-filter="Appartements"><td>Apparts +3 pièces</td><td id="loc-appts3p-nb">—</td><td class="col-sep"></td><td id="loc-appts3p-loyerm2">—</td><td id="loc-appts3p-loyerq1">—</td><td id="loc-appts3p-loyerq3">—</td></tr>
               </tbody>
             </table>
           </div>
         </div>
         </div>
+        </div>
+        <!-- Sous-section 2 : Annonces de locations Leboncoin -->
+        <div class="sub-sections">
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>Castorus</h4>
+          <h4>Annonces de locations Leboncoin</h4>
+          <p class="legend-note">Données issues d'un extrait des annonces réalisé en 2026. Il n'y a pas d'historique des annonces : ces données ne dépendent pas de la période choisie.</p>
           <div class="zone-content">
-            <table class="table-locations">
+            <table class="table-locations table-locations-filterable">
               <thead>
-                <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian</th><th>Loyer médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Loyer moyen</th><th>Loyer moyen/m²</th><th>Surface moyenne</th></tr>
+                <tr><th>Type</th><th>Nb</th><th class="col-sep"></th><th>Loyer CC méd.</th><th>Loyer HC méd.</th><th>Loyer méd./m²</th><th>Surf. méd.</th><th class="col-sep"></th><th>Loyer CC moy.</th><th>Charges moy.</th><th>Loyer moy./m²</th><th>Surf. moy.</th><th class="col-sep"></th><th>Q1/m²</th><th>Q3/m²</th><th>% meub.</th></tr>
               </thead>
-              <tbody>
-                <tr><td>Total</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
+              <tbody id="lbc-locations-tbody">
+                <tr><td colspan="16">—</td></tr>
               </tbody>
             </table>
           </div>
         </div>
         </div>
+        </div>
+        <!-- Sous-section 3 : Rentabilité basée sur loyers ANIL -->
+        <div class="sub-sections">
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>SeLoger</h4>
+          <h4>Rentabilité locative — loyers ANIL (<span class="loc-periode-label">5 ans</span>)</h4>
+          <p class="legend-note">Prix d'achat moyen calculé sur les ventes DVF pour la période indiquée dans le titre.</p>
           <div class="zone-content">
-            <table class="table-locations">
-              <thead>
-                <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian</th><th>Loyer médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Loyer moyen</th><th>Loyer moyen/m²</th><th>Surface moyenne</th></tr>
-              </thead>
-              <tbody>
-                <tr><td>Total</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-              </tbody>
-            </table>
+            <div class="tableaux-logement">
+              <div class="tableau-bloc">
+                <p class="tableau-bloc-title rentabilite-subtitle">Rentabilités basées sur les médianes</p>
+                <table class="table-rentabilite">
+                  <thead>
+                    <tr><th>Type de bien</th><th>Rentabilité brute<sup>1</sup></th><th>Taxe foncière</th><th>Rentabilité HC<sup>2</sup></th><th>Rentabilité nette<sup>3</sup></th></tr>
+                  </thead>
+                  <tbody id="rentabilite-mediane-body">
+                    <tr><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="tableau-bloc">
+                <p class="tableau-bloc-title rentabilite-subtitle">Rentabilités basées sur les moyennes</p>
+                <table class="table-rentabilite table-rentabilite-moyenne">
+                  <thead>
+                    <tr><th>Type de bien</th><th>Rentabilité brute<sup>1</sup></th><th>Taxe foncière</th><th>Rentabilité HC<sup>2</sup></th><th>Rentabilité nette<sup>3</sup></th></tr>
+                  </thead>
+                  <tbody id="rentabilite-moyenne-body">
+                    <tr><td>—</td><td>—</td><td>—</td><td>—</td><td>—</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="rentabilite-notes">
+              <p><strong>1.</strong> Rentabilité brute = (Loyer CC/m² × 12 / Prix/m²) × 100.</p>
+              <p><strong>2.</strong> Rentabilité HC = ((Loyer CC/m² × Surface × 12) − Taxe foncière) / (Prix total × 1,10) × 100.</p>
+              <p><strong>3.</strong> Rentabilité nette = ((Loyer CC/m² × Surface × 12 × 0,70) − Taxe foncière) / (Prix total × 1,10) × 100.</p>
+            </div>
           </div>
         </div>
         </div>
+        </div>
+        <!-- Sous-section 4 : Rentabilité basée sur loyers Leboncoin -->
+        <div class="sub-sections">
         <div class="sub-section">
         <div class="panorama-sub-block">
-          <h4>LeBonCoin</h4>
+          <h4>Rentabilité locative — loyers Leboncoin (<span class="loc-periode-label">5 ans</span>)</h4>
+          <p class="legend-note">Prix d'achat moyen calculé sur les ventes DVF pour la période indiquée dans le titre.</p>
           <div class="zone-content">
-            <table class="table-locations">
-              <thead>
-                <tr><th>Type</th><th>Nb biens</th><th class="col-sep"></th><th>Loyer médian</th><th>Loyer médian/m²</th><th>Surface méd.</th><th class="col-sep"></th><th>Loyer moyen</th><th>Loyer moyen/m²</th><th>Surface moyenne</th></tr>
-              </thead>
-              <tbody>
-                <tr><td>Total</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Maisons</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-                <tr><td>Appartements</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td><td class="col-sep"></td><td>—</td><td>—</td><td>—</td></tr>
-              </tbody>
-            </table>
+            <div class="tableaux-logement">
+              <div class="tableau-bloc">
+                <p class="tableau-bloc-title rentabilite-subtitle">Rentabilités basées sur les médianes Leboncoin</p>
+                <table class="table-rentabilite">
+                  <thead>
+                    <tr><th>Type de bien</th><th>Rentabilité brute<sup>1</sup></th><th>Taxe foncière</th><th>Rentabilité HC<sup>2</sup></th><th>Rentabilité nette<sup>3</sup></th></tr>
+                  </thead>
+                  <tbody id="rentabilite-lbc-mediane-body">
+                    <tr><td colspan="5">—</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="tableau-bloc">
+                <p class="tableau-bloc-title rentabilite-subtitle">Rentabilités basées sur les moyennes Leboncoin</p>
+                <table class="table-rentabilite">
+                  <thead>
+                    <tr><th>Type de bien</th><th>Rentabilité brute<sup>1</sup></th><th>Taxe foncière</th><th>Rentabilité HC<sup>2</sup></th><th>Rentabilité nette<sup>3</sup></th></tr>
+                  </thead>
+                  <tbody id="rentabilite-lbc-moyenne-body">
+                    <tr><td colspan="5">—</td></tr>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div class="rentabilite-notes">
+              <p>Loyers CC issus des annonces Leboncoin (extrait 2026). Prix d'acquisition et taxe foncière issus des ventes DVF sur la période sélectionnée.</p>
+            </div>
           </div>
         </div>
         </div>
@@ -535,8 +523,8 @@
         <div class="panorama-tabs" role="tablist">
           <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
           <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
-          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama Ventes</a>
-          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama Locations</a>
+          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama ventes</a>
+          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama locations</a>
           <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
           <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
           <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
@@ -563,8 +551,8 @@
         <div class="panorama-tabs" role="tablist">
           <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
           <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
-          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama Ventes</a>
-          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama Locations</a>
+          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama ventes</a>
+          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama locations</a>
           <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
           <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
           <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
@@ -582,8 +570,8 @@
         <div class="panorama-tabs" role="tablist">
           <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
           <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
-          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama Ventes</a>
-          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama Locations</a>
+          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama ventes</a>
+          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama locations</a>
           <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
           <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
           <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
@@ -599,8 +587,8 @@
         <div class="panorama-tabs" role="tablist">
           <a class="tab" href="#panorama-global" role="tab" data-panorama="panorama-global">Panorama global</a>
           <a class="tab" href="#panorama-logement" role="tab" data-panorama="panorama-logement">Panorama logement</a>
-          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama Ventes</a>
-          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama Locations</a>
+          <a class="tab" href="#panorama-ventes" role="tab" data-panorama="panorama-ventes">Panorama ventes</a>
+          <a class="tab" href="#panorama-locations" role="tab" data-panorama="panorama-locations">Panorama locations</a>
           <a class="tab" href="#panorama-population" role="tab" data-panorama="panorama-population">Panorama population</a>
           <a class="tab" href="#panorama-infrastructures" role="tab" data-panorama="panorama-infrastructures">Panorama infrastructures</a>
           <a class="tab" href="#panorama-risques" role="tab" data-panorama="panorama-risques">Panorama risques industriels & naturels</a>
@@ -688,6 +676,109 @@
         const API_BASE = isLocal && window.location?.port !== "8000"
           ? "http://localhost:8000"
           : "";
+
+        // Caches pour le calcul harmonisé des rentabilités
+        var _dvfLocationsCache = null; // DVF prices fetched with locations filters
+        var _anilLignesCache = null;   // ANIL loyer data (from fiche-logement)
+        var _lbcLignesCache = null;    // LBC loyer data (from leboncoin-locations)
+        var _taxeInfo = { taux_tfb: null, loyer_ref: null }; // For TF computation
+
+        // Correspondance types loyers → types DVF
+        var _typeMapRenta = { "Maisons": "Maisons", "Appartements": "Appartements", "Total": "Maisons/Appart.", "Maisons/Appart.": "Maisons/Appart." };
+
+        /**
+         * Calcule les lignes de rentabilité pour un tableau (médianes ou moyennes).
+         * @param {Array} loyerSource - lignes loyer (ANIL ou LBC) avec .type et .[loyerField]
+         * @param {string} loyerField - clé du loyer/m² ("loyer_med_m2" ou "loyer_moy_m2")
+         * @param {string} prixField - clé prix/m² DVF ("prix_m2_mediane" ou "prix_m2_moyenne")
+         * @param {string} prixTotalField - clé prix total DVF ("prix_median" ou "prix_moyen")
+         * @param {string} surfaceField - clé surface DVF ("surface_mediane" ou "surface_moyenne")
+         */
+        function _computeRentaRows(loyerSource, loyerField, prixField, prixTotalField, surfaceField) {
+          if (!_dvfLocationsCache || !loyerSource) return "<tr><td colspan=\"5\">Aucune donnée</td></tr>";
+          var frais = 0.10;
+          var rows = [];
+          ["Maisons", "Appartements", "Total"].forEach(function(loyerType) {
+            var dvfType = _typeMapRenta[loyerType];
+            var loyer = loyerSource.find(function(l) { return l.type === loyerType; });
+            var dvf = _dvfLocationsCache.find(function(d) { return d.type === dvfType; });
+            if (!loyer || !dvf) return;
+            var loyerM2 = loyer[loyerField];
+            var prixM2 = dvf[prixField];
+            var prixTotal = dvf[prixTotalField];
+            var surface = dvf[surfaceField];
+            if (!loyerM2 || !prixM2 || prixM2 <= 0 || !prixTotal || prixTotal <= 0 || !surface) return;
+
+            // TF = surface × 3 × loyer_ref × (taux_tfb / 100)
+            var tf = 0;
+            if (_taxeInfo.taux_tfb != null && _taxeInfo.loyer_ref != null) {
+              tf = surface * 3 * _taxeInfo.loyer_ref * (_taxeInfo.taux_tfb / 100);
+            }
+
+            var loyerAnnuel = loyerM2 * surface * 12;
+            var rentaBrute = (loyerM2 * 12 / prixM2) * 100;
+            var rentaHC = ((loyerAnnuel - tf) / (prixTotal * (1 + frais))) * 100;
+            var rentaNette = ((loyerAnnuel * 0.70 - tf) / (prixTotal * (1 + frais))) * 100;
+
+            rows.push("<tr><td>" + loyerType + "</td>"
+              + "<td>" + formatPct(rentaBrute) + "</td>"
+              + "<td>" + formatEuro(tf) + "/an</td>"
+              + "<td>" + formatPct(rentaHC) + "</td>"
+              + "<td>" + formatPct(rentaNette) + "</td></tr>");
+          });
+          return rows.join("") || "<tr><td colspan=\"5\">Aucune donnée</td></tr>";
+        }
+
+        function _updateAllRenta() {
+          // Rentabilité ANIL
+          var tbodyAnilMed = document.getElementById("rentabilite-mediane-body");
+          var tbodyAnilMoy = document.getElementById("rentabilite-moyenne-body");
+          if (tbodyAnilMed && _anilLignesCache) {
+            tbodyAnilMed.innerHTML = _computeRentaRows(_anilLignesCache, "loyer_med_m2", "prix_m2_mediane", "prix_median", "surface_mediane");
+          }
+          if (tbodyAnilMoy && _anilLignesCache) {
+            tbodyAnilMoy.innerHTML = _computeRentaRows(_anilLignesCache, "loyer_med_m2", "prix_m2_moyenne", "prix_moyen", "surface_moyenne");
+          }
+          // Rentabilité LBC
+          var tbodyLbcMed = document.getElementById("rentabilite-lbc-mediane-body");
+          var tbodyLbcMoy = document.getElementById("rentabilite-lbc-moyenne-body");
+          if (tbodyLbcMed && _lbcLignesCache) {
+            tbodyLbcMed.innerHTML = _computeRentaRows(_lbcLignesCache, "loyer_med_m2", "prix_m2_mediane", "prix_median", "surface_mediane");
+          }
+          if (tbodyLbcMoy && _lbcLignesCache) {
+            tbodyLbcMoy.innerHTML = _computeRentaRows(_lbcLignesCache, "loyer_moy_m2", "prix_m2_moyenne", "prix_moyen", "surface_moyenne");
+          }
+        }
+
+        /** Charge les prix DVF avec les filtres de Panorama locations et met à jour la rentabilité */
+        async function loadDvfForLocationsRenta() {
+          var sp = new URLSearchParams(window.location.search || "");
+          var code_dept = sp.get("code_dept");
+          var code_postal = sp.get("code_postal");
+          var commune = sp.get("commune");
+          if (!code_dept || !code_postal || !commune) return;
+
+          var periode = document.getElementById("panorama-locations-periode") ? document.getElementById("panorama-locations-periode").value : "5";
+          var surfaceCat = document.getElementById("panorama-locations-surface") ? document.getElementById("panorama-locations-surface").value : "";
+          var piecesCat = document.getElementById("panorama-locations-pieces") ? document.getElementById("panorama-locations-pieces").value : "";
+
+          var periodeMap = { "1": "1 an", "2": "2 ans", "3": "3 ans", "5": "5 ans" };
+          document.querySelectorAll(".loc-periode-label").forEach(function(el) {
+            el.textContent = periodeMap[periode] || (periode + " an(s)");
+          });
+
+          try {
+            var qs = new URLSearchParams({ code_dept: code_dept, code_postal: code_postal, commune: commune,
+              periode_annees: periode, surface_cat: surfaceCat, pieces_cat: piecesCat });
+            var res = await fetch(API_BASE + "/api/panorama-ventes?" + qs.toString());
+            if (!res.ok) return;
+            var data = await res.json();
+            _dvfLocationsCache = data.lignes || [];
+            _updateAllRenta();
+          } catch (e) {
+            console.error("Erreur chargement DVF pour rentabilité locations", e);
+          }
+        }
 
         function formatInt(n) {
           const v = Number(n);
@@ -948,45 +1039,29 @@
                 setFl("parc-appts", fl.parc.nb_apparts != null ? formatInt(fl.parc.nb_apparts) : "—");
                 setFl("parc-ratio", fl.parc.ratio_proprietaires != null ? formatPct(fl.parc.ratio_proprietaires) : "—");
               }
-              if (fl.ventes && fl.ventes.annee) {
-                document.querySelectorAll(".logement-block .title-row .logement-annee").forEach(function (el, i) { if (i === 0) el.textContent = fl.ventes.annee; });
-                const ventesLignes = fl.ventes.lignes || [];
-                const ventesTbody = document.getElementById("logement-ventes-tbody");
-                if (ventesTbody) {
-                  if (ventesLignes.length === 0) {
-                    ventesTbody.innerHTML = '<tr><td colspan="10">Aucune donnée</td></tr>';
-                  } else {
-                    const sep = '<td class="col-sep"></td>';
-                    ventesTbody.innerHTML = ventesLignes.map(function (r) {
-                      return "<tr><td>" + (r.type || "—") + "</td>"
-                        + "<td>" + (r.nb_ventes != null ? formatInt(r.nb_ventes) : "—") + "</td>" + sep
-                        + "<td>" + (r.prix_median != null ? formatEuro(r.prix_median) : "—") + "</td>"
-                        + "<td>" + (r.prix_m2_mediane != null ? formatEuroM2(r.prix_m2_mediane) : "—") + "</td>"
-                        + "<td>" + (r.surface_mediane != null ? formatInt(r.surface_mediane) + " m²" : "—") + "</td>" + sep
-                        + "<td>" + (r.prix_moyen != null ? formatEuro(r.prix_moyen) : "—") + "</td>"
-                        + "<td>" + (r.prix_m2_moyenne != null ? formatEuroM2(r.prix_m2_moyenne) : "—") + "</td>"
-                        + "<td>" + (r.surface_moyenne != null ? formatInt(r.surface_moyenne) + " m²" : "—") + "</td>"
-                        + "</tr>";
-                    }).join("");
-                  }
-                }
-              }
               if (fl.locations && fl.locations.annee) {
-                const logementBlocks = document.querySelectorAll(".logement-block");
-                if (logementBlocks[1]) {
-                  const span = logementBlocks[1].querySelector(".title-row .logement-annee");
-                  if (span) span.textContent = fl.locations.annee;
-                }
+                setFl("locations-logement-annee", fl.locations.annee);
                 const locLignes = fl.locations.lignes || [];
+                // Stocker les loyers ANIL pour le calcul de rentabilité
+                _anilLignesCache = locLignes.map(function(l) {
+                  // Normaliser le type pour la correspondance rentabilité
+                  var t = l.type;
+                  if (t === "Maisons/Appart." || t === "Total") t = "Total";
+                  return { type: t, loyer_med_m2: l.loyer_med_m2, loyer_moy_m2: l.loyer_med_m2 };
+                });
                 const locRows = [
-                  { prefix: "loc-total", key: "Total" },
-                  { prefix: "loc-maisons", key: "Maisons" },
-                  { prefix: "loc-appts", key: "Appartements" },
-                  { prefix: "loc-appts12", key: "Apparts 1/2 pièces" },
-                  { prefix: "loc-appts3p", key: "Apparts. 3p+" }
+                  { prefix: "loc-total", key: "Maisons/Appart.", alt: "Total" },
+                  { prefix: "loc-maisons", key: "Maisons", alt: null },
+                  { prefix: "loc-appts", key: "Appartements", alt: null },
+                  { prefix: "loc-appts12", key: "Apparts 1/2 pièces", alt: null },
+                  { prefix: "loc-appts3p", key: "Apparts +3 pièces", alt: "Apparts. 3p+" }
                 ];
                 locRows.forEach(function (r) {
-                  const row = locLignes.find(function (l) { return l.type === r.key; });
+                  const row = locLignes.find(function (l) {
+                    if (l.type === r.key) return true;
+                    if (r.alt && l.type === r.alt) return true;
+                    return false;
+                  });
                   if (!row) return;
                   setFl(r.prefix + "-nb", row.nb_loyers != null ? formatInt(row.nb_loyers) : "—");
                   setFl(r.prefix + "-loyerm2", row.loyer_med_m2 != null ? formatEuroM2(row.loyer_med_m2) : "—");
@@ -994,7 +1069,12 @@
                   setFl(r.prefix + "-loyerq3", row.loyer_q3_m2 != null ? formatEuroM2(row.loyer_q3_m2) : "—");
                 });
               }
-              // Fiscalité locale
+              // Fiscalité locale — stocker taux_tfb et loyer_ref pour le calcul TF
+              if (fl.fiscalite && fl.fiscalite.length > 0) {
+                var latestFisc = fl.fiscalite[0]; // trié DESC par année
+                if (latestFisc.taux_tfb != null) _taxeInfo.taux_tfb = latestFisc.taux_tfb;
+              }
+              if (fl.loypredm2 != null) _taxeInfo.loyer_ref = fl.loypredm2;
               const fiscaliteTbody = document.getElementById("fiscalite-tbody");
               if (fiscaliteTbody && fl.fiscalite && fl.fiscalite.length > 0) {
                 fiscaliteTbody.innerHTML = fl.fiscalite.map(function (f) {
@@ -1006,31 +1086,33 @@
               } else if (fiscaliteTbody) {
                 fiscaliteTbody.innerHTML = "<tr><td colspan=\"5\">—</td></tr>";
               }
-              // Rentabilités médianes (Type, Rentabilité brute, Estimation Charges, Rentabilité HC, Rentabilité nette)
-              const tbodyMed = document.getElementById("rentabilite-mediane-body");
-              if (tbodyMed && fl.rentabilite_mediane && fl.rentabilite_mediane.lignes) {
-                tbodyMed.innerHTML = fl.rentabilite_mediane.lignes.map(function (r) {
-                  var ch = r.charges_mediane != null ? formatEuro(r.charges_mediane) : "—";
-                  return "<tr><td>" + (r.type_bien || "—") + "</td><td>" + (r.renta_brute != null ? formatPct(r.renta_brute) : "—") + "</td><td>" + ch + "</td><td>" + (r.renta_hc != null ? formatPct(r.renta_hc) : "—") + "</td><td>" + (r.renta_nette != null ? formatPct(r.renta_nette) : "—") + "</td></tr>";
-                }).join("");
-              }
-              // Rentabilités moyennes (mêmes colonnes, sans colonne Taxe foncière)
-              const tbodyMoy = document.getElementById("rentabilite-moyenne-body");
-              if (tbodyMoy && fl.rentabilite_moyenne && fl.rentabilite_moyenne.lignes) {
-                tbodyMoy.innerHTML = fl.rentabilite_moyenne.lignes.map(function (r) {
-                  var ch = r.charges_mediane != null ? formatEuro(r.charges_mediane) : "—";
-                  return "<tr><td>" + (r.type_bien || "—") + "</td><td>" + (r.renta_brute != null ? formatPct(r.renta_brute) : "—") + "</td><td>" + ch + "</td><td>" + (r.renta_hc != null ? formatPct(r.renta_hc) : "—") + "</td><td>" + (r.renta_nette != null ? formatPct(r.renta_nette) : "—") + "</td></tr>";
-                }).join("");
-              }
             } catch (e) {
               console.error("Erreur chargement fiche logement", e);
             }
             loadPanoramaVentesTable();
             loadLicitorVentesTable();
             loadCastorusVentesTable();
+            loadLeboncoinLocationsTable();
+            loadDvfForLocationsRenta();
           } catch (e) {
             console.error("Erreur chargement fiche commune", e);
           }
+        }
+
+        function applyVentesTypeFilter() {
+          var sel = document.getElementById("panorama-ventes-type");
+          if (!sel) return;
+          var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
+          // Filtrer les lignes des tableaux DVF, Licitor dans Panorama ventes
+          ["dvf-ventes-tbody", "licitor-ventes-tbody"].forEach(function(tbodyId) {
+            var tbody = document.getElementById(tbodyId);
+            if (!tbody) return;
+            Array.from(tbody.rows).forEach(function(tr) {
+              if (tr.cells.length <= 1) { tr.style.display = ""; return; }
+              var cellText = (tr.cells[0].textContent || "").trim();
+              tr.style.display = (selected.length === 0 || selected.indexOf(cellText) !== -1) ? "" : "none";
+            });
+          });
         }
 
         async function loadPanoramaVentesTable() {
@@ -1046,7 +1128,7 @@
 
           const periodeMap = { "1": "1 an", "2": "2 ans", "3": "3 ans", "5": "5 ans" };
           const periodeLabel = "(" + (periodeMap[periode] || periode + " an(s)") + ")";
-          ["dvf-periode-label", "licitor-periode-label", "castorus-periode-label", "ep-periode-label"].forEach(function(id) {
+          ["dvf-periode-label", "licitor-periode-label", "ep-periode-label"].forEach(function(id) {
             const el = document.getElementById(id);
             if (el) el.textContent = periodeLabel;
           });
@@ -1080,6 +1162,7 @@
                 + "<td>" + (r.surface_moyenne != null ? formatInt(r.surface_moyenne) + " m\u00b2" : "\u2014") + "</td>"
                 + "</tr>";
             }).join("");
+            applyVentesTypeFilter();
           } catch (e) {
             console.error("Erreur panorama ventes DVF", e);
             var tb = document.getElementById("dvf-ventes-tbody");
@@ -1123,6 +1206,7 @@
                 + "<td>" + (r.surface_moyenne != null ? formatInt(r.surface_moyenne) + " m\u00b2" : "\u2014") + "</td>"
                 + "</tr>";
             }).join("");
+            applyVentesTypeFilter();
           } catch (e) {
             console.error("Erreur licitor ventes", e);
             var tb = document.getElementById("licitor-ventes-tbody");
@@ -1136,21 +1220,13 @@
           const commune = sp.get("commune");
           if (!code_dept || !commune) return;
 
-          const periode = document.getElementById("panorama-ventes-periode") ? document.getElementById("panorama-ventes-periode").value : "1";
-          const surfaceCat = document.getElementById("panorama-ventes-surface") ? document.getElementById("panorama-ventes-surface").value : "";
-          const piecesCat = document.getElementById("panorama-ventes-pieces") ? document.getElementById("panorama-ventes-pieces").value : "";
-
-          const periodeMap = { "1": "1 an", "2": "2 ans", "3": "3 ans", "5": "5 ans" };
-          var castLabel = document.getElementById("castorus-periode-label");
-          if (castLabel) castLabel.textContent = "(" + (periodeMap[periode] || periode + " an(s)") + ")";
-
           const tbody = document.getElementById("castorus-ventes-tbody");
           if (!tbody) return;
           tbody.innerHTML = "<tr><td colspan=\"10\">Chargement\u2026</td></tr>";
 
           try {
             const qs = new URLSearchParams({ code_dept: code_dept, commune: commune,
-              periode_annees: periode, surface_cat: surfaceCat, pieces_cat: piecesCat });
+              periode_annees: "5", surface_cat: "", pieces_cat: "" });
             const res = await fetch(API_BASE + "/api/castorus-ventes?" + qs.toString());
             if (!res.ok) { tbody.innerHTML = "<tr><td colspan=\"10\">\u2014</td></tr>"; return; }
             const data = await res.json();
@@ -1177,6 +1253,78 @@
             console.error("Erreur castorus ventes", e);
             var tb = document.getElementById("castorus-ventes-tbody");
             if (tb) tb.innerHTML = "<tr><td colspan=\"10\">Erreur</td></tr>";
+          }
+        }
+
+        async function loadLeboncoinLocationsTable() {
+          const sp = new URLSearchParams(window.location.search || "");
+          const code_dept = sp.get("code_dept");
+          const commune = sp.get("commune");
+          if (!code_dept || !commune) return;
+
+          const surfaceCat = document.getElementById("panorama-locations-surface") ? document.getElementById("panorama-locations-surface").value : "";
+          const piecesCat = document.getElementById("panorama-locations-pieces") ? document.getElementById("panorama-locations-pieces").value : "";
+
+          const tbody = document.getElementById("lbc-locations-tbody");
+          if (!tbody) return;
+          tbody.innerHTML = "<tr><td colspan=\"16\">Chargement\u2026</td></tr>";
+
+          try {
+            const qs = new URLSearchParams({ code_dept: code_dept, commune: commune,
+              surface_cat: surfaceCat, pieces_cat: piecesCat });
+            const res = await fetch(API_BASE + "/api/leboncoin-locations?" + qs.toString());
+            if (!res.ok) {
+              var errTxt = "Erreur " + res.status;
+              try {
+                var errBody = await res.json();
+                if (errBody && errBody.detail) errTxt += " : " + (typeof errBody.detail === "string" ? errBody.detail : JSON.stringify(errBody.detail));
+              } catch (ignore) {}
+              console.error("leboncoin-locations", errTxt);
+              tbody.innerHTML = "<tr><td colspan=\"16\">" + errTxt + "</td></tr>";
+              return;
+            }
+            const data = await res.json();
+            const lignes = data.lignes || [];
+
+            if (lignes.length === 0) {
+              tbody.innerHTML = "<tr><td colspan=\"16\">Aucune donn\u00e9e</td></tr>";
+              return;
+            }
+
+            _lbcLignesCache = lignes;
+            _updateAllRenta();
+            tbody.innerHTML = lignes.map(function(r) {
+              var sep = "<td class=\"col-sep\"></td>";
+              var loyerCC = r.loyer_median != null ? formatEuro(r.loyer_median) : "\u2014";
+              var loyerHC = r.loyer_hc_median != null ? formatEuro(r.loyer_hc_median) : "\u2014";
+              var loyerM2 = r.loyer_med_m2 != null ? (r.loyer_med_m2.toFixed(2) + " \u20ac/m\u00b2") : "\u2014";
+              var surfM = r.surface_mediane != null ? formatInt(r.surface_mediane) + " m\u00b2" : "\u2014";
+              var loyerCCm = r.loyer_moyen != null ? formatEuro(r.loyer_moyen) : "\u2014";
+              var chargesM = r.charges_moy != null ? formatEuro(r.charges_moy) : "\u2014";
+              var loyerM2m = r.loyer_moy_m2 != null ? (r.loyer_moy_m2.toFixed(2) + " \u20ac/m\u00b2") : "\u2014";
+              var surfMoy = r.surface_moyenne != null ? formatInt(r.surface_moyenne) + " m\u00b2" : "\u2014";
+              var q1 = r.loyer_m2_q1 != null ? (r.loyer_m2_q1.toFixed(2) + " \u20ac") : "\u2014";
+              var q3 = r.loyer_m2_q3 != null ? (r.loyer_m2_q3.toFixed(2) + " \u20ac") : "\u2014";
+              var pctM = r.pct_meubles != null ? (r.pct_meubles.toFixed(1) + " %") : "\u2014";
+              return "<tr><td>" + (r.type || "\u2014") + "</td>"
+                + "<td>" + (r.nb_biens != null ? formatInt(r.nb_biens) : "\u2014") + "</td>" + sep
+                + "<td>" + loyerCC + "</td>"
+                + "<td>" + loyerHC + "</td>"
+                + "<td>" + loyerM2 + "</td>"
+                + "<td>" + surfM + "</td>" + sep
+                + "<td>" + loyerCCm + "</td>"
+                + "<td>" + chargesM + "</td>"
+                + "<td>" + loyerM2m + "</td>"
+                + "<td>" + surfMoy + "</td>" + sep
+                + "<td>" + q1 + "</td>"
+                + "<td>" + q3 + "</td>"
+                + "<td>" + pctM + "</td>"
+                + "</tr>";
+            }).join("");
+          } catch (e) {
+            console.error("Erreur leboncoin locations", e);
+            var tb = document.getElementById("lbc-locations-tbody");
+            if (tb) tb.innerHTML = "<tr><td colspan=\"16\">Erreur</td></tr>";
           }
         }
 
@@ -1209,14 +1357,143 @@
         function initPanoramaVentesListeners() {
           ["panorama-ventes-periode", "panorama-ventes-surface", "panorama-ventes-pieces"].forEach(function(id) {
             var el = document.getElementById(id);
-            if (el) {
-              el.addEventListener("change", loadPanoramaVentesTable);
-              el.addEventListener("change", loadCastorusVentesTable);
-            }
+            if (el) el.addEventListener("change", loadPanoramaVentesTable);
           });
-          // La période s'applique aussi aux tableaux Licitor et Castorus
+          // La période s'applique aussi au tableau Licitor
           var periodeEl = document.getElementById("panorama-ventes-periode");
           if (periodeEl) periodeEl.addEventListener("change", loadLicitorVentesTable);
+          // Filtre type de biens (client-side)
+          var typeEl = document.getElementById("panorama-ventes-type");
+          if (typeEl) typeEl.addEventListener("change", applyVentesTypeFilter);
+        }
+
+        // Correspondance entre les types DVF du filtre et les types affichés dans les tableaux locations
+        var _locFilterMap = {
+          "Maisons": ["Maisons"],
+          "Appartements": ["Appartements", "Apparts 1/2 pièces", "Apparts +3 pièces"],
+          "Dépendances": ["Dépendances"],
+          "Locaux indus. / comm.": ["Locaux indus. / comm."],
+          "Terrains": ["Terrains"],
+          "Immeubles": ["Immeubles"]
+        };
+
+        function applyLocationsTypeFilter() {
+          var sel = document.getElementById("panorama-locations-type");
+          if (!sel) return;
+          var selected = Array.from(sel.selectedOptions).map(function(o) { return o.value; });
+
+          // Construire l'ensemble des types de lignes à afficher
+          var visibleTypes = new Set();
+          if (selected.length === 0) {
+            visibleTypes = null; // null = tout montrer
+          } else {
+            selected.forEach(function(dvfType) {
+              var mapped = _locFilterMap[dvfType] || [dvfType];
+              mapped.forEach(function(t) { visibleTypes.add(t); });
+            });
+            if (selected.indexOf("Maisons") !== -1 && selected.indexOf("Appartements") !== -1) {
+              visibleTypes.add("Total");
+              visibleTypes.add("Maisons/Appart.");
+            }
+          }
+
+          // Appliquer sur toutes les tables filtrables de Panorama locations
+          var section = document.querySelector(".panorama-locations-section");
+          if (!section) return;
+
+          // Tables avec data-type-filter sur les <tr> (ANIL)
+          section.querySelectorAll("tr[data-type-filter]").forEach(function(tr) {
+            var rowType = tr.getAttribute("data-type-filter");
+            tr.style.display = (visibleTypes === null || visibleTypes.has(rowType)) ? "" : "none";
+          });
+
+          // Tables dynamiques (LBC, rentabilité) : filtrer par texte de la 1ère cellule
+          ["lbc-locations-tbody", "rentabilite-mediane-body", "rentabilite-moyenne-body",
+           "rentabilite-lbc-mediane-body", "rentabilite-lbc-moyenne-body"].forEach(function(tbodyId) {
+            var tbody = document.getElementById(tbodyId);
+            if (!tbody) return;
+            Array.from(tbody.rows).forEach(function(tr) {
+              var firstCell = tr.cells[0];
+              if (!firstCell) return;
+              var cellText = firstCell.textContent.trim();
+              // Lignes "Aucune donnée" ou placeholder : toujours visibles
+              if (tr.cells.length <= 1) { tr.style.display = ""; return; }
+              tr.style.display = (visibleTypes === null || visibleTypes.has(cellText)) ? "" : "none";
+            });
+          });
+        }
+
+        /** Recharge Leboncoin + DVF (rentabilité) puis réapplique le filtre type (comme Panorama ventes au change). */
+        function refreshPanoramaLocationsServerData() {
+          Promise.all([
+            loadLeboncoinLocationsTable(),
+            loadDvfForLocationsRenta()
+          ]).then(function () {
+            applyLocationsTypeFilter();
+          }).catch(function () {
+            applyLocationsTypeFilter();
+          });
+        }
+
+        function initPanoramaLocationsListeners() {
+          var periodeEl = document.getElementById("panorama-locations-periode");
+          if (periodeEl) {
+            periodeEl.addEventListener("change", function () {
+              loadDvfForLocationsRenta().then(function () { applyLocationsTypeFilter(); }).catch(function () { applyLocationsTypeFilter(); });
+            });
+          }
+          ["panorama-locations-surface", "panorama-locations-pieces"].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.addEventListener("change", refreshPanoramaLocationsServerData);
+          });
+          var typeEl = document.getElementById("panorama-locations-type");
+          if (typeEl) typeEl.addEventListener("change", applyLocationsTypeFilter);
+          // Bouton "Forcer extraction"
+          var btnLbc = document.getElementById("btn-force-extract-lbc");
+          if (btnLbc) {
+            btnLbc.addEventListener("click", async function () {
+              var sp = new URLSearchParams(window.location.search || "");
+              var code_postal = sp.get("code_postal");
+              var commune = sp.get("commune");
+              if (!code_postal || !commune) {
+                alert("Code postal et commune sont requis dans l\u2019URL de la fiche pour lancer l\u2019extraction Leboncoin.");
+                return;
+              }
+              btnLbc.disabled = true;
+              var origText = btnLbc.textContent;
+              btnLbc.textContent = "Extraction en cours\u2026";
+              var tbody = document.getElementById("lbc-locations-tbody");
+              if (tbody) tbody.innerHTML = '<tr><td colspan="16">Extraction en cours (peut prendre plusieurs minutes)\u2026</td></tr>';
+              try {
+                var qs = new URLSearchParams({ commune: commune, code_postal: code_postal });
+                var res = await fetch(API_BASE + "/api/leboncoin-extract?" + qs.toString(), {
+                  method: "POST",
+                  signal: AbortSignal.timeout(600000)
+                });
+                var data = await res.json().catch(function () { return {}; });
+                if (!res.ok) {
+                  var det = data.detail != null ? (typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail)) : res.statusText;
+                  alert("Extraction \u00e9chou\u00e9e : " + det);
+                  if (tbody) tbody.innerHTML = '<tr><td colspan="16">Erreur extraction</td></tr>';
+                  return;
+                }
+                var msg = (data.inserted || 0) + " nouvelles annonces ins\u00e9r\u00e9es, " + (data.skipped || 0) + " d\u00e9j\u00e0 en base (" + (data.extracted || 0) + " extraites au total)";
+                alert("Extraction termin\u00e9e : " + msg);
+                loadLeboncoinLocationsTable().then(function () { applyLocationsTypeFilter(); }).catch(function () { applyLocationsTypeFilter(); });
+              } catch (e) {
+                if (e.name === "TimeoutError") {
+                  alert("L\u2019extraction a d\u00e9pass\u00e9 le d\u00e9lai maximum (10 min).");
+                } else {
+                  alert("Erreur r\u00e9seau lors de l\u2019extraction.");
+                }
+                console.error("[leboncoin-extract]", e);
+                if (tbody) tbody.innerHTML = '<tr><td colspan="16">Erreur</td></tr>';
+              } finally {
+                btnLbc.disabled = false;
+                btnLbc.textContent = origText;
+              }
+            });
+          }
         }
 
         if (document.readyState === "loading") {
@@ -1225,12 +1502,14 @@
             initCommuneSearch();
             loadCommuneFiche();
             initPanoramaVentesListeners();
+            initPanoramaLocationsListeners();
           });
         } else {
           updateNavLinksFromParams();
           initCommuneSearch();
           loadCommuneFiche();
           initPanoramaVentesListeners();
+          initPanoramaLocationsListeners();
         }
       })();
     </script>
