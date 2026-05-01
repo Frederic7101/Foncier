@@ -1515,13 +1515,25 @@ def _build_renta_lignes(
     use_median: bool = True,
     code_insee: Optional[str] = None,
 ) -> List[dict]:
-    """Calcule les lignes de rentabilité (brute, HC, nette) par type de bien. Utilisé par fiche-logement et comparaison_scores."""
+    """Calcule les lignes de rentabilité (brute, HC, nette) par type de bien. Utilisé par fiche-logement et comparaison_scores.
+
+    Formules alignées sur fiche_commune.html (fonction JS _computeRentaRows) :
+      - frais d'achat forfait 10 % → denom = prix_total * 1.10
+      - tf (par type) = surface × 3 × loyer_ref × (taux_tfb / 100)   [surface = DVF per-type]
+      - loyer_annuel = loyer_m2 × surface × 12
+      - renta_brute = (loyer_m2 × 12 / prix_m2) × 100
+      - renta_hc   = (loyer_annuel - tf) / denom × 100
+      - renta_nette = (loyer_annuel × 0.70 - tf) / denom × 100
+    Les charges (ancien terme `0.25 × charges`) sont ignorées, en cohérence avec fiche_commune.
+    """
     if not ventes_lignes or not loc_lignes:
         return []
     nb_maisons_agreg = (parc_data.get("nb_maisons") or 0) if parc_data else 0
     nb_apparts_agreg = (parc_data.get("nb_apparts") or 0) if parc_data else 0
     total_log = nb_maisons_agreg + nb_apparts_agreg or 1
     surface_moy_agreg = parc_data.get("surface_moy") if parc_data else None
+    # tf_mediane (global, legacy) conservé pour compatibilité/debug : tf est désormais recalculé par type
+    # à partir de surface_val (surface DVF per-type), comme dans fiche_commune.
     tf_mediane = None
     if surface_moy_agreg is not None and loyer_ref is not None and taux_tfb is not None:
         tf_mediane = surface_moy_agreg * 3 * loyer_ref * (taux_tfb / 100.0)
@@ -1614,24 +1626,31 @@ def _build_renta_lignes(
             continue
         renta_brute = (loyer_m2 * 12 / prix_m2 * 100) if loyer_m2 is not None else None
         denom = (prix_total * 1.10) if (prix_total is not None and prix_total > 0) else None
+        # TF calculée par type à partir de la surface DVF per-type (alignement fiche_commune.html).
+        # Si la surface DVF du type est absente, on retombe sur tf_mediane (surface moyenne du parc)
+        # pour rester robuste sur les types dépourvus de surface DVF (ex. Terrains, Parkings).
+        tf_type = None
+        if surface_val is not None and surface_val > 0 and loyer_ref is not None and taux_tfb is not None:
+            tf_type = surface_val * 3 * loyer_ref * (taux_tfb / 100.0)
+        elif tf_mediane is not None:
+            tf_type = tf_mediane
         renta_hc = None
         if loyer_m2 is not None and surface_val is not None and surface_val > 0 and denom:
-            renta_hc = (loyer_m2 * surface_val * 12 - (tf_mediane or 0)) / denom * 100
+            renta_hc = (loyer_m2 * surface_val * 12 - (tf_type or 0)) / denom * 100
         renta_nette = None
-        if loyer_m2 is not None and surface_val is not None and surface_val > 0 and denom and charges is not None:
-            renta_nette = (loyer_m2 * surface_val * 12 * 0.75 - 0.25 * charges - (tf_mediane or 0)) / denom * 100
+        if loyer_m2 is not None and surface_val is not None and surface_val > 0 and denom:
+            renta_nette = (loyer_m2 * surface_val * 12 * 0.70 - (tf_type or 0)) / denom * 100
         if DEBUG:
             _debug_log(
                 "[renta-debug] code_insee=%s type=%s prix_m2=%s prix_total=%s loyer_m2=%s "
-                "surface_mediane=%s charges=%s tf_mediane=%s -> renta_brute=%s renta_hc=%s renta_nette=%s",
+                "surface=%s tf_type=%s -> renta_brute=%s renta_hc=%s renta_nette=%s",
                 code_insee,
                 type_label,
                 prix_m2,
                 prix_total,
                 loyer_m2,
                 surface_val,
-                charges,
-                tf_mediane,
+                tf_type,
                 renta_brute,
                 renta_hc,
                 renta_nette,
@@ -3108,7 +3127,7 @@ WITH base AS (
         CASE WHEN surface > 0 THEN (loyer::numeric / surface) ELSE NULL END AS loyer_m2_calc,
         CASE WHEN surface > 0 THEN (COALESCE(loyer_hc, loyer)::numeric / surface) ELSE NULL END AS loyer_hc_m2_calc
     FROM foncier.leboncoin_locations_brut
-    WHERE LOWER(code_dept) = LOWER(%s)
+    WHERE LPAD(LOWER(code_dept), 2, '0') = LPAD(LOWER(%s), 2, '0')
       AND {sql_norm_col} = %s
       AND loyer IS NOT NULL
       {surface_filter}
@@ -4737,7 +4756,7 @@ def post_comparaison_scores(body: ComparaisonScoresBody):
 
 
 # Noms de paramètres connus pour refresh-indicateurs (pour détecter les typos)
-_REFRESH_INDICATEURS_KNOWN_PARAMS = {"code_insee_list", "limit", "batch_commit", "workers"}
+_REFRESH_INDICATEURS_KNOWN_PARAMS = {"code_insee_list", "limit", "batch_commit", "workers", "force"}
 _REFRESH_INDICATEURS_USAGE = (
     "Usage: POST /api/refresh-indicateurs?code_insee_list=<code1>&code_insee_list=<code2>&... "
     "(paramètre sans 'e' final). Exemple: POST /api/refresh-indicateurs?code_insee_list=97306"
@@ -4748,11 +4767,14 @@ def _refresh_indicateurs_impl(
     limit: Optional[int],
     _batch_commit: int,
     workers: int,
+    force: bool = False,
 ) -> dict:
     """
     Corps métier de POST /api/refresh-indicateurs (sans validation HTTP des query params).
     Appelable depuis d'autres endpoints (ex. force-recalcul) sans objet Request.
     _batch_commit : conservé pour compatibilité API (non utilisé : un COMMIT par upsert commune).
+    force : si True, purge fiche_logement_cache des communes ciblées avant lecture pour forcer
+    une régénération complète du payload fiche (utile après un changement de formule, ex. rentabilité).
     """
     def _write_rejected_codes_csv(entries: List[dict]) -> Optional[str]:
         if not entries:
@@ -4812,6 +4834,16 @@ def _refresh_indicateurs_impl(
         )
         ref_by_insee = {str(r["code_insee"]): dict(r) for r in cur.fetchall()}
         codes_not_in_ref_communes = [ci for ci in to_process if ci not in ref_by_insee]
+
+        # Option force : purge du cache fiche pour les communes ciblées, forçant une régénération
+        # complète des payloads (utile après un changement de formule dans _build_renta_lignes).
+        if force:
+            cur.execute(
+                "DELETE FROM foncier.fiche_logement_cache WHERE code_insee IN (" + placeholders + ")",
+                to_process,
+            )
+            conn.commit()
+            _debug_log("[refresh-indicateurs] force=True : cache fiche purgé pour %d communes", len(to_process))
 
         # Une seule requête pour les payloads déjà en cache fiche
         cur.execute(
@@ -4935,12 +4967,15 @@ def refresh_indicateurs(
         description="(Obsolète) Conservé pour compatibilité. Chaque commune est commitée séparément pour isoler les erreurs.",
     ),
     workers: int = Query(4, ge=1, le=16, description="Nombre de workers parallèles pour calculer les fiches (cache fiche + indicateurs)"),
+    force: bool = Query(False, description="Si true, purge fiche_logement_cache avant traitement pour forcer une régénération complète (utile après un changement de formule de calcul, ex. rentabilité)."),
 ):
     """
     Remplit ou met à jour fiche_logement_cache et indicateurs_communes pour les communes demandées.
     Si code_insee_list est fourni, traite uniquement ces code_insee. Sinon traite les communes de ref_communes
     (sans limite si limit absent ou 0, sinon limit communes).
     Lit d'abord le cache fiche quand il existe ; les fiches manquantes sont calculées en parallèle (workers).
+    force=true : purge le cache fiche des communes ciblées avant la lecture, obligeant la régénération
+    des payloads (nécessaire après un changement de formule dans _build_renta_lignes, etc.).
     """
     query_keys = set(request.query_params.keys())
     typo = query_keys & {"code_insee_liste", "code_insee_listes"}
@@ -4953,7 +4988,7 @@ def refresh_indicateurs(
             detail=f"Paramètre inconnu: '{bad}'. Utilisez 'code_insee_list' (sans 'e' final). {_REFRESH_INDICATEURS_USAGE}",
         )
     _invalidate_indic_cols_cache()
-    return _refresh_indicateurs_impl(code_insee_list, limit, batch_commit, workers)
+    return _refresh_indicateurs_impl(code_insee_list, limit, batch_commit, workers, force=force)
 
 
 @app.post("/api/refresh-indicateurs-agreges")
@@ -5057,19 +5092,89 @@ def force_recalcul_indicateurs(
     """
     Force le recalcul selon le mode courant de comparaison :
     - communes: purge cache fiche + indicateurs_communes des communes ciblées puis refresh ciblé
-    - departements / regions: force=true sur refresh_indicateurs_agreges des cibles
+    - departements / regions: purge cache fiche + indicateurs_communes de TOUTES les communes
+      des départements/régions ciblés, refresh ciblé, puis recalcule les agrégats.
+      Cela garantit que les changements de formule (ex. _build_renta_lignes) soient bien répercutés
+      jusqu'aux agrégats, qui lisent depuis indicateurs_communes.
     """
     mode = (mode or "communes").strip().lower()
     if mode == "departements":
         targets = [str(x or "").strip() for x in (code_dept or []) if str(x or "").strip()]
         if not targets:
             raise HTTPException(status_code=400, detail="En mode départements, fournir au moins un code_dept.")
-        return refresh_indicateurs_agreges(code_dept_list=targets, code_region_list=None, refresh_all=False, force=True)
+        # 1) Lister les communes des départements cibles
+        conn = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                "SELECT DISTINCT code_insee FROM foncier.ref_communes "
+                "WHERE dep_code = ANY(%s) AND code_insee IS NOT NULL AND code_insee != ''",
+                (targets,),
+            )
+            code_insee_list = [str(r["code_insee"]).strip() for r in cur.fetchall()]
+            cur.close()
+        finally:
+            if conn:
+                conn.close()
+        # 2) Refresh des communes avec force=True (purge fiche cache + regen)
+        _invalidate_indic_cols_cache()
+        out_communes = _refresh_indicateurs_impl(
+            code_insee_list=code_insee_list,
+            limit=None,
+            _batch_commit=batch_commit,
+            workers=workers,
+            force=True,
+        )
+        # 3) Recalculer les agrégats départements à partir des indicateurs_communes fraîchement écrits
+        out_depts = refresh_indicateurs_agreges(
+            code_dept_list=targets, code_region_list=None, refresh_all=False, force=True
+        )
+        return {
+            "mode": "departements",
+            "communes_refreshed": out_communes.get("refreshed", 0),
+            "communes_requested": out_communes.get("requested", 0),
+            "departements_refreshed": out_depts.get("departements_refreshed", 0) if isinstance(out_depts, dict) else None,
+        }
     if mode == "regions":
         targets = [str(x or "").strip() for x in (code_region or []) if str(x or "").strip()]
         if not targets:
             raise HTTPException(status_code=400, detail="En mode régions, fournir au moins un code_region.")
-        return refresh_indicateurs_agreges(code_dept_list=None, code_region_list=targets, refresh_all=False, force=True)
+        # 1) Lister les communes des régions cibles
+        conn = None
+        try:
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=RealDictCursor)
+            cur.execute(
+                "SELECT DISTINCT c.code_insee FROM foncier.ref_communes c "
+                "LEFT JOIN foncier.ref_departements d ON d.code_dept = c.dep_code "
+                "WHERE d.code_region = ANY(%s) AND c.code_insee IS NOT NULL AND c.code_insee != ''",
+                (targets,),
+            )
+            code_insee_list = [str(r["code_insee"]).strip() for r in cur.fetchall()]
+            cur.close()
+        finally:
+            if conn:
+                conn.close()
+        # 2) Refresh des communes avec force=True (purge fiche cache + regen)
+        _invalidate_indic_cols_cache()
+        out_communes = _refresh_indicateurs_impl(
+            code_insee_list=code_insee_list,
+            limit=None,
+            _batch_commit=batch_commit,
+            workers=workers,
+            force=True,
+        )
+        # 3) Recalculer les agrégats régions à partir des indicateurs_communes fraîchement écrits
+        out_regs = refresh_indicateurs_agreges(
+            code_dept_list=None, code_region_list=targets, refresh_all=False, force=True
+        )
+        return {
+            "mode": "regions",
+            "communes_refreshed": out_communes.get("refreshed", 0),
+            "communes_requested": out_communes.get("requested", 0),
+            "regions_refreshed": out_regs.get("regions_refreshed", 0) if isinstance(out_regs, dict) else None,
+        }
 
     # Invalider le cache de colonnes (les migrations ont pu ajouter des colonnes depuis le dernier appel)
     _invalidate_indic_cols_cache()
@@ -5110,6 +5215,7 @@ def force_recalcul_indicateurs(
         limit=None,
         _batch_commit=batch_commit,
         workers=workers,
+        force=True,
     )
     out["requested"] = len(communes_in)
     out["resolved"] = len(code_insee_list)

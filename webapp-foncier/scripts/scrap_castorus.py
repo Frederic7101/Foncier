@@ -14,6 +14,8 @@ Usage :
     python scrap_castorus.py --commune Laon --code-postal 02000
     python scrap_castorus.py --commune Laon --code-postal 02000 --with-details
     python scrap_castorus.py --from-db --max-communes 5
+    python scrap_castorus.py --from-db --db-order commune-desc --code-dept 75
+    python scrap_castorus.py --from-db --code-region 11 --commune-initial M
     python scrap_castorus.py --dry-run --commune Laon --code-postal 02000
     python scrap_castorus.py --export-communes-cp-court communes_a_rescraper.csv
       → CSV des communes dont le CP en base a moins de 5 chiffres (zéros initiaux perdus)
@@ -667,17 +669,121 @@ def _build_insert_row(listing: dict, detail: Optional[dict], now: datetime) -> t
 # ─────────────────────────────────────────────────────────────────────────────
 # Récupération des communes depuis la base
 # ─────────────────────────────────────────────────────────────────────────────
-def _get_communes_from_db(cur, max_communes: Optional[int] = None) -> List[Tuple[str, str]]:
-    """Retourne les (commune, code_postal) distinctes depuis vf_communes."""
-    sql = """
-        SELECT DISTINCT commune, code_postal
-        FROM foncier.vf_communes
-        WHERE code_postal IS NOT NULL AND commune IS NOT NULL
-        ORDER BY commune
+# Ordres SQL autorisés (évite toute interpolation non contrôlée dans ORDER BY).
+_DB_ORDER_SQL = {
+    "commune-asc": "commune ASC, code_postal ASC",
+    "commune-desc": "commune DESC, code_postal ASC",
+    "cp-asc": "code_postal ASC, commune ASC",
+    "cp-desc": "code_postal DESC, commune ASC",
+}
+
+
+def _norm_code_dept_arg(code: str) -> str:
+    """Normalise un code département saisi en CLI (ex. 2 → 02 ; 2A inchangé)."""
+    c = str(code).strip().upper()
+    if not c:
+        return c
+    if c.isdigit():
+        if len(c) == 1:
+            return c.zfill(2)
+        return c
+    return c
+
+
+def _dept_match_sql_variants(codes: List[str]) -> List[str]:
+    """Variantes texte (ex. 02 et 2) pour comparer à code_dept en base (sans altérer 971, etc.)."""
+    seen: set = set()
+    out: List[str] = []
+    for raw in codes:
+        n = _norm_code_dept_arg(raw)
+        candidates = {n}
+        if n.isdigit() and len(n) == 2 and n.startswith("0") and n != "00":
+            candidates.add(n.lstrip("0"))
+        for v in candidates:
+            if v and v not in seen:
+                seen.add(v)
+                out.append(v)
+    return out
+
+
+def _sort_commune_cp_pairs(
+    pairs: List[Tuple[str, str]], order: str
+) -> List[Tuple[str, str]]:
+    """Trie (commune, cp) comme --db-order (pour --from-file si besoin)."""
+    if order not in _DB_ORDER_SQL:
+        return pairs
+    if order == "commune-asc":
+        return sorted(pairs, key=lambda t: ((t[0] or "").lower(), (t[1] or "").lower()))
+    if order == "commune-desc":
+        return sorted(pairs, key=lambda t: ((t[0] or "").lower(), (t[1] or "").lower()), reverse=True)
+    if order == "cp-asc":
+        return sorted(pairs, key=lambda t: ((t[1] or "").lower(), (t[0] or "").lower()))
+    if order == "cp-desc":
+        return sorted(pairs, key=lambda t: ((t[1] or "").lower(), (t[0] or "").lower()), reverse=True)
+    return pairs
+
+
+def _get_communes_from_db(
+    cur,
+    max_communes: Optional[int] = None,
+    order: str = "commune-asc",
+    code_dept_list: Optional[List[str]] = None,
+    code_region_list: Optional[List[str]] = None,
+    commune_initial: Optional[str] = None,
+) -> List[Tuple[str, str]]:
+    """Retourne les (commune, code_postal) distinctes depuis vf_communes.
+
+    Filtres optionnels : département(s) (colonne code_dept), région(s) via
+    ref_departements, première lettre du nom de commune (après trim, insensible à la casse).
     """
+    if order not in _DB_ORDER_SQL:
+        order = "commune-asc"
+    order_clause = _DB_ORDER_SQL[order]
+
+    where = ["v.code_postal IS NOT NULL", "v.commune IS NOT NULL"]
+    params: List[Any] = []
+
+    if code_dept_list:
+        depts = [str(x).strip() for x in code_dept_list if str(x).strip()]
+        if depts:
+            variants = _dept_match_sql_variants(depts)
+            where.append(
+                "TRIM(UPPER(CAST(v.code_dept AS TEXT))) = ANY(%s::text[])"
+            )
+            params.append(variants)
+
+    if code_region_list:
+        regions = [str(r).strip().upper() for r in code_region_list if str(r).strip()]
+        if regions:
+            where.append(
+                "EXISTS ("
+                "SELECT 1 FROM foncier.ref_departements d "
+                "WHERE TRIM(UPPER(CAST(d.code_dept AS TEXT))) = TRIM(UPPER(CAST(v.code_dept AS TEXT))) "
+                "AND TRIM(UPPER(CAST(d.code_region AS TEXT))) = ANY(%s::text[])"
+                ")"
+            )
+            params.append(regions)
+
+    if commune_initial is not None:
+        letter = commune_initial.strip()
+        if letter:
+            where.append("SUBSTRING(TRIM(v.commune) FROM 1 FOR 1) ILIKE %s")
+            params.append(letter[:1])
+
+    order_clause_v = order_clause.replace("commune", "v.commune").replace(
+        "code_postal", "v.code_postal"
+    )
+
+    sql = (
+        "SELECT DISTINCT v.commune, v.code_postal "
+        "FROM foncier.vf_communes v "
+        "WHERE " + " AND ".join(where) + " ORDER BY " + order_clause_v
+    )
     if max_communes:
-        sql += f" LIMIT {max_communes}"
-    cur.execute(sql)
+        sql += " LIMIT %s"
+        params.append(max_communes)
+
+    cur.execute(sql, params)
     return [(row[0], row[1]) for row in cur.fetchall()]
 
 
@@ -724,12 +830,43 @@ def export_communes_cp_moins_de_5_chiffres(out_path: str, db_cfg: dict) -> int:
 # ─────────────────────────────────────────────────────────────────────────────
 def main():
     parser = argparse.ArgumentParser(
-        description="Scraping des annonces de vente depuis Castorus → PostgreSQL"
+        description="Scraping des annonces de vente depuis Castorus vers PostgreSQL"
     )
     parser.add_argument("--commune", type=str, help="Nom de la commune à scraper")
     parser.add_argument("--code-postal", type=str, help="Code postal de la commune")
     parser.add_argument("--from-db", action="store_true",
                         help="Scraper les communes présentes dans vf_communes")
+    parser.add_argument(
+        "--db-order",
+        choices=sorted(_DB_ORDER_SQL.keys()),
+        default="commune-asc",
+        help="Ordre de traitement : nom de commune (A-Z ou Z-A) ou code postal (croissant / decroissant). "
+        "S'applique à --from-db ; avec --from-file, trie la liste lue avant la limite --max-communes.",
+    )
+    parser.add_argument(
+        "--code-dept",
+        action="append",
+        default=None,
+        metavar="DEPT",
+        help="Avec --from-db uniquement : ne traiter que les lignes dont vf_communes.code_dept correspond "
+        "(ex. 75 ou 2A). Option répétable pour plusieurs départements.",
+    )
+    parser.add_argument(
+        "--code-region",
+        action="append",
+        default=None,
+        metavar="REGION",
+        help="Avec --from-db uniquement : ne traiter que les communes dont le département (code_dept) "
+        "appartient à cette région INSEE (foncier.ref_departements.code_region). Option répétable.",
+    )
+    parser.add_argument(
+        "--commune-initial",
+        type=str,
+        default=None,
+        metavar="LETTRE",
+        help="Avec --from-db uniquement : ne traiter que les communes dont le nom commence par cette lettre "
+        "(insensible à la casse ; accents : saisir la même lettre qu'en base, ex. É).",
+    )
     parser.add_argument("--from-file", type=str, default=None,
                         help="Fichier CSV (commune + code_postal) : séparateur ',' ou ';' détecté automatiquement")
     parser.add_argument("--max-communes", type=int, default=None,
@@ -750,6 +887,12 @@ def main():
         "numériques dans vf_communes, puis quitte (réinjection : --from-file en prenant les 2 1ères colonnes)",
     )
     args = parser.parse_args()
+
+    db_geo_filters = bool(args.code_dept) or bool(args.code_region) or (
+        args.commune_initial and str(args.commune_initial).strip()
+    )
+    if db_geo_filters and not args.from_db:
+        parser.error("--code-dept, --code-region et --commune-initial imposent --from-db")
 
     if args.export_communes_cp_court:
         db_cfg = _get_db_config()
@@ -789,13 +932,21 @@ def main():
         communes = [(args.commune, args.code_postal)]
     elif args.from_file:
         communes = _load_communes_from_csv_file(args.from_file)
+        communes = _sort_commune_cp_pairs(communes, args.db_order)
         if args.max_communes:
             communes = communes[:args.max_communes]
         print(f"{len(communes)} communes lues depuis {args.from_file}")
     elif args.from_db:
         with conn.cursor() as cur:
-            communes = _get_communes_from_db(cur, args.max_communes)
-        print(f"{len(communes)} communes trouvées en base")
+            communes = _get_communes_from_db(
+                cur,
+                max_communes=args.max_communes,
+                order=args.db_order,
+                code_dept_list=args.code_dept,
+                code_region_list=args.code_region,
+                commune_initial=args.commune_initial,
+            )
+        print(f"{len(communes)} communes trouvées en base (ordre {args.db_order})")
 
     if not communes:
         print("Aucune commune à scraper.")

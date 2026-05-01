@@ -242,10 +242,10 @@ def _parse_api_ad(ad: dict) -> Optional[dict]:
         list_id = ad.get("list_id")
         url = f"https://www.leboncoin.fr/ad/locations/{list_id}"
 
-    # Code département
+    # Code département — zero-pad sur 2 chars pour correspondre au format "02", "75", etc.
     dept = location.get("department_id")
     if dept is not None:
-        dept = str(dept)
+        dept = str(dept).zfill(2)
 
     return {
         "url_annonce": url,
