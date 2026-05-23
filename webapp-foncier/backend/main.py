@@ -28,399 +28,27 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Mode debug : logs [fiche], [indicators], [refresh-indicateurs], [stats] uniquement si DEBUG=1 (ou true/yes)
-DEBUG = os.environ.get("DEBUG", "").strip().lower() in ("1", "true", "yes")
-IGN_WMTS_URL = (
-    "https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"
-    "&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM"
-    "&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png"
+from debug_log import DEBUG, debug_log as _debug_log
+from text_norm import (
+    _normalize_name_canonical,
+    _normalize_commune_name_for_map_match,
+    _debug_sql_params,
+    _sql_norm_name,
+    _normalize_code_dept_for_vf,
+    _normalize_code_postal_for_vf,
+    _normalize_code_postal_for_ref_communes,
+    _sql_norm_name_canonical,
+    _sql_norm_name_canonical_commune_vf,
+    _sql_libgeo_ville_canonical,
+    _normalize_name,
 )
-IGN_TILE_CACHE_DIR = Path(__file__).resolve().parent.parent / "frontend" / "data" / "carto" / "ign_tiles"
+from db import get_db_connection
+from models import Vente, ComparaisonScoresBody, DistancesCommunesBody
+from services.period import fetch_period
+from services.geo import fetch_geo, fetch_refs_comparaison_logement, fetch_communes
+from services.ventes import search_ventes
+from services.ign_tiles import fetch_ign_tile
 
-
-# Fichier de log horodaté (créé au démarrage si DEBUG et LOG_TO_FILE=1)
-_debug_log_file = None
-
-def _init_debug_log_file() -> None:
-    global _debug_log_file
-    if _debug_log_file is not None:
-        return
-    if not DEBUG or not os.environ.get("LOG_TO_FILE", "").strip().lower() in ("1", "true", "yes"):
-        return
-    log_dir = Path(__file__).resolve().parent / "logs"
-    log_dir.mkdir(exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = log_dir / f"debug_{ts}.log"
-    try:
-        _debug_log_file = open(log_path, "a", encoding="utf-8")
-        _debug_log_file.write(f"# Log started {datetime.now().isoformat()}\n")
-        _debug_log_file.flush()
-    except OSError:
-        _debug_log_file = None
-
-def _debug_log(msg: str, *args: Any, **kwargs: Any) -> None:
-    """Affiche un log uniquement si DEBUG est activé (env DEBUG=1). Optionnellement écrit dans un fichier horodaté si LOG_TO_FILE=1."""
-    if not DEBUG:
-        return
-    text = (msg % args) if args else msg
-    print(text, **kwargs)
-    _init_debug_log_file()
-    if _debug_log_file is not None:
-        try:
-            _debug_log_file.write(text + "\n")
-            _debug_log_file.flush()
-        except OSError:
-            pass
-
-
-# =============================================================================
-# Variables globales / Config par défaut — modifier ici ou via config / env
-# =============================================================================
-
-# Fichiers de config recherchés (dans l’ordre) dans backend/, webapp-foncier/, racine.
-# Règle commune à tous les scripts : paramètres DB dans config.postgres.json.
-CONFIG_FILENAMES = ("config.postgres.json",)
-
-# Valeurs par défaut base de données (surchargées par config.json ou variables d’environnement)
-DEFAULT_DB_HOST = "localhost"
-DEFAULT_DB_PORT = 5432
-DEFAULT_DB_USER = "postgres"
-DEFAULT_DB_PASSWORD = ""
-DEFAULT_DB_NAME = "foncier"
-DEFAULT_DB_SCHEMA = "foncier"
-
-# Variables d’environnement pour la DB (priorité après les fichiers de config)
-ENV_DB_HOST = "DB_HOST"
-ENV_DB_PORT = "DB_PORT"
-ENV_DB_USER = "DB_USER"
-ENV_DB_PASSWORD = "DB_PASSWORD"
-ENV_DB_NAME = "DB_NAME"
-ENV_DB_SCHEMA = "DB_SCHEMA"
-
-# Dossiers où chercher config (backend/, webapp-foncier/, racine projet)
-_CONFIG_DIRS = (
-    Path(__file__).resolve().parent,
-    Path(__file__).resolve().parent.parent,
-    Path(__file__).resolve().parent.parent.parent,
-)
-
-
-def _load_db_config() -> dict:
-    """Charge la config DB depuis config.postgres.json (règle commune à tous les scripts)."""
-    for base in _CONFIG_DIRS:
-        for name in CONFIG_FILENAMES:
-            config_path = base / name
-            if config_path.is_file():
-                with open(config_path, encoding="utf-8") as f:
-                    data = json.load(f)
-                db = data.get("database") or data
-                return {
-                    "host": db.get("host", DEFAULT_DB_HOST),
-                    "port": int(db.get("port") or DEFAULT_DB_PORT),
-                    "user": db.get("user", DEFAULT_DB_USER),
-                    "password": db.get("password", DEFAULT_DB_PASSWORD),
-                    "database": db.get("database", DEFAULT_DB_NAME),
-                    "schema": db.get("schema", DEFAULT_DB_SCHEMA),
-                }
-    # Pas de fichier de config trouvé : on échoue explicitement plutôt que de basculer
-    # silencieusement sur des variables d'environnement.
-    raise RuntimeError("Aucun fichier config.postgres.json trouvé pour la configuration PostgreSQL.")
-
-
-# Caractères apostrophe / guillemet à normaliser ou supprimer pour forme canonique
-_APOSTROPHE_VARIANTS = "\u2019\u02bc\u02b9\u2032"  # RIGHT SINGLE QUOTATION MARK, MODIFIER LETTER APOSTROPHE, etc.
-
-
-def _normalize_name_canonical(s: Optional[str]) -> str:
-    """Forme canonique pour comparaison de noms (communes, etc.) : uniquement lettres A-Z majuscules.
-    Aligné avec le frontend stats.js normalizeNameCanonical (comparaisons table / variables).
-    Même logique que la SQL _sql_norm_name_canonical : désaccentuer, puis ne garder que A-Z.
-    Supprime espaces, apostrophes, traits d'union, parenthèses finales, tout caractère hors A-Z."""
-    if s is None:
-        return ""
-    s = str(s).strip()
-    if not s:
-        return ""
-    # Supprimer les parenthèses finales et leur contenu : (le), (la), (les), (l'), (lès), etc.
-    s = re.sub(r"\s*\([^)]*\)\s*$", "", s, flags=re.IGNORECASE).strip()
-    # Supprimer les variantes d'apostrophe
-    for c in _APOSTROPHE_VARIANTS:
-        s = s.replace(c, "")
-    s = s.replace("'", "")
-    # Désaccentuer avant de filtrer : NFD + retirer les marques combinantes (é→e, ç→c, etc.)
-    nfd = unicodedata.normalize("NFD", s)
-    sans_accent = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
-    # Ne garder que les lettres (A-Z après désaccentuation)
-    s = re.sub(r"[^A-Za-z]", "", sans_accent)
-    return s.upper()
-
-
-# Aligné sur comparaison_scores.html normalizeCommuneNameForMapMatch (cartes / rapprochement IGN vs ref).
-_COMMUNE_MAP_STOPWORDS = frozenset(
-    {
-        "le",
-        "la",
-        "les",
-        "de",
-        "du",
-        "des",
-        "en",
-        "sur",
-        "sous",
-        "lès",
-        "lè",
-        "au",
-        "aux",
-        "à",
-        "un",
-        "une",
-        "d",
-        "l",
-        "chez",
-        "devant",
-        "entre",
-        "et",
-        "ou",
-        "dans",
-        "par",
-        "pour",
-    }
-)
-
-
-def _ascii_fold_lower(w: str) -> str:
-    if not w:
-        return ""
-    nfd = unicodedata.normalize("NFD", w)
-    sans = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
-    return sans.lower()
-
-
-def _expand_commune_abbrev_token(word: str) -> str:
-    w = (word or "").strip()
-    if not w:
-        return w
-    base = _ascii_fold_lower(w).rstrip(".")
-    if base == "st":
-        return "saint"
-    if base == "ste":
-        return "sainte"
-    if base == "stes":
-        return "saintes"
-    if base == "ss":
-        return "saints"
-    return w
-
-
-def _normalize_commune_name_for_map_match(name: Optional[str]) -> str:
-    """Clé de correspondance commune (API ↔ ref ↔ vf ↔ GeoJSON) : stopwords, abréviations St/Ste, puis _normalize_name_canonical."""
-    if name is None:
-        return ""
-    s = str(name).strip()
-    if not s:
-        return ""
-    while re.search(r"\s*\([^)]*\)\s*$", s):
-        s = re.sub(r"\s*\([^)]*\)\s*$", "", s, flags=re.IGNORECASE).strip()
-    s = re.sub(r"[-–—]", " ", s)
-    for c in _APOSTROPHE_VARIANTS:
-        s = s.replace(c, " ")
-    s = s.replace("'", " ")
-    raw_tokens = [t for t in s.split() if t]
-    expanded = [_expand_commune_abbrev_token(t) for t in raw_tokens]
-    filtered: List[str] = []
-    k = 0
-    while k < len(expanded):
-        tk = _ascii_fold_lower(expanded[k]).rstrip(".")
-        if k + 1 < len(expanded) and tk == "de":
-            nxt = _ascii_fold_lower(expanded[k + 1]).rstrip(".")
-            if nxt in ("la", "l", "les"):
-                k += 2
-                continue
-        if tk in _COMMUNE_MAP_STOPWORDS:
-            k += 1
-            continue
-        filtered.append(expanded[k])
-        k += 1
-    joined = " ".join(filtered).strip()
-    key = _normalize_name_canonical(joined)
-    if len(key) >= 2:
-        return key
-    return _normalize_name_canonical(name)
-
-
-def _debug_sql_params(sql: str, params: List[Any]) -> str:
-    """Construit une SQL exécutable pour les logs (chaînes en guillemets simples, apostrophe échappée)."""
-    parts = []
-    i = 0
-    for token in sql.split("%s"):
-        parts.append(token)
-        if i < len(params):
-            p = params[i]
-            if isinstance(p, str):
-                escaped = p.replace("'", "''")
-                parts.append("'" + escaped + "'")
-            elif isinstance(p, (int, float)) and not isinstance(p, bool):
-                parts.append(str(p))
-            elif isinstance(p, (list, tuple)):
-                parts.append(", ".join("'" + str(x).replace("'", "''") + "'" if isinstance(x, str) else str(x) for x in p))
-            else:
-                parts.append(repr(p))
-            i += 1
-    return "".join(parts)
-
-
-def _sql_norm_name(column_sql: str) -> str:
-    """Expression SQL pour normaliser un nom (majuscules, sans accent, apostrophes unifiées).
-    Utilise U&'\\XXXX' pour les caractères Unicode (apostrophe typographique, etc.)."""
-    return (
-        "REPLACE(REPLACE(REPLACE(REPLACE(UPPER(unaccent(TRIM(" + column_sql + "))), "
-        "U&'\\2019', ''''), U&'\\02bc', ''''), U&'\\02b9', ''''), U&'\\2032', '''')"
-    )
-
-
-def _normalize_code_dept_for_vf(code_dept: Optional[str]) -> str:
-    """Pour les requêtes vers vf_communes : code_dept est utilisé tel quel (ex. 01, 02, …).
-    La table peut avoir 2 chiffres pour 01-09."""
-    if not code_dept:
-        return ""
-    return str(code_dept).strip()
-
-
-def _normalize_code_postal_for_vf(code_postal: Optional[str]) -> str:
-    """Pour les requêtes vers vf_communes : code_postal y est stocké sans zéros en tête
-    (ex. 01500 → "1500"). On enlève les zéros en tête pour matcher."""
-    if not code_postal:
-        return ""
-    s = str(code_postal).strip()
-    if not s:
-        return s
-    if s.isdigit():
-        return s.lstrip("0") or "0"  # "01500" → "1500", "00000" → "0"
-    return s
-
-def _normalize_code_postal_for_ref_communes(code_postal: Optional[str]) -> str:
-    """Pour les requêtes vers ref_communes : code_postal y est stocké avec zéro en tête s'il ne contient que 4 chiffres
-    (ex. 1500 → "01500"). On ajoute un zéro en tête pour matcher."""
-    if not code_postal:
-        return ""
-    s = str(code_postal).strip()
-    if not s:
-        return s
-    if s.isdigit():
-        return s.zfill(5)
-    return s
-
-def _sql_norm_name_canonical(column_sql: str) -> str:
-    """Expression SQL : forme canonique pour comparaison de noms (communes).
-    Même logique que Python : désaccentuer d'abord (unaccent), puis ne garder que A-Z."""
-    # 1) TRIM 2) Parenthèses finales 3) Apostrophes 4) unaccent 5) ne garder que a-zA-Z 6) UPPER
-    cleaned = (
-        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
-        "REGEXP_REPLACE(TRIM(" + column_sql + "), '\\s*\\([^)]*\\)\\s*$', ''), "
-        "U&'\\2019', ''), U&'\\02bc', ''), U&'\\02b9', ''), U&'\\2032', ''), '''', '')"
-    )
-    return "UPPER(REGEXP_REPLACE(unaccent(" + cleaned + "), '[^a-zA-Z]', '', 'g'))"
-
-
-def _sql_norm_name_canonical_commune_vf(column_sql: str) -> str:
-    """Forme canonique spécifique aux communes dans vf_communes.
-
-    Objectif : ignorer les suffixes d'arrondissements des très grandes villes, ex.:
-    - PARIS 01, PARIS 1ER, PARIS 19 → PARIS
-    - MARSEILLE 1ER, MARSEILLE 15EME → MARSEILLE
-    - LYON 2, LYON 2EME → LYON
-
-    Étapes :
-    1) TRIM
-    2) Retirer un éventuel suffixe " espace + nombre + (ER|EME|E) optionnels" en fin de chaîne
-    3) Parenthèses finales, apostrophes comme _sql_norm_name_canonical
-    4) unaccent
-    5) ne garder que A-Z
-    6) UPPER
-    """
-    base = (
-        "TRIM(" + column_sql + ")"
-    )
-    # Suffixe arrondissement : ex. " PARIS 01", " PARIS 1ER", " PARIS 2EME"
-    without_arr = (
-        "REGEXP_REPLACE("
-        + base
-        + ", '\\s+[0-9]{1,2}\\s*(ER|EME|E)?\\s*$', '', 'i')"
-    )
-    cleaned = (
-        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
-        "REGEXP_REPLACE(" + without_arr + ", '\\s*\\([^)]*\\)\\s*$', ''), "
-        "U&'\\2019', ''), U&'\\02bc', ''), U&'\\02b9', ''), U&'\\2032', ''), '''', '')"
-    )
-    return "UPPER(REGEXP_REPLACE(unaccent(" + cleaned + "), '[^a-zA-Z]', '', 'g'))"
-
-
-def _sql_libgeo_ville_canonical(column_sql: str) -> str:
-    """Expression SQL : forme canonique du nom de ville extrait de libgeo (loyers_communes).
-    libgeo peut être 'Paris 1er Arrondissement', 'Marseille 15eme Arrondissement', 'Lyon 2e Arrondissement'.
-    On extrait uniquement le nom avant le premier chiffre (n° d'arrondissement), puis même normalisation (unaccent, A-Z, UPPER)."""
-    # De "Paris 1er Arrondissement" ou "Paris 01" → "Paris" : retirer " espace + premier chiffre + tout le reste"
-    without_arr = (
-        "TRIM(REGEXP_REPLACE(TRIM(" + column_sql + "), E'\\\\s+[0-9].*', '', 'i'))"
-    )
-    cleaned = (
-        "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE("
-        "REGEXP_REPLACE(" + without_arr + ", '\\s*\\([^)]*\\)\\s*$', ''), "
-        "U&'\\2019', ''), U&'\\02bc', ''), U&'\\02b9', ''), U&'\\2032', ''), '''', '')"
-    )
-    return "UPPER(REGEXP_REPLACE(unaccent(" + cleaned + "), '[^a-zA-Z]', '', 'g'))"
-
-
-def _normalize_name(s: Optional[str]) -> str:
-    """Met un nom (commune, département, type de bien, etc.) en capitales sans accent pour comparaison SQL.
-    Normalise aussi les variantes d'apostrophe en apostrophe ASCII pour que L'Union, L'Union, etc. matchent."""
-    if s is None:
-        return ""
-    s = str(s).strip()
-    if not s:
-        return ""
-    for c in _APOSTROPHE_VARIANTS:
-        s = s.replace(c, "'")
-    nfd = unicodedata.normalize("NFD", s)
-    sans_accent = "".join(c for c in nfd if unicodedata.category(c) != "Mn")
-    return sans_accent.upper()
-
-
-def get_db_connection():
-    try:
-        cfg = _load_db_config()
-        conn = psycopg2.connect(
-            host=cfg["host"],
-            port=cfg["port"],
-            user=cfg["user"],
-            password=cfg["password"],
-            dbname=cfg["database"],
-        )
-        schema = cfg.get("schema", DEFAULT_DB_SCHEMA)
-        with conn.cursor() as cur:
-            cur.execute("SET search_path TO %s, public", (schema,))
-        conn.commit()
-        return conn
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur de connexion PostgreSQL : {e}")
-
-
-class Vente(BaseModel):
-    id: int
-    date_mutation: date
-    nature_mutation: str
-    valeur_fonciere: float
-    type_local: str
-    surface_reelle_bati: Optional[float]
-    surface_terrain: Optional[float]
-    code_postal: str
-    commune: str
-    voie: Optional[str]
-    type_de_voie: Optional[str]
-    no_voie: Optional[str]
-    latitude: float
-    longitude: float
-    distance_km: float
 
 
 app = FastAPI(title="API Foncier", version="1.0.0")
@@ -437,24 +65,8 @@ app.add_middleware(
 @app.get("/api/period")
 def get_period():
     """Retourne les bornes d'années (annee_min, annee_max) disponibles dans vf_communes."""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        # Tables agrégées par commune dans le schéma foncier
-        cur.execute(
-            "SELECT COALESCE(MIN(annee), 2020) AS annee_min, "
-            "COALESCE(MAX(annee), 2025) AS annee_max "
-            "FROM foncier.vf_communes"
-        )
-        row = cur.fetchone()
-        cur.close()
-        return {"annee_min": row[0], "annee_max": row[1]}
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
-    finally:
-        if conn is not None:
-            conn.close()
+    return fetch_period()
+
 
 
 @app.get("/api/ign-tiles/{z}/{x}/{y}.png")
@@ -464,145 +76,22 @@ def get_ign_tile_cached(
     y: int,
     refresh: bool = Query(False, description="Forcer le rechargement IGN en ignorant le cache local"),
 ):
-    """Retourne une tuile IGN via cache local disque.
-
-    - Lecture locale prioritaire: frontend/data/carto/ign_tiles/{z}/{x}/{y}.png
-    - Si absente: téléchargement depuis IGN, stockage local, puis renvoi.
-    """
-    if z < 0 or z > 19:
-        raise HTTPException(status_code=400, detail="z doit être entre 0 et 19.")
-    max_coord = (1 << z) - 1
-    if x < 0 or x > max_coord or y < 0 or y > max_coord:
-        raise HTTPException(status_code=400, detail="x/y hors bornes pour le niveau z.")
-
-    tile_path = IGN_TILE_CACHE_DIR / str(z) / str(x) / f"{y}.png"
-    try:
-        if tile_path.exists() and not refresh:
-            data = tile_path.read_bytes()
-            return Response(content=data, media_type="image/png", headers={"Cache-Control": "public, max-age=31536000"})
-    except OSError:
-        pass
-
-    url = IGN_WMTS_URL.format(z=z, x=x, y=y)
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "webapp-foncier/ign-cache"})
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            if getattr(resp, "status", 200) != 200:
-                raise HTTPException(status_code=502, detail=f"IGN a répondu {getattr(resp, 'status', 'inconnu')}")
-            data = resp.read()
-    except urllib.error.HTTPError as e:
-        raise HTTPException(status_code=502, detail=f"Erreur HTTP IGN: {e.code}")
-    except urllib.error.URLError as e:
-        raise HTTPException(status_code=502, detail=f"IGN indisponible: {e.reason}")
-
-    try:
-        tile_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = tile_path.with_suffix(".tmp")
-        tmp_path.write_bytes(data)
-        tmp_path.replace(tile_path)
-    except OSError:
-        # Même si l'écriture cache échoue, on renvoie la tuile téléchargée.
-        pass
-
-    return Response(content=data, media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
-
-
-def _get_regions_and_depts(cur) -> tuple[list[dict], list[dict]]:
-    """Régions (id, nom, departements) et liste des départements { code, nom }.
-    Source : foncier.ref_regions et foncier.ref_departements (référentiel complet).
-    Ne pas filtrer par vf_communes : sinon des départements sans ligne agrégée (ex. 57, 67, 68)
-    disparaissent du regroupement régional alors qu’ils sont bien rattachés dans ref_departements."""
-    # Départements effectivement présents dans vf_communes (info utile pour d’autres usages ; plus pour l’UI régions)
-    cur.execute("SELECT DISTINCT code_dept FROM foncier.vf_communes ORDER BY code_dept")
-    depts_in_data = [row[0] for row in cur.fetchall()]
-    try:
-        cur.execute(
-            "SELECT r.code_region, r.nom_region "
-            "FROM foncier.ref_regions r "
-            "ORDER BY r.nom_region"
-        )
-        ref_regions_rows = cur.fetchall()
-        if not ref_regions_rows:
-            return [], [{"code": c, "nom": c} for c in depts_in_data]
-        # code_dept, code_region, nom_dept depuis ref_departements (nom pour l’affichage, pas de doublon avec liste en dur)
-        cur.execute(
-            "SELECT code_dept, code_region, nom_dept FROM foncier.ref_departements ORDER BY code_dept"
-        )
-        ref_depts_rows = cur.fetchall()
-        ref_depts = {row[0]: row[1] for row in ref_depts_rows}
-        dept_noms = {row[0]: row[2] for row in ref_depts_rows}
-        regions = []
-        for code_region, nom_region in ref_regions_rows:
-            # Tous les départements de la région selon le référentiel (pas seulement ceux présents dans vf_communes)
-            region_depts = [d for d, r in ref_depts.items() if r == code_region]
-            if region_depts:
-                region_depts.sort()
-                regions.append({"id": code_region, "nom": nom_region, "departements": region_depts})
-        # Liste plate : tous les départements du référentiel (ordre code), pour cohérence avec les cases par région
-        all_dept_codes = sorted(ref_depts.keys())
-        departements = [{"code": c, "nom": dept_noms.get(c, c)} for c in all_dept_codes]
-        return regions, departements
-    except (psycopg2.Error, ValueError):
-        pass
-    departements = [{"code": c, "nom": c} for c in depts_in_data]
-    return [], departements
+    """Retourne une tuile IGN via cache local disque."""
+    return fetch_ign_tile(z, x, y, refresh=refresh)
 
 
 @app.get("/api/geo")
 def get_geo():
-    """Régions et départements (code + nom) depuis ref_regions / ref_departements.
-    Les listes par région incluent tous les départements du référentiel, pas seulement ceux ayant des lignes dans vf_communes."""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        regions, departements = _get_regions_and_depts(cur)
-        cur.close()
-        return {"regions": regions, "departements": departements}
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
-    finally:
-        if conn is not None:
-            conn.close()
+    """Régions et départements depuis ref_regions / ref_departements."""
+    return fetch_geo()
+
 
 
 @app.get("/api/refs-comparaison-logement")
 def get_refs_comparaison_logement():
-    """Listes pour les sélecteurs type de logement, surface, nb de pièces (ref_type_logts, ref_type_surf, ref_nb_pieces)."""
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        out = {"type_logts": [], "type_surf": [], "nb_pieces": []}
-        try:
-            cur.execute(
-                "SELECT code, libelle, sort_order, type_local_pattern AS type_local_pattern "
-                "FROM foncier.ref_type_logts ORDER BY sort_order, code"
-            )
-            out["type_logts"] = [dict(r) for r in cur.fetchall()]
-        except psycopg2.Error:
-            pass
-        try:
-            cur.execute(
-                "SELECT code, libelle, sort_order, vf_suffix FROM foncier.ref_type_surf ORDER BY sort_order, code"
-            )
-            out["type_surf"] = [dict(r) for r in cur.fetchall()]
-        except psycopg2.Error:
-            pass
-        try:
-            cur.execute(
-                "SELECT code, libelle, sort_order, vf_suffix FROM foncier.ref_nb_pieces ORDER BY sort_order, code"
-            )
-            out["nb_pieces"] = [dict(r) for r in cur.fetchall()]
-        except psycopg2.Error:
-            pass
-        cur.close()
-        return out
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
-    finally:
-        if conn is not None:
-            conn.close()
+    """Listes ref_type_logts, ref_type_surf, ref_nb_pieces."""
+    return fetch_refs_comparaison_logement()
+
 
 
 @app.get("/api/communes")
@@ -612,133 +101,14 @@ def get_communes(
     all_France: bool = Query(False, description="Retourner toutes les communes de la France (optionnel)"),
     q: Optional[str] = Query(None, description="Recherche par nom de commune ou code postal (optionnel, filtre ILIKE/LIKE)"),
 ):
-    """Liste (code_dept, code_postal, commune).
+    """Liste (code_dept, code_postal, commune)."""
+    return fetch_communes(
+        code_dept=code_dept,
+        code_region=code_region,
+        all_france=all_France,
+        q=q,
+    )
 
-    Si q fourni, filtre par nom de commune ou code postal (max 25 résultats).
-    Sinon, si code_dept fourni, filtre par département ; sinon toutes les communes.
-    """
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor()
-        search = (q or "").strip()
-        if search:
-            # Saisie uniquement numérique → filtre par code postal commençant par cette chaîne
-            if search.isdigit():
-                cp_prefix = search + "%"
-                try:
-                    cur.execute(
-                        """
-                        SELECT dep_code AS code_dept, code_postal, nom_standard_majuscule AS commune, code_insee
-                        FROM foncier.ref_communes
-                        WHERE code_postal::text LIKE %s
-                        ORDER BY code_postal, nom_standard_majuscule
-                        LIMIT 50
-                        """,
-                        (cp_prefix,),
-                    )
-                except psycopg2.Error:
-                    cur.execute(
-                        """
-                        SELECT DISTINCT code_dept, code_postal, commune, NULL AS code_insee
-                        FROM foncier.vf_communes
-                        WHERE code_postal::text LIKE %s
-                        ORDER BY code_postal, commune
-                        LIMIT 50
-                        """,
-                        (cp_prefix,),
-                    )
-            else:
-                # Saisie avec lettres :
-                # - par défaut : filtre par NOM commençant par la chaîne (préfixe)
-                # - si l'utilisateur commence par '%' : recherche "contient" (LIKE %...%)
-                # Pour le code postal, on conserve un LIKE %...% pour permettre de taper un fragment.
-                raw = search
-                starts_with_percent = raw.startswith("%")
-                term = raw[1:].strip() if starts_with_percent else raw
-                if not term:
-                    starts_with_percent = False
-                    term = raw.strip()
-                norm = _normalize_name_canonical(term)
-                if starts_with_percent:
-                    search_norm_like = "%" + norm + "%"
-                    search_cp_like = "%" + term + "%"
-                else:
-                    search_norm_like = norm + "%"
-                    search_cp_like = "%" + term + "%"
-                try:
-                    cur.execute(
-                        """
-                        SELECT dep_code AS code_dept, code_postal, nom_standard_majuscule AS commune, code_insee
-                        FROM foncier.ref_communes
-                        WHERE """ + _sql_norm_name_canonical("nom_standard_majuscule") + """ LIKE %s
-                           OR code_postal::text LIKE %s
-                        ORDER BY nom_standard_majuscule, code_postal
-                        LIMIT 25
-                        """,
-                        (search_norm_like, search_cp_like),
-                    )
-                except psycopg2.Error:
-                    cur.execute(
-                        """
-                        SELECT DISTINCT code_dept, code_postal, commune, NULL AS code_insee
-                        FROM foncier.vf_communes
-                        WHERE """ + _sql_norm_name_canonical_commune_vf("commune") + """ LIKE %s
-                           OR code_postal::text LIKE %s
-                        ORDER BY commune, code_postal
-                        LIMIT 25
-                        """,
-                        (search_norm_like, search_cp_like),
-                    )
-        elif code_dept:
-            code_dept_vf = _normalize_code_dept_for_vf(code_dept.strip())
-            cur.execute(
-                """
-                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
-                FROM foncier.vf_communes v
-                LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
-                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
-                WHERE v.code_dept = %s
-                ORDER BY v.commune, v.code_postal
-                """,
-                (code_dept_vf,),
-            )
-        elif code_region:
-            code_region_vf = code_region.strip()
-            cur.execute(
-                """
-                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
-                FROM foncier.vf_communes v
-                LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
-                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
-                WHERE v.code_dept IN (SELECT code_dept FROM foncier.ref_departements WHERE code_region = %s)
-                ORDER BY v.commune, v.code_postal
-                """,
-                (code_region_vf,),
-            )
-        elif all_France:
-            cur.execute(
-                """
-                SELECT DISTINCT v.code_dept, v.code_postal, v.commune, rc.code_insee
-                FROM foncier.vf_communes v
-                LEFT JOIN foncier.ref_communes rc
-                  ON rc.dep_code = v.code_dept AND rc.code_postal = v.code_postal
-                  AND """ + _sql_norm_name_canonical("rc.nom_standard_majuscule") + """ = """ + _sql_norm_name_canonical("v.commune") + """
-                ORDER BY v.commune, v.code_postal
-                """
-            )
-        else:
-            raise HTTPException(status_code=400, detail="Aucun paramètre de filtre valide fourni")
-        rows = [{"code_dept": r[0], "code_postal": r[1], "commune": r[2], "code_insee": r[3]} for r in cur.fetchall()]
-        cur.close()
-        return rows
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 def _float(v: Any) -> Optional[float]:
@@ -4703,27 +4073,6 @@ def get_comparaison_scores(
     _debug_log("[comparaison_scores] sortie: %s ligne(s) retournée(s), total: %.3fs", len(rows), t_end - t_start)
     return {"rows": rows}
 
-# nouvelle version (Claude.ia) : ajout de la validation du body JSON
-class ComparaisonScoresBody(BaseModel):
-    mode: str = "communes"
-    scope: Optional[str] = None  # communes, department, region, all_france
-    code_dept: Optional[List[str]] = None
-    code_postal: Optional[List[str]] = None
-    commune: Optional[List[str]] = None
-    code_region: Optional[List[str]] = None
-    code_insee: Optional[List[str]] = None  # bypass résolution triplets
-    exclude_code_insee: Optional[List[str]] = None
-    exclude_code_dept: Optional[List[str]] = None
-    score_principal: str = "renta_nette"
-    n_max: int = 50000 # maximum de 50000 communes
-    nb_locaux_min: Optional[int] = None
-    renta_brute_min: Optional[float] = None
-    renta_nette_min: Optional[float] = None
-    periode_annees: int = 1
-    scores_secondaires: Optional[List[str]] = None
-    type_logt: Optional[str] = None
-    type_surf: Optional[str] = None
-    nb_pieces: Optional[str] = None
 
 
 @app.post("/api/comparaison_scores")
@@ -5491,12 +4840,6 @@ def _distances_upsert_db(
     cur.close()
 
 
-class DistancesCommunesBody(BaseModel):
-    adresse_label: Optional[str] = None
-    adresse_lat: float
-    adresse_lon: float
-    code_insee_list: List[str]
-    force_recalcul: bool = False
 
 
 @app.post("/api/distances-communes")
@@ -5594,109 +4937,19 @@ def rechercher_ventes(
     date_max: Optional[date] = Query(None, description="Date de mutation maximale"),
     limit: int = Query(50, gt=0, le=250, description="Nombre maximum de résultats"),
 ):
-    """
-    Recherche les ventes autour d'un point donné, dans un rayon en km.
+    """Recherche les ventes autour d'un point donné, dans un rayon en km."""
+    return search_ventes(
+        lat=lat,
+        lon=lon,
+        rayon_km=rayon_km,
+        type_local=type_local,
+        surf_min=surf_min,
+        surf_max=surf_max,
+        date_min=date_min,
+        date_max=date_max,
+        limit=limit,
+    )
 
-    Hypothèse : la table `valeursfoncieres` contient des colonnes `latitude` et `longitude`
-    (par exemple alimentées via géocodage BAN lors de l'ETL).
-    """
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-
-        # Préfiltre par cadre (bounding box) pour limiter les lignes avant le calcul de distance
-        # ~111 km par degré de latitude ; longitude ajustée par cos(lat)
-        deg_per_km = 1.0 / 111.0
-        delta_lat = rayon_km * deg_per_km
-        delta_lon = rayon_km * deg_per_km / max(0.01, math.cos(math.radians(lat)))
-        lat_min, lat_max = lat - delta_lat, lat + delta_lat
-        lon_min, lon_max = lon - delta_lon, lon + delta_lon
-
-        sql = """
-        SELECT
-            id,
-            date_mutation,
-            nature_mutation,
-            valeur_fonciere,
-            type_local,
-            surface_reelle_bati,
-            surface_terrain,
-            code_postal,
-            commune,
-            voie,
-            type_de_voie,
-            no_voie,
-            latitude,
-            longitude,
-            (
-              6371 * ACOS(
-                COS(RADIANS(%s)) * COS(RADIANS(latitude)) *
-                COS(RADIANS(longitude) - RADIANS(%s)) +
-                SIN(RADIANS(%s)) * SIN(RADIANS(latitude))
-              )
-            ) AS distance_km
-        FROM foncier.valeursfoncieres
-        WHERE latitude IS NOT NULL
-          AND longitude IS NOT NULL
-          AND latitude BETWEEN %s AND %s
-          AND longitude BETWEEN %s AND %s
-        """
-
-        params: list = [lat, lon, lat, lat_min, lat_max, lon_min, lon_max]
-
-        if type_local:
-            sql += " AND " + _sql_norm_name_canonical("type_local") + " = %s"
-            params.append(_normalize_name_canonical(type_local))
-
-        if surf_min is not None:
-            sql += " AND surface_reelle_bati >= %s"
-            params.append(surf_min)
-
-        if surf_max is not None:
-            sql += " AND surface_reelle_bati <= %s"
-            params.append(surf_max)
-
-        if date_min is not None:
-            sql += " AND date_mutation >= %s"
-            params.append(date_min)
-
-        if date_max is not None:
-            sql += " AND date_mutation <= %s"
-            params.append(date_max)
-
-        sql = f"""
-        SELECT * FROM (
-            {sql}
-        ) AS t
-        WHERE distance_km <= %s
-        ORDER BY distance_km ASC, date_mutation DESC
-        LIMIT %s
-        """
-        params.extend([rayon_km, limit])
-
-        cur.execute(sql, params)
-        rows = cur.fetchall()
-
-        def _norm(v: Any) -> Any:
-            if isinstance(v, Decimal):
-                return float(v)
-            if isinstance(v, datetime):
-                return v.date() if hasattr(v, "date") else v
-            return v
-
-        out = []
-        for row in rows:
-            d = {k: _norm(v) for k, v in row.items()}
-            out.append(Vente(**d))
-        return out
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Erreur : {e}")
-    finally:
-        if conn is not None:
-            conn.close()
 
 
 @app.get("/health")
