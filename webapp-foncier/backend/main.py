@@ -48,6 +48,8 @@ from services.period import fetch_period
 from services.geo import fetch_geo, fetch_refs_comparaison_logement, fetch_communes
 from services.ventes import search_ventes
 from services.ign_tiles import fetch_ign_tile
+from services.stats import fetch_stats
+from vf_agg import _agg_rows, _float, _int
 
 
 
@@ -110,28 +112,6 @@ def get_communes(
     )
 
 
-
-def _float(v: Any) -> Optional[float]:
-    if v is None:
-        return None
-    if isinstance(v, Decimal):
-        return float(v)
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
-
-
-def _int(v: Any) -> int:
-    """Convertit en int (MySQL peut renvoyer str ou Decimal)."""
-    if v is None:
-        return 0
-    if isinstance(v, (int, float)):
-        return int(v)
-    try:
-        return int(float(v))
-    except (TypeError, ValueError):
-        return 0
 
 
 # Libellés « type » ventes / rentabilité (hors maison/appart) — alignés ref_type_logts + UI
@@ -1271,74 +1251,6 @@ def _merge_periode_into_row(row: dict, periode_annees: int) -> dict:
     return out
 
 
-def _agg_rows(rows: List[dict], surface_cat: Optional[str], pieces_cat: Optional[str]) -> dict:
-    """Agrège des lignes vf_communes : sommes et moyennes pondérées par nb_ventes."""
-    if not rows:
-        return {}
-    sum_w = sum(_int(r.get("nb_ventes")) for r in rows)
-    if sum_w == 0:
-        sum_w = 1
-    total_ventes = sum(_int(r.get("nb_ventes")) for r in rows)
-
-    use_s = surface_cat and surface_cat.upper() in ("S1", "S2", "S3", "S4", "S5")
-    use_t = pieces_cat and pieces_cat.upper() in ("T1", "T2", "T3", "T4", "T5")
-    if use_s:
-        s = surface_cat.upper().lower()
-        col_prix, col_surf, col_p2m = f"prix_med_{s}", f"surf_med_{s}", f"prix_m2_w_{s}"
-    elif use_t:
-        # PostgreSQL : identifiants non quotés → minuscules (prix_med_t1, pas prix_med_T1)
-        t = pieces_cat.upper().lower()
-        col_prix, col_surf, col_p2m = f"prix_med_{t}", f"surf_med_{t}", f"prix_m2_w_{t}"
-    else:
-        col_prix, col_surf, col_p2m = "prix_median", "surface_mediane", "prix_m2_mediane"
-
-    def wavg(key: str) -> Optional[float]:
-        total = 0.0
-        for r in rows:
-            v = _float(r.get(key))
-            w = _int(r.get("nb_ventes"))
-            if v is not None:
-                total += v * w
-        return round(total / sum_w, 2) if total else None
-
-    if use_s or use_t:
-        # Utiliser le comptage spécifique à la tranche si disponible (Phase 2)
-        if use_s:
-            tranche_key = f"nb_ventes_{s}"
-        else:
-            tranche_key = f"nb_ventes_{t}"
-        tranche_cnt = sum(_int(r.get(tranche_key)) for r in rows)
-        return {
-            "nb_ventes": tranche_cnt if tranche_cnt > 0 else total_ventes,
-            "prix_moyen": wavg(col_prix),
-            "prix_median": wavg(col_prix),
-            "prix_q1": None,
-            "prix_q3": None,
-            "surface_moyenne": wavg(col_surf),
-            "surface_mediane": wavg(col_surf),
-            "surface_q1": None,
-            "surface_q3": None,
-            "prix_m2_moyenne": wavg(col_p2m),
-            "prix_m2_mediane": wavg(col_p2m),
-            "prix_m2_q1": None,
-            "prix_m2_q3": None,
-        }
-    return {
-        "nb_ventes": total_ventes,
-        "prix_moyen": wavg("prix_moyen"),
-        "prix_median": wavg("prix_median"),
-        "prix_q1": wavg("prix_q1"),
-        "prix_q3": wavg("prix_q3"),
-        "surface_moyenne": wavg("surface_moyenne"),
-        "surface_mediane": wavg("surface_mediane"),
-        "surface_q1": None,
-        "surface_q3": None,
-        "prix_m2_moyenne": wavg("prix_m2_moyenne"),
-        "prix_m2_mediane": wavg("prix_m2_mediane"),
-        "prix_m2_q1": wavg("prix_m2_q1"),
-        "prix_m2_q3": wavg("prix_m2_q3"),
-    }
-
 
 @app.get("/api/stats")
 def get_stats(
@@ -1353,224 +1265,20 @@ def get_stats(
     annee_min: Optional[int] = Query(None),
     annee_max: Optional[int] = Query(None),
 ):
-    """
-    Agrégats vf_communes selon niveau (région/département/commune), type, catégories S/T, période.
-    Retourne un résumé global et une série par année pour les courbes d'évolution.
-    """
-    # Traiter chaînes vides comme None (query string peut envoyer "")
-    if annee_min is not None and (isinstance(annee_min, str) and annee_min.strip() == ""):
-        annee_min = None
-    if annee_max is not None and (isinstance(annee_max, str) and annee_max.strip() == ""):
-        annee_max = None
-    if code_dept and isinstance(code_dept, str):
-        code_dept = code_dept.strip()
-    if code_postal and isinstance(code_postal, str):
-        code_postal = code_postal.strip()
-    if commune and isinstance(commune, str):
-        commune = commune.strip()
-    conn = None
-    try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=RealDictCursor)
-        # Période par défaut (s'assurer que annee_min/max sont des int, la query peut renvoyer str)
-        if annee_min is None or annee_max is None:
-            cur.execute(
-                "SELECT COALESCE(MIN(annee),2020) AS mn, "
-                "COALESCE(MAX(annee),2025) AS mx "
-                "FROM foncier.vf_communes"
-            )
-            r = cur.fetchone()
-            annee_min = int(annee_min or r["mn"])
-            annee_max = int(annee_max or r["mx"])
-        else:
-            annee_min = int(annee_min)
-            annee_max = int(annee_max)
-        # Filtre géo
-        dept_list = None
-        if niveau == "region":
-            if not region_id:
-                raise HTTPException(status_code=400, detail="region_id requis pour niveau=region")
-            try:
-                cur.execute(
-                    "SELECT code_dept FROM foncier.ref_departements "
-                    "WHERE code_region = %s ORDER BY code_dept",
-                    (region_id.strip(),),
-                )
-                dept_list = [row["code_dept"] for row in cur.fetchall()]
-            except (psycopg2.Error, KeyError, TypeError):
-                dept_list = None
-            if not dept_list:
-                raise HTTPException(status_code=400, detail="Région inconnue")
-        elif niveau == "department":
-            if not code_dept:
-                raise HTTPException(status_code=400, detail="code_dept requis pour niveau=department")
-            dept_list = [code_dept]
-        else:
-            if not code_dept or not commune:
-                raise HTTPException(status_code=400, detail="code_dept et commune requis pour niveau=commune")
-            dept_list = [code_dept]
-        # Type (noms normalisés : capitales sans accent)
-        if type_local:
-            types = [type_local]
-        else:
-            types = ["Appartement", "Maison"]
-        types_norm = [_normalize_name_canonical(t) for t in types]
-        # vf_communes peut stocker code_dept sur 5 chiffres → normaliser pour la requête
-        dept_list_vf = [_normalize_code_dept_for_vf(d) for d in dept_list]
-        placeholders_dept = ",".join(["%s"] * len(dept_list_vf))
-        placeholders_type = ",".join(["%s"] * len(types_norm))
-        sql = f"""
-        SELECT annee, code_dept, code_postal, commune, type_local, nb_ventes,
-               prix_moyen, prix_q1, prix_median, prix_q3, surface_moyenne, surface_mediane,
-               prix_m2_moyenne, prix_m2_q1, prix_m2_mediane, prix_m2_q3,
-               prix_med_s1, surf_med_s1, prix_m2_w_s1, prix_med_s2, surf_med_s2, prix_m2_w_s2,
-               prix_med_s3, surf_med_s3, prix_m2_w_s3, prix_med_s4, surf_med_s4, prix_m2_w_s4,
-               prix_med_s5, surf_med_s5, prix_m2_w_s5,
-               prix_med_T1, surf_med_T1, prix_m2_w_T1, prix_med_T2, surf_med_T2, prix_m2_w_T2,
-               prix_med_T3, surf_med_T3, prix_m2_w_T3, prix_med_T4, surf_med_T4, prix_m2_w_T4,
-               prix_med_T5, surf_med_T5, prix_m2_w_T5
-        FROM foncier.vf_communes
-        WHERE code_dept IN ({placeholders_dept})
-          AND {_sql_norm_name_canonical("type_local")} IN ({placeholders_type})
-          AND annee BETWEEN %s AND %s
-        """
-        params = list(dept_list_vf) + list(types_norm) + [annee_min, annee_max]
-        if niveau == "commune":
-            sql += " AND " + _sql_norm_name_canonical_commune_vf("commune") + " = %s"
-            params.extend([_normalize_name_canonical(commune)])
-        _debug_log("[stats] SQL (exécutable): %s", _debug_sql_params(sql, params))
-        cur.execute(sql, params)
-        # Avec dictionary=True, fetchall() renvoie déjà des dicts (clés = noms de colonnes)
-        rows = cur.fetchall()
-        # Pour niveau commune : code postal principal + liste formatée depuis ref_communes
-        codes_postaux_display: str = code_postal or "—"
-        nom_standard_commune: Optional[str] = None
-        dep_nom_ref = None
-        reg_nom_ref = None
-        epci_nom_ref = None
-        population_ref = None
-        loypredm2_ref = None
-        code_insee_ref: Optional[str] = None
-        if niveau == "commune" and code_dept and commune:
-            try:
-                ref_sql = (
-                    "SELECT code_postal, codes_postaux, nom_standard, dep_nom, dep_code, reg_nom, epci_nom, population, code_insee "
-                    "FROM foncier.ref_communes "
-                    "WHERE dep_code = %s AND " + _sql_norm_name_canonical("nom_standard_majuscule") + " = %s ORDER BY code_postal"
-                )
-                ref_params = (code_dept, _normalize_name_canonical(commune))
-                cur.execute(ref_sql, ref_params)
-                ref_rows = cur.fetchall()
-                if ref_rows:
-                    row = ref_rows[0]
-                    nom_standard_commune = row.get("nom_standard") or commune
-                    dep_nom_ref = row.get("dep_nom")
-                    reg_nom_ref = row.get("reg_nom")
-                    epci_nom_ref = row.get("epci_nom")
-                    population_ref = row.get("population")
-                    if population_ref is not None and isinstance(population_ref, Decimal):
-                        population_ref = int(population_ref)
-                    principal = str(row.get("code_postal") or code_postal or "").strip()
-                    code_insee_ref = row.get("code_insee")
-                    if code_insee_ref:
-                        try:
-                            cur.execute(
-                                "SELECT AVG(loypredm2) AS loypredm2 FROM foncier.loyers_communes "
-                                "WHERE insee_c = %s AND annee = (SELECT MAX(annee) FROM foncier.loyers_communes WHERE insee_c = %s)",
-                                (code_insee_ref, code_insee_ref),
-                            )
-                            lr = cur.fetchone()
-                            if lr and lr.get("loypredm2") is not None:
-                                loypredm2_ref = float(lr["loypredm2"]) if isinstance(lr["loypredm2"], Decimal) else lr["loypredm2"]
-                        except (psycopg2.Error, KeyError, TypeError):
-                            pass
-                        if loypredm2_ref is None and ref_params:
-                            try:
-                                commune_norm_stats = ref_params[1]
-                                # Ville à arrondissements : moyenne pondérée par nbobs_com
-                                cur.execute(
-                                    "SELECT SUM(l.loypredm2 * COALESCE(l.nbobs_com, 0)) / NULLIF(SUM(COALESCE(l.nbobs_com, 0)), 0) AS loypredm2 "
-                                    "FROM foncier.loyers_communes l "
-                                    "WHERE " + _sql_libgeo_ville_canonical("l.libgeo") + " = %s "
-                                    "AND l.annee = (SELECT MAX(annee) FROM foncier.loyers_communes l2 WHERE " + _sql_libgeo_ville_canonical("l2.libgeo") + " = %s)",
-                                    (commune_norm_stats, commune_norm_stats),
-                                )
-                                lr = cur.fetchone()
-                                if lr and lr.get("loypredm2") is not None:
-                                    loypredm2_ref = float(lr["loypredm2"]) if isinstance(lr["loypredm2"], Decimal) else lr["loypredm2"]
-                            except (psycopg2.Error, KeyError, TypeError):
-                                pass
-                    raw = row.get("codes_postaux")
-                    if isinstance(raw, list):
-                        liste_cp = [str(x).strip() for x in raw if x]
-                    elif isinstance(raw, str):
-                        liste_cp = [x.strip() for x in raw.replace(";", ",").split(",") if x.strip()]
-                    else:
-                        liste_cp = [principal] if principal else []
-                    # Supprimer le principal, tri numérique, dédoublonnage ; afficher au plus 2 supplémentaires + "..."
-                    def sort_key(s: str):
-                        try:
-                            return (0, int(s))
-                        except (ValueError, TypeError):
-                            return (1, s)
-                    extras_all = sorted(
-                        {c for c in liste_cp if c and c != principal},
-                        key=sort_key,
-                    )
-                    autres = extras_all[:2]
-                    if principal:
-                        codes_postaux_display = principal
-                        if autres:
-                            codes_postaux_display += " (" + ", ".join(autres)
-                            if len(extras_all) > 2:
-                                codes_postaux_display += ", ..."
-                            codes_postaux_display += ")"
-                    else:
-                        codes_postaux_display = " (" + ", ".join(autres) + ("..." if len(extras_all) > 2 else "") + ")" if autres else "—"
-                else:
-                    nom_standard_commune = commune
-                    codes_postaux_display = code_postal or "—"
-                #print("[ref_communes] nb lignes:", len(ref_rows), "| codes_postaux_display:", codes_postaux_display)
-            except (psycopg2.Error, KeyError, TypeError):
-                nom_standard_commune = commune
-                codes_postaux_display = code_postal or "—"
-        cur.close()
-        # Normaliser Decimal
-        for r in rows:
-            for k, v in r.items():
-                if isinstance(v, Decimal):
-                    r[k] = float(v)
-        # Agrégat global
-        global_agg = _agg_rows(rows, surface_cat, pieces_cat) if rows else {}
-        # Série par année
-        by_year = {}
-        for r in rows:
-            y = r["annee"]
-            if y not in by_year:
-                by_year[y] = []
-            by_year[y].append(r)
-        series = []
-        for y in sorted(by_year.keys()):
-            agg_y = _agg_rows(by_year[y], surface_cat, pieces_cat)
-            agg_y["annee"] = y
-            series.append(agg_y)
-        result: dict = {"global": global_agg, "series": series}
-        if niveau == "commune":
-            result["codes_postaux_display"] = codes_postaux_display
-            result["nom_standard"] = nom_standard_commune
-            result["dep_nom"] = dep_nom_ref
-            result["dep_code"] = code_dept
-            result["reg_nom"] = reg_nom_ref
-            result["epci_nom"] = epci_nom_ref
-            result["population"] = population_ref
-            result["loypredm2"] = loypredm2_ref
-            result["code_insee"] = code_insee_ref
-        return result
-    except psycopg2.Error as e:
-        raise HTTPException(status_code=500, detail=f"Erreur PostgreSQL : {e}")
-    finally:
-        if conn is not None:
-            conn.close()
+    """Agrégats vf_communes selon niveau (région/département/commune)."""
+    return fetch_stats(
+        niveau=niveau,
+        region_id=region_id,
+        code_dept=code_dept,
+        code_postal=code_postal,
+        commune=commune,
+        type_local=type_local,
+        surface_cat=surface_cat,
+        pieces_cat=pieces_cat,
+        annee_min=annee_min,
+        annee_max=annee_max,
+    )
+
 
 
 # Clés toujours présentes dans la réponse fiche-logement (même ordre, null si absent)
