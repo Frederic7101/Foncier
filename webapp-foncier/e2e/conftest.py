@@ -67,3 +67,12 @@ def comparaison_page(page, frontend_base_url):
     page.goto(url, wait_until="domcontentloaded")
     page.wait_for_selector("h1", state="visible", timeout=15_000)
     return page
+
+
+@pytest.fixture
+def recherche_ventes_page(page, frontend_base_url):
+    """Ouvre recherche_ventes.html (sans mock BAN — préférer fixture dans test_recherche_ventes)."""
+    url = f"{frontend_base_url}/recherche_ventes.html"
+    page.goto(url, wait_until="domcontentloaded")
+    page.wait_for_selector("#search-btn", state="visible", timeout=15_000)
+    return page

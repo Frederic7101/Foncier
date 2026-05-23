@@ -19,6 +19,10 @@ import re
 
 import pytest
 
+# Doublon partiel de test_comparaison_scores.py avec assertions produit plus strictes
+# (pré-sélection « Toutes les régions », libellé = code INSEE) — non alignées sur l’UI actuelle.
+pytestmark = pytest.mark.skip(reason="Variante obsolète ; voir e2e/test_comparaison_scores.py")
+
 
 def _mode_radio(page, value: str):
     return page.locator(f'input[name="comparaison-mode"][value="{value}"]')

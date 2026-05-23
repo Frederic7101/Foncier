@@ -628,9 +628,9 @@ def test_2_3_2_3_roundtrip_mode_communes(require_backend, comparaison_page):
 
 @pytest.mark.csv("2.3.3-crit")
 def test_2_3_3_criteres_section_structure(require_backend, comparaison_page):
-    """Critères : titre + 3 colonnes (Type de local, Surface, Pièces) visibles avec zone géo."""
+    """Granularité : titre + 3 colonnes (Type de local, Surface, Pièces) visibles avec zone géo."""
     txt = comparaison_page.locator("#comparaison-criteria-block h3").first.inner_text() or ""
-    assert "Critères" in txt and "locaux" in txt
+    assert "Granularit" in txt
     _mode_radio(comparaison_page, "regions").check()
     sel = comparaison_page.locator("#comparaison-region-select-only")
     sel.wait_for(state="visible", timeout=10_000)
