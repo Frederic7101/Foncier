@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏠</text></svg>" />
     <link rel="stylesheet" href="style.css" />
+    <link rel="stylesheet" href="chat_widget.css" />
     <script src="communes_autocomplete.js"></script>
     <script src="nav_links.js"></script>
     <script src="https://mcp.figma.com/mcp/html-to-design/capture.js" async></script>
@@ -1031,6 +1032,9 @@
               const flRes = await fetch(API_BASE + "/api/fiche-logement?code_dept=" + encodeURIComponent(code_dept) + "&code_postal=" + encodeURIComponent(code_postal) + "&commune=" + encodeURIComponent(commune));
               if (!flRes.ok) return;
               const fl = await flRes.json();
+              if (fl.code_insee) {
+                document.body.dataset.codeInsee = String(fl.code_insee);
+              }
               const setFl = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
               // Années dans les titres (Parc, Ventes, Locations)
               if (fl.parc && fl.parc.annee) {
@@ -1513,5 +1517,6 @@
         }
       })();
     </script>
+    <script src="chat_widget.js"></script>
   </body>
 </html>

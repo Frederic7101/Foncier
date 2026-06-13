@@ -18,8 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-
+# .env racine puis backend/.env — override pour que le fichier projet prime sur le shell
+# (ex. CHAT_CURSOR_MODEL=claude-opus-4-7 laissé dans une session PowerShell).
 load_dotenv()
+load_dotenv(Path(__file__).resolve().parent / ".env", override=True)
 
 from debug_log import DEBUG, debug_log as _debug_log
 from text_norm import (
@@ -71,11 +73,13 @@ from indicateurs_read import (
 )
 from services.comparaison import fetch_comparaison_scores
 from services.distances import compute_distances_communes
+from chat.router import router as chat_router
 
 
 
 
 app = FastAPI(title="API Foncier", version="1.0.0")
+app.include_router(chat_router)
 
 app.add_middleware(
     CORSMiddleware,
